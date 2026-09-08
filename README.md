@@ -1,6 +1,68 @@
-# pdfbook
+# ix-toolkit
 
-PDF のマニュアルを、構造を保った Markdown に変換するツール。
+NEC IX ルータ（IX3315 / IX2215 等）を [Claude Code](https://claude.com/claude-code) から
+運用するための skill 一式と、その参照マニュアルを作る PDF → Markdown 変換ツール。
+
+```
+skills/        Claude Code の skill (状態確認・設定投入・退避・保存・マニュアル参照)
+cmd/pdfbook/   PDF のマニュアルを構造を保った Markdown に変換する汎用ツール
+profiles/      pdfbook の変換プロファイル
+```
+
+`pdfbook` は NEC IX に依存しない単体のツールで、2 段組みのマニュアルなら他社の資料にも使える。
+この構成に同居しているのは、`ix-manual` skill が引く参照を作るのがこのツールだから。
+
+---
+
+## skills
+
+| skill | 用途 | 種別 |
+|---|---|---|
+| `/ix-show` | show コマンドで状態確認 | 読み取り専用 |
+| `/ix-manual` | コマンドリファレンスを引く | 読み取り専用・機器に接続しない |
+| `/ix-backup` | running-config をファイルに退避 | 読み取り専用 |
+| `/ix-configure` | 設定を投入 | **破壊的**・実行前に確認必須 |
+| `/ix-save` | `write memory` で永続化 | **破壊的** |
+
+設定を投入する前に `/ix-manual` で入力形式と実行モードを確認し、`/ix-backup` で退避する、
+という流れを想定している。
+
+### インストール
+
+```console
+$ git clone https://github.com/yuu61/ix-toolkit
+$ cp -r ix-toolkit/skills/* ~/.claude/skills/
+$ pip install netmiko paramiko
+```
+
+接続先はインベントリ `~/.claude/ix-devices.json` に定義する。**このリポジトリには含まれない。**
+
+```json
+{
+  "devices": {
+    "home": {
+      "host": "192.0.2.1",
+      "username": "admin",
+      "password": "...",
+      "note": "IX2215 / WAN は GigaEthernet0.0"
+    }
+  }
+}
+```
+
+`host` は IP でも `~/.ssh/config` のエイリアスでもよく、`ProxyJump` の踏み台も自動で辿る。
+IP・ユーザー・パスワードは SKILL.md には一切書かず、すべてインベントリ側に置く設計。
+
+```console
+$ python ~/.claude/skills/ix-ssh.py --list      # 登録済み機器の一覧 (パスワードは表示しない)
+```
+
+**既定機器は無い。** `--device` を省略するとエラーになる。設定が意図しない機器へ流れ込む
+事故を防ぐためで、skill 側でも機器名の推測を禁じている。
+
+---
+
+## pdfbook
 
 **テキスト層のある PDF に OCR は要らない。** ヘッダ・フッタと段組みさえ処理できれば、
 本文はそのまま取り出せる。852 ページのコマンドリファレンスが 8 秒で変換できる。
@@ -12,28 +74,33 @@ pdfbook md      テキスト層のある PDF を構造つき Markdown に変換�
 pdfbook scan    見開きスキャン画像を 1 ページずつに分割する (テキスト層が無い場合)
 ```
 
-## 必要なもの
+### 必要なもの
 
 - Go 1.25 以降（ビルド用）
 - `pdftotext`（[Xpdf](https://www.xpdfreader.com/) または poppler-utils）が PATH にあること
 
 ```console
-$ go build -o pdfbook .
+$ go install github.com/yuu61/ix-toolkit/cmd/pdfbook@latest
 $ pdftotext -v          # 4.x 系で動作確認
 ```
 
-## 使い方
+### 使い方
+
+`manifest.json` に PDF の取得元を書く（配布ページのリンクは版ごとに変わるので、
+推測せず配布元を見て転記する）。
 
 ```console
 $ pdfbook fetch -manifest manifest.json -out pdf/
 $ pdfbook probe pdf/CRM-ver10.11-1.1.pdf -out profiles/nec-ix-crm.json
-$ pdfbook md    pdf/CRM-ver10.11-1.1.pdf -profile profiles/nec-ix-crm.json -out out/crm
+$ pdfbook md    pdf/CRM-ver10.11-1.1.pdf -profile profiles/nec-ix-crm.json \
+                -out ~/.claude/ix-manuals/crm
 ```
 
-出力は次の形になる。1 冊を 1 ファイルにすると引けないので、節ごとに分ける。
+`/ix-manual` は `~/.claude/ix-manuals/*/commands.tsv` を探すので、そこへ出力すると
+そのまま skill から引ける。出力はこの形になる（1 冊を 1 ファイルにすると引けないので節ごとに分ける）。
 
 ```
-out/crm/
+~/.claude/ix-manuals/crm/
 ├── index.md          コマンド索引 (コマンド名 → 該当箇所) と目次
 ├── commands.tsv      command / entry / file / anchor / page のタブ区切り索引
 ├── README.md         生成条件と出典
@@ -41,7 +108,9 @@ out/crm/
     └── NGN.md        本文
 ```
 
-## 仕組み
+---
+
+## pdfbook の仕組み
 
 ### なぜ OCR が要らないのか
 
@@ -110,7 +179,7 @@ PDF の内部構造（MediaBox、フォント、CMap）は一切パースしな�
 
 コマンド構文（入力形式・入力例）は版面どおりに残す。索引を作るときだけ折り返しを繋ぎ直す。
 
-## 他の資料に使う
+### 他の資料に使う
 
 `probe` が作るプロファイルの `entryMarker` と `fieldLabels` を、その資料の書式に合わせる。
 段組み・ページ寸法・柱の位置は `probe` が自動で決める。
@@ -125,11 +194,17 @@ PDF の内部構造（MediaBox、フォント、CMap）は一切パースしな�
 `probe` がテキスト層をほとんど検出できなかった場合は紙スキャン由来の画像 PDF なので、
 `md` は使えない。画像化して `pdfbook scan` で見開きを分割し、OCR に回す経路になる。
 
-## 生成物は配布しない
+---
 
-変換した Markdown は元の PDF の著作物であり、再配布にあたる。`out/` と `*.pdf` は
-`.gitignore` で除外してある。マニュアルが必要な人は、それぞれの手元で `fetch` → `md` を実行する。
+## 公開しないもの
+
+このリポジトリに入っていない（`.gitignore` で除外している）ものが 2 つある。
+
+- **変換した Markdown と元 PDF** — 元 PDF の著作物であり、再配布にあたる。
+  必要な人はそれぞれの手元で `fetch` → `md` を実行する。
+- **接続先インベントリ `~/.claude/ix-devices.json`** — 機器の IP と資格情報が入る。
+  そもそも `~/.claude/` 直下にあり、`skills/` の外なので同梱されない。
 
 ## ライセンス
 
-MIT
+MIT（`skills/` と `cmd/pdfbook/` の双方に適用）。
