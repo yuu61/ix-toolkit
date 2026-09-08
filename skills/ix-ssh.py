@@ -105,6 +105,7 @@ Requires: pip install netmiko  (>=4.6 for the nec_ix driver; verified on 4.7.0)
 """
 
 import argparse
+import contextlib
 import getpass
 import glob
 import io
@@ -112,7 +113,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 DEFAULT_PORT = 22
@@ -485,15 +486,15 @@ _JUMP_CLIENTS: list = []
 def connect(target: Target):
     from netmiko import ConnectHandler  # imported late so --list/--help work without it
 
-    params = dict(
-        device_type="nec_ix_ssh",  # このスクリプトは NEC IX 専用
-        host=target.host,
-        port=target.port,
-        username=target.username,
-        password=target.password or "",
-        conn_timeout=20,
-        fast_cli=False,
-    )
+    params = {
+        "device_type": "nec_ix_ssh",  # このスクリプトは NEC IX 専用
+        "host": target.host,
+        "port": target.port,
+        "username": target.username,
+        "password": target.password or "",
+        "conn_timeout": 20,
+        "fast_cli": False,
+    }
     if target.use_keys:
         params["use_keys"] = True
     if target.key_file:
@@ -510,10 +511,10 @@ def connect(target: Target):
 
 def close_jump_clients() -> None:
     while _JUMP_CLIENTS:
-        try:
+        # 後始末なので失敗しても続ける。ここで例外を上げると、
+        # 本来報告すべきデバイス側のエラーを覆い隠してしまう。
+        with contextlib.suppress(Exception):
             _JUMP_CLIENTS.pop().close()
-        except Exception:  # noqa: BLE001 - best effort teardown
-            pass
 
 
 # --------------------------------------------------------------------------- #
@@ -554,7 +555,8 @@ def run_shows(conn, commands: list[str], raw: bool) -> None:
 def do_backup(conn, target: Target, path: str | None) -> None:
     out = _config_show(conn, "show running-config")
     if path is None:
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        # 退避ファイル名は運用者が読む現地時刻。UTC に寄せず tz だけ付ける。
+        ts = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M%S")
         path = str(Path("backups") / f"{target.slug()}-{ts}.conf")
     dest = Path(path)
     dest.parent.mkdir(parents=True, exist_ok=True)
