@@ -22,7 +22,7 @@ allowed-tools:
 ```
 ~/.claude/ix-manuals/crm/
 ├── commands.tsv                        機械可読索引 (これを最初に引く)
-├── index.md                            コマンド索引と目次
+├── index.md                            章・節の目次
 └── ch03-インタフェース編/NGN.md          本文
 ```
 
@@ -42,7 +42,7 @@ pdfbook md pdf/CRM-ver10.11-1.1.pdf -profile profiles/nec-ix-crm.json \
 
 ### 1. commands.tsv を引く
 
-`commands.tsv` は `command / entry / file / anchor / page` のタブ区切り。
+`commands.tsv` は `command / entry / file / line / page` のタブ区切り。
 1 行 1 コマンドで、コマンド名がそのまま先頭列にある。
 
 ```
@@ -54,8 +54,16 @@ Grep: pattern="^ngn ip enable\t" path="~/.claude/ix-manuals/crm/commands.tsv"
 
 ### 2. 本文を読む
 
-`commands.tsv` の `file` 列と `anchor` 列が該当箇所を指す。
-`Read` で該当ファイルを開き、`<a id="<anchor>">` の直後の項目を読む。
+`commands.tsv` の `file` 列と `line` 列が該当項目の見出し行を直接指す。
+**`Read` に `offset` と `limit` を必ず渡す。** 節ファイルは最大 60KB あり、
+丸ごと開くと 1 コマンドを引くために 1 冊分の節を読むことになる。
+
+```
+Read: file_path="~/.claude/ix-manuals/crm/<file>" offset=<line> limit=30
+```
+
+`limit=30` で足りることがほとんどだが、`ノート` の途中で切れていたら
+`offset` はそのままに `limit` を増やす。次の `## ` が現れたらそこが次の項目。
 
 項目は必ずこの構成になっている:
 
@@ -91,6 +99,10 @@ Grep: pattern="ヒストリ" path="~/.claude/ix-manuals/crm" glob="*.md" output_
 デフォルト: 無効
 出典     : NGN p.3-29
 ```
+
+出典のページ番号は本文には書かれていない。`commands.tsv` の `page` 列から取る
+（節名は `file` 列のファイル名）。同じ番号を 2000 項目ぶん本文に重ねても、
+引く側が得るものが無いので落としてある。
 
 **ノートに制約が書かれていれば必ず伝える**（「複数のインタフェースに設定することはできません」等）。
 これを落とすと、設定投入時に初めて弾かれることになる。

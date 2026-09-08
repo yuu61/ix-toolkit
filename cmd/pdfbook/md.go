@@ -38,7 +38,7 @@ type entry struct {
 	pageRef []string // 印刷ページ番号 (ページをまたぐ場合は複数)
 	fields  []field
 	cmds    []string // 入力形式から抜いたコマンド行 = 索引のキー
-	anchor  string
+	line    int      // 出力ファイル中の見出し行番号 (1 始まり)。索引はここを指す
 }
 
 type field struct {
@@ -104,8 +104,8 @@ func runMD(args []string) {
 		fatal(err)
 	}
 	fmt.Printf("\n出力しました: %s\n", *outDir)
-	fmt.Printf("  索引:         %s\n", filepath.Join(*outDir, "index.md"))
 	fmt.Printf("  機械可読索引: %s\n", filepath.Join(*outDir, "commands.tsv"))
+	fmt.Printf("  目次:         %s\n", filepath.Join(*outDir, "index.md"))
 }
 
 // --- 読み込み ---
@@ -313,7 +313,6 @@ func parseEntries(p *Profile, pages []page) []entry {
 
 	for i := range entries {
 		entries[i].cmds = commandsOf(&entries[i])
-		entries[i].anchor = anchorFor(&entries[i], i)
 	}
 	return entries
 }
@@ -412,23 +411,6 @@ func startsLowerASCII(s string) bool {
 	return len(r) > 0 && r[0] >= 'a' && r[0] <= 'z'
 }
 
-var nonSlug = regexp.MustCompile(`[^a-z0-9]+`)
-
-func anchorFor(e *entry, i int) string {
-	base := ""
-	if len(e.cmds) > 0 {
-		base = e.cmds[0]
-	}
-	s := strings.Trim(nonSlug.ReplaceAllString(strings.ToLower(base), "-"), "-")
-	if s == "" {
-		return fmt.Sprintf("entry-%d", i+1)
-	}
-	if len(s) > 60 {
-		s = strings.Trim(s[:60], "-")
-	}
-	return "cmd-" + s
-}
-
 // --- 整形 ---
 
 // dedent は共通の字下げを取り除く。-layout はページ上の x 座標をそのまま
@@ -461,14 +443,31 @@ func dedent(lines []string) []string {
 var bulletPrefix = []string{"•", "・", "※", "‒", "–", "—", "-", "*"}
 
 func startsNewUnit(s string) bool {
+	return isBullet(s) || isParamDef(s)
+}
+
+func isBullet(s string) bool {
 	for _, b := range bulletPrefix {
 		if strings.HasPrefix(s, b) {
 			return true
 		}
 	}
-	// "NAME：：：..." のようなパラメータ名の定義行
-	return strings.Contains(s, "：：：")
+	return false
 }
+
+func stripBullet(s string) string {
+	for _, b := range bulletPrefix {
+		if r, ok := strings.CutPrefix(s, b); ok {
+			return strings.TrimSpace(r)
+		}
+	}
+	return s
+}
+
+// isParamDef は "NAME．．．説明" というパラメータ定義行を見分ける。
+// この資料は引数名と説明を全角ピリオド 3 つで区切っている
+// (以前は全角コロン "：：：" を見ていたが、それは 1 度も現れない綴り間違いだった)。
+func isParamDef(s string) bool { return strings.Contains(s, "．．．") }
 
 // joinWrapped は版面の折り返しを畳んで 1 論理行に戻す。
 //
@@ -537,6 +536,39 @@ func isASCIIWord(r rune) bool {
 	return r < 128 && (unicode.IsLetter(r) || unicode.IsDigit(r))
 }
 
+// metavarRun は資料の書式変数を含む一続き。
+//
+// 変数は山括弧で囲まれ、中に空白が入ることがある (<VLAN グループ番号>)。
+// 「空白で切った塊」を単位にすると、そこで千切れてしまう。山括弧の組そのものを
+// 単位にし、変数どうしを繋ぐ記号 (":" "/" "." など) を挟んで連ねる。
+// 中身の両端が空白の組は除いてある。不等号 ("a < b > c") を書式と取り違えないため。
+var metavarRun = regexp.MustCompile(func() string {
+	group := `<[^\s<>](?:[^<>\n]{0,38}[^\s<>])?>`
+	// 変数どうしを繋ぐ記号は ASCII に限る (":" "/" "." "[" "]")。
+	// 日本語には語間の空白が無いので、非 ASCII を繋ぎに許すと
+	// 「に<SN>を含む文字列を…」のように地の文を丸ごと飲み込んでしまう。
+	glue := "[!-;=?-_a-~]"
+	return "(?:" + glue + "|" + group + ")*" + group + "(?:" + glue + "|" + group + ")*"
+}())
+
+// inlineMarkup は本文行を Markdown として安全にする。
+//
+// この資料は URL の書式を <protocol>://<domain-name>[:<port>]/<path> と書く。
+// 素のまま出すと Markdown では HTML タグと見なされて丸ごと消えるので、
+// 変数を含む一続きをコードスパンに入れる。変数ごとに括ると
+// "`<protocol>`://`<domain-name>`" となって読めないので、連なり全体を 1 つに括る。
+func inlineMarkup(s string) string {
+	if !strings.Contains(s, "<") {
+		return s
+	}
+	return metavarRun.ReplaceAllStringFunc(s, func(run string) string {
+		if strings.Contains(run, "`") {
+			return run
+		}
+		return "`" + run + "`"
+	})
+}
+
 // --- 出力 ---
 
 func writeAll(outDir, docTitle, source, pdf string, p *Profile,
@@ -571,13 +603,20 @@ func writeAll(outDir, docTitle, source, pdf string, p *Profile,
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			return err
 		}
+		// 章名は親ディレクトリ名に、節名はこの見出しに入っている。
+		// 版面の柱をそのまま複製しても、引く側の役には立たない。
 		var b strings.Builder
 		fmt.Fprintf(&b, "# %s\n\n", k.section)
-		if t := chapters[k.chapter]; t != "" {
-			fmt.Fprintf(&b, "> %d. %s — %s\n\n", k.chapter, t, docTitle)
-		}
+
+		// 索引が項目を行番号で指すので、書きながら行数を数える。
+		// 索引側はこの値をそのまま Read の offset に渡せる。
+		line := 1 + strings.Count(b.String(), "\n")
 		for _, e := range grouped[k] {
-			renderEntry(&b, e)
+			var eb strings.Builder
+			renderEntry(&eb, e)
+			e.line = line
+			line += strings.Count(eb.String(), "\n")
+			b.WriteString(eb.String())
 		}
 		if err := os.WriteFile(full, []byte(b.String()), 0o644); err != nil {
 			return err
@@ -590,89 +629,132 @@ func writeAll(outDir, docTitle, source, pdf string, p *Profile,
 	return writeReadme(outDir, docTitle, source, pdf, p, len(entries), len(order))
 }
 
+// renderEntry は 1 項目を書き出す。
+//
+// 見出し以外の装飾は付けない。全項目が同じ 8 つの見出し語を持つので、見出し語
+// 1 つを強調するだけで 5 万バイト増える。ページ番号も節名も索引側が持っており、
+// 本文に書いても引く側が得るものが無い。
 func renderEntry(b *strings.Builder, e *entry) {
-	fmt.Fprintf(b, "<a id=%q></a>\n\n", e.anchor)
 	fmt.Fprintf(b, "## %s\n\n", e.title)
-	if len(e.pageRef) > 0 && e.pageRef[0] != "" {
-		fmt.Fprintf(b, "*%s p.%s*\n\n", e.section, strings.Join(e.pageRef, ", "))
-	}
 	for _, f := range e.fields {
 		lines := dedent(f.lines)
 		if syntaxLabels[f.label] {
+			// コマンド構文は版面どおりに残す。折り返しも字下げも意味を持つ。
 			body := strings.Trim(strings.Join(lines, "\n"), "\n ")
 			if body == "" {
 				continue
 			}
-			fmt.Fprintf(b, "**%s**\n\n```\n%s\n```\n\n", f.label, body)
+			fmt.Fprintf(b, "%s:\n```\n%s\n```\n\n", f.label, body)
 			continue
 		}
 		joined := joinWrapped(lines)
 		if len(joined) == 0 {
 			continue
 		}
-		fmt.Fprintf(b, "**%s**\n\n", f.label)
-		for _, ln := range joined {
-			fmt.Fprintf(b, "%s\n\n", ln)
+		// デフォルト値・実行モード・ユーザ権限のように 1 行で済む項目は
+		// 見出し語と同じ行に置く。3 行が 1 行になる。
+		if len(joined) == 1 {
+			fmt.Fprintf(b, "%s: %s\n\n", f.label, inlineMarkup(joined[0]))
+			continue
+		}
+		fmt.Fprintf(b, "%s:\n", f.label)
+		renderBody(b, joined)
+	}
+}
+
+// renderBody は本文行を書き出す。箇条書きは詰めたリストにし、地の文だけ空行で
+// 区切る。以前は 1 行ごとに空行を入れていたため、空行が 4 万行あった。
+func renderBody(b *strings.Builder, joined []string) {
+	inList, inDef := false, false
+	for _, ln := range joined {
+		switch {
+		case isParamDef(ln):
+			// "NAME．．．説明" は引数の定義。続く "•" はその引数の補足なので
+			// 入れ子にする。版面では字下げで表していた関係。
+			if !inList {
+				b.WriteString("\n")
+			}
+			fmt.Fprintf(b, "- %s\n", inlineMarkup(ln))
+			inList, inDef = true, true
+		case isBullet(ln):
+			if !inList {
+				b.WriteString("\n")
+			}
+			indent := ""
+			if inDef {
+				indent = "  "
+			}
+			fmt.Fprintf(b, "%s- %s\n", indent, inlineMarkup(stripBullet(ln)))
+			inList = true
+		default:
+			// 地の文は 1 文ずつ改行するだけで繋げる。Markdown では改行 1 つは
+			// 同じ段落の続きなので、空行で区切る必要が無い。リストの直後だけは
+			// 空行を入れないと、この行が最後の項目の続きとして食われる。
+			if inList {
+				b.WriteString("\n")
+			}
+			fmt.Fprintf(b, "%s\n", inlineMarkup(ln))
+			inList, inDef = false, false
 		}
 	}
-	fmt.Fprintf(b, "---\n\n")
+	b.WriteString("\n")
 }
 
 func writeIndex(outDir, docTitle string, chapters map[int]string, order []sectionKey,
 	grouped map[sectionKey][]*entry, relPath map[sectionKey]string, entries []entry,
 ) error {
-	var b strings.Builder
-	fmt.Fprintf(&b, "# %s — 索引\n\n", docTitle)
-	fmt.Fprintf(&b, "全 %d 項目。コマンド名から該当箇所を引くための索引。\n\n", len(entries))
-
-	// --- コマンド索引 (skill がこれを引く) ---
-	type row struct{ cmd, title, link, page string }
+	// --- 機械可読索引 (skill が引くのはこちら) ---
+	//
+	// file と line で該当項目の見出し行を直接指す。読む側は 1 ファイル
+	// (最大 68KB) を丸ごと開かずに、その行から数十行だけ読めばよい。
+	type row struct {
+		cmd, title, file string
+		line             int
+		page             string
+	}
 	var rows []row
 	for i := range entries {
 		e := &entries[i]
-		link := strings.ReplaceAll(relPath[sectionKey{e.chapter, e.section}], "\\", "/")
+		file := strings.ReplaceAll(relPath[sectionKey{e.chapter, e.section}], `\`, "/")
 		pg := ""
 		if len(e.pageRef) > 0 {
 			pg = e.pageRef[0]
 		}
 		for _, c := range e.cmds {
-			rows = append(rows, row{c, e.title, link + "#" + e.anchor, pg})
+			rows = append(rows, row{c, e.title, file, e.line, pg})
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].cmd < rows[j].cmd })
 
-	fmt.Fprintln(&b, "## コマンド索引")
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "| コマンド | 項目 | ページ | 参照 |")
-	fmt.Fprintln(&b, "|---|---|---|---|")
+	var t strings.Builder
+	fmt.Fprintln(&t, "command\tentry\tfile\tline\tpage")
 	for _, r := range rows {
-		fmt.Fprintf(&b, "| `%s` | %s | %s | [→](%s) |\n", r.cmd, escapePipe(r.title), r.page, r.link)
+		fmt.Fprintf(&t, "%s\t%s\t%s\t%d\t%s\n", r.cmd, r.title, r.file, r.line, r.page)
 	}
-
-	// --- 目次 ---
-	fmt.Fprintf(&b, "\n## 目次\n")
-	lastCh := -1
-	for _, k := range order {
-		if k.chapter != lastCh {
-			fmt.Fprintf(&b, "\n### %d. %s\n\n", k.chapter, chapters[k.chapter])
-			lastCh = k.chapter
-		}
-		link := strings.ReplaceAll(relPath[k], "\\", "/")
-		fmt.Fprintf(&b, "- [%s](%s) — %d 項目\n", k.section, link, len(grouped[k]))
-	}
-
-	if err := os.WriteFile(filepath.Join(outDir, "index.md"), []byte(b.String()), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, "commands.tsv"), []byte(t.String()), 0o644); err != nil {
 		return err
 	}
 
-	// --- 機械可読索引 ---
-	var t strings.Builder
-	fmt.Fprintln(&t, "command\tentry\tfile\tanchor\tpage")
-	for _, r := range rows {
-		file, anchor, _ := strings.Cut(r.link, "#")
-		fmt.Fprintf(&t, "%s\t%s\t%s\t%s\t%s\n", r.cmd, r.title, file, anchor, r.page)
+	// --- 目次 ---
+	//
+	// コマンド一覧はここには載せない。commands.tsv と同じ内容を Markdown の表で
+	// 書き直すと 300KB になり、目次を見に来ただけの読み手がそれを丸ごと読む。
+	// 引くための索引は 1 つあればよい。
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s — 目次\n\n", docTitle)
+	fmt.Fprintf(&b, "全 %d 項目 / %d 節。コマンド名から引くには `commands.tsv` "+
+		"(`command` / `entry` / `file` / `line` / `page` のタブ区切り) を検索する。\n",
+		len(entries), len(order))
+	lastCh := -1
+	for _, k := range order {
+		if k.chapter != lastCh {
+			fmt.Fprintf(&b, "\n## %d. %s\n\n", k.chapter, chapters[k.chapter])
+			lastCh = k.chapter
+		}
+		link := strings.ReplaceAll(relPath[k], `\`, "/")
+		fmt.Fprintf(&b, "- [%s](%s) — %d 項目\n", k.section, link, len(grouped[k]))
 	}
-	return os.WriteFile(filepath.Join(outDir, "commands.tsv"), []byte(t.String()), 0o644)
+	return os.WriteFile(filepath.Join(outDir, "index.md"), []byte(b.String()), 0o644)
 }
 
 func writeReadme(outDir, docTitle, source, pdf string, p *Profile, nEntries, nSections int) error {
@@ -690,8 +772,9 @@ func writeReadme(outDir, docTitle, source, pdf string, p *Profile, nEntries, nSe
 	fmt.Fprintf(&b, "- 抽出項目数: %d / 節数: %d\n", nEntries, nSections)
 	fmt.Fprintln(&b, "- 変換経路: pdftotext のテキスト層 (OCR 不使用)")
 	fmt.Fprintf(&b, "\n## 引き方\n\n")
-	fmt.Fprintln(&b, "- `index.md` — コマンド索引と目次")
-	fmt.Fprintln(&b, "- `commands.tsv` — `command / entry / file / anchor / page` のタブ区切り索引")
+	fmt.Fprintln(&b, "- `commands.tsv` — `command / entry / file / line / page` のタブ区切り索引。")
+	fmt.Fprintln(&b, "  `line` は本文ファイル中の見出し行 (1 始まり)。そこから数十行読めば 1 項目に足りる。")
+	fmt.Fprintln(&b, "- `index.md` — 章・節の目次")
 	fmt.Fprintln(&b, "- `chNN-<章名>/<節名>.md` — 本文")
 	return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644)
 }
@@ -709,5 +792,3 @@ func safeName(s string) string {
 	}
 	return s
 }
-
-func escapePipe(s string) string { return strings.ReplaceAll(s, "|", `\|`) }
