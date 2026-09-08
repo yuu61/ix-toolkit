@@ -56,7 +56,7 @@ Inventory (JSON, default ~/.claude/ix-devices.json, override with $IX_INVENTORY 
       }
     }
 
-    Per-device keys: host (or hostname), username (or user), port, device_type,
+    Per-device keys: host (or hostname), username (or user), port,
     password, password_env, key_file, use_keys, ssh_config_file, note.
     There is deliberately NO default device: --device or --host is always required,
     so a config push can never land on the wrong box by omission.
@@ -75,10 +75,10 @@ ssh_config aliases and ProxyJump:
     password. --list shows the resolved address and the jump chain.
 
 Resolution order (first wins) for each setting:
-    1. command-line flag        (--host / --user / --port / --device-type / ...)
+    1. command-line flag        (--host / --user / --port / ...)
     2. environment variable     ($IX_HOST / $IX_USER / $IX_PORT / $IX_DEVICE)
     3. the inventory entry selected by --device
-    4. built-in default         (port 22, device_type nec_ix_ssh)
+    4. built-in default         (port 22)
 
 Password resolution order (the device's own credentials beat the global $IX_PASS,
 so a leftover variable can never be sent to the wrong box):
@@ -115,7 +115,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-DEFAULT_DEVICE_TYPE = "nec_ix_ssh"
 DEFAULT_PORT = 22
 READ_TIMEOUT = 120
 
@@ -211,7 +210,6 @@ def format_inventory(devices: dict, path: Path | None) -> str:
         host = _first(entry, _HOST_KEYS) or "?"
         user = _first(entry, _USER_KEYS) or "?"
         port = entry.get("port", DEFAULT_PORT)
-        dtype = entry.get("device_type", DEFAULT_DEVICE_TYPE)
         route = ""
         cfg = _quiet_ssh_config(entry.get("ssh_config_file") or DEFAULT_SSH_CONFIG)
         if cfg is not None:
@@ -225,7 +223,7 @@ def format_inventory(devices: dict, path: Path | None) -> str:
             if hops:
                 route += " via " + " -> ".join(hops)
         lines.append(
-            f"  {name:<{width}}  {user}@{host}:{port}{route}  [{dtype}]  auth={describe_auth(entry)}"
+            f"  {name:<{width}}  {user}@{host}:{port}{route}  auth={describe_auth(entry)}"
         )
         if entry.get("note"):
             lines.append(f"  {'':<{width}}  note: {entry['note']}")
@@ -350,13 +348,12 @@ def open_jump_socket(cfg, hops: list[str], dest_host: str, dest_port: int, clien
 # target resolution
 # --------------------------------------------------------------------------- #
 class Target:
-    def __init__(self, name, host, username, port, device_type, password,
+    def __init__(self, name, host, username, port, password,
                  key_file, use_keys, ssh_config_file, ssh_cfg=None, hops=(), alias=None):
         self.name = name
         self.host = host
         self.username = username
         self.port = port
-        self.device_type = device_type
         self.password = password
         self.key_file = key_file
         self.use_keys = use_keys
@@ -375,7 +372,7 @@ class Target:
             where += f" [{self.alias}]"
         if self.hops:
             where += " via " + " -> ".join(self.hops)
-        return f"# target: {self.label} ({where}, {self.device_type})"
+        return f"# target: {self.label} ({where})"
 
     def slug(self) -> str:
         return re.sub(r"[^A-Za-z0-9._-]", "_", self.label)
@@ -433,7 +430,6 @@ def resolve_target(args) -> Target:
     host = host or _first(entry, _HOST_KEYS)
     username = args.user or os.environ.get("IX_USER") or _first(entry, _USER_KEYS)
     port = args.port or os.environ.get("IX_PORT") or entry.get("port")
-    device_type = args.device_type or entry.get("device_type") or DEFAULT_DEVICE_TYPE
     key_file = args.key_file or entry.get("key_file")
     ssh_config_file = args.ssh_config or entry.get("ssh_config_file") or DEFAULT_SSH_CONFIG
 
@@ -472,7 +468,6 @@ def resolve_target(args) -> Target:
         host=host,
         username=username,
         port=port,
-        device_type=device_type,
         password=password,
         key_file=str(Path(key_file).expanduser()) if key_file else None,
         use_keys=use_keys,
@@ -491,7 +486,7 @@ def connect(target: Target):
     from netmiko import ConnectHandler  # imported late so --list/--help work without it
 
     params = dict(
-        device_type=target.device_type,
+        device_type="nec_ix_ssh",  # このスクリプトは NEC IX 専用
         host=target.host,
         port=target.port,
         username=target.username,
@@ -620,9 +615,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     tgt.add_argument(
         "--port", metavar="PORT", help=f"SSH port ($IX_PORT, default {DEFAULT_PORT})"
-    )
-    tgt.add_argument(
-        "--device-type", metavar="TYPE", help=f"netmiko driver (default {DEFAULT_DEVICE_TYPE})"
     )
     tgt.add_argument("--password-env", metavar="VAR", help="read the password from $VAR")
     tgt.add_argument(
