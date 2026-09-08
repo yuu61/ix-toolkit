@@ -1,0 +1,101 @@
+version: "2"
+
+run:
+  timeout: 3m
+
+linters:
+  default: all
+  disable:
+    # 不要・プロジェクトに合わないリンター
+    - exhaustruct       # 全フィールド初期化強制は冗長すぎる
+    - varnamelen        # 短い変数名(i, x, y等)は画像処理で自然
+    - wrapcheck         # 内部エラーのラップ強制は単一パッケージで不要
+    - err113            # sentinel error強制は小規模CLIに過剰
+    - ireturn           # interface返却は画像処理パターンで必要
+    - mnd               # マジックナンバー検出は画像処理定数で過剰
+    - funlen            # main関数の長さは許容
+    - cyclop            # main関数の複雑度は許容
+    - gocognit          # 同上
+    - gocyclo           # 同上
+    - maintidx          # 同上
+    - lll               # 行長制限はフォーマッターに任せる
+    - godox             # TODO/FIXMEコメントは許容
+    - depguard          # 依存制限は不要（標準ライブラリのみ）
+    - gomoddirectives   # go.modディレクティブ制限は不要
+    - gomodguard        # 同上
+    - testpackage       # テストファイルなし
+    - paralleltest      # テストファイルなし
+    - tparallel         # テストファイルなし
+    - thelper           # テストファイルなし
+    - testableexamples  # テストファイルなし
+    - ginkgolinter      # ginkgo未使用
+    - zerologlint       # zerolog未使用
+    - loggercheck       # slog未使用
+    - protogetter       # protobuf未使用
+    - musttag           # struct tagマーシャリング未使用
+    - rowserrcheck      # database/sql未使用
+    - sqlclosecheck     # database/sql未使用
+    - spancheck         # OpenTelemetry未使用
+    - arangolint        # ArangoDB未使用
+    - tagliatelle       # struct tagスタイルは不要
+    - tagalign          # struct tagアラインは不要
+    - gosmopolitan      # i18n検査は不要
+    - inamedparam       # interface引数名強制は過剰
+    - interfacebloat    # interface肥大検出は不要
+    - exhaustive        # enum網羅検査はtype switchで過剰
+    - nonamedreturns    # named returnはsavePNGで意図的に使用
+    - nlreturn          # 空行スタイルはフォーマッターに任せる
+    - wsl               # 同上(deprecated)
+    - wsl_v5            # 同上
+    - godoclint         # godocスタイルは小規模CLIで不要
+    - godot             # コメント末尾ピリオドは日本語コメントに不適
+    - forbidigo         # 識別子制限は不要
+    - grouper           # 宣言グループ化スタイルは不要
+    - decorder          # 宣言順序は不要
+    - funcorder         # 関数順序は不要
+    - embeddedstructfieldcheck # 埋め込み構造体フィールド順は不要
+    - noinlineerr       # if err := ...; err != nilはGoのイディオム
+    - unqueryvet        # SQL未使用
+  settings:
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+        - opinionated
+      disabled-checks:
+        - hugeParam
+        - unnamedResult
+    revive:
+      rules:
+        - name: blank-imports
+        - name: exported
+          disabled: true
+        - name: unexported-return
+          disabled: true
+        - name: cognitive-complexity
+          disabled: true
+    gosec:
+      excludes:
+        - G104
+        - G301
+        - G304
+        - G115
+    govet:
+      enable-all: true
+    nestif:
+      min-complexity: 8
+  exclusions:
+    presets:
+      - std-error-handling
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      extra-rules: true
+    goimports:
+      local-prefixes:
+        - process-book-scans

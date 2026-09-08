@@ -1,0 +1,34 @@
+# --- 生成物・入力資料（著作物を含むためコミットしない） ---
+/pdf/
+/out/
+/work/
+*.pdf
+
+# --- スキャン画像（巨大・再生成可能） ---
+/crm/
+/processed/
+*.png
+*.jpg
+*.jpeg
+*.tif
+*.tiff
+
+# --- ビルド成果物 ---
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+
+# --- Go ---
+*.test
+*.out
+vendor/
+
+# --- エディタ・OS ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
