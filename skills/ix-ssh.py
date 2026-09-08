@@ -531,7 +531,7 @@ def _config_show(conn, cmd: str) -> str:
     `<hostname>(config)#` prompt so output that embeds the hostname (e.g. the
     `hostname` line in running-config) cannot terminate the read early."""
     conn.config_mode()
-    expect = re.escape(conn.find_prompt())  # e.g. 'IX3315(config)#'
+    expect = re.escape(conn.find_prompt())  # e.g. '<hostname>(config)#'
     try:
         return conn.send_command(cmd, expect_string=expect, read_timeout=READ_TIMEOUT)
     finally:

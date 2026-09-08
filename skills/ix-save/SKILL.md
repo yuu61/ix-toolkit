@@ -1,6 +1,6 @@
 ---
 name: ix-save
-description: NEC IX ルータ (IX3315 / IX2215 等) の running-config を startup-config に保存する（write memory）。対象機器は --device で指定する。設定変更後の永続化に使用する
+description: NEC IX ルータの running-config を startup-config に保存する（write memory）。対象機器は --device で指定する。設定変更後の永続化に使用する
 argument-hint: "[機器名] (e.g., home)"
 allowed-tools:
   - Bash(python:*)

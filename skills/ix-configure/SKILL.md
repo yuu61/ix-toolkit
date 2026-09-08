@@ -1,6 +1,6 @@
 ---
 name: ix-configure
-description: NEC IX ルータ (IX3315 / IX2215 等) に設定を投入する。config モードで設定行を適用する。対象機器は --device で指定する。ユーザーが NEC IX の設定変更・投入を求めたときに使用する
+description: NEC IX ルータに設定を投入する。config モードで設定行を適用する。対象機器は --device で指定する。ユーザーが NEC IX の設定変更・投入を求めたときに使用する
 argument-hint: "[機器名] [変更内容の説明] (e.g., home デフォルトルート追加)"
 allowed-tools:
   - Bash(python:*)

@@ -1,11 +1,11 @@
 # ix-toolkit
 
-NEC IX ルータ（IX3315 / IX2215 等）を [Claude Code](https://claude.com/claude-code) から
+NEC IX ルータを [Claude Code](https://claude.com/claude-code) から
 運用するための skill 一式と、その参照マニュアルを作る PDF → Markdown 変換ツール。
 
 ```
 skills/        Claude Code の skill
-cmd/pdfbook/   PDF のマニュアルを Markdown に変換する (NEC IX には依存しない)
+cmd/pdfbook/   PDF のマニュアルを Markdown に変換する
 profiles/      pdfbook の変換プロファイル
 ```
 
@@ -101,32 +101,6 @@ $ pdfbook md    pdf/CRM-ver10.11-1.1.pdf -profile profiles/nec-ix-crm.json \
 
 **出力は無損失ではない。** 段組みの判定に許容を持たせてあるので、段間に掛かった数文字が
 落ちるか二重になるページがある（852 ページ中 63 ページ）。
-
-### 他の資料に使う
-
-プロファイルの `entryMarker` と `fieldLabels` をその資料の書式に合わせる。
-段組み・ページ寸法・柱の位置は `probe` が自動で決める。
-
-```json
-{
-  "entryMarker": "■",
-  "fieldLabels": ["入力形式", "パラメータ", "説明", "..."]
-}
-```
-
-`probe` がテキスト層をほとんど検出できなければ紙スキャン由来の画像 PDF なので、`md` は
-使えない。`pdfbook scan` で見開きを分割して OCR に回す経路になる。
-
----
-
-## 公開しないもの
-
-`.gitignore` で除外しているもの。
-
-- **変換した Markdown と元 PDF** — 元 PDF の著作物であり、再配布にあたる。
-  必要な人はそれぞれの手元で `fetch` → `md` を実行する。
-- **接続先インベントリ `~/.claude/ix-devices.json`** — 機器の IP と資格情報が入る。
-  `~/.claude/` 直下にあり `skills/` の外なので、そもそも同梱されない。
 
 ## ライセンス
 
