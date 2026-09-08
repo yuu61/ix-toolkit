@@ -42,7 +42,7 @@ pdfbook md pdf/CRM-ver10.11-1.1.pdf -profile profiles/nec-ix-crm.json \
 
 ### 1. commands.tsv を引く
 
-`commands.tsv` は `command / entry / file / line / page` のタブ区切り。
+`commands.tsv` は `command / entry / file / line / pdfpage` のタブ区切り。
 1 行 1 コマンドで、コマンド名がそのまま先頭列にある。
 
 ```
@@ -97,12 +97,13 @@ Grep: pattern="ヒストリ" path="~/.claude/ix-manuals/crm" glob="*.md" output_
 ユーザ権限: Administrator
 説明     : 該当インタフェースを NGN 網とのユーザ網インタフェース（UNI）に設定し、NGN 機能を有効化します。
 デフォルト: 無効
-出典     : NGN p.3-29
+出典     : NGN (元 PDF 61 ページ)
 ```
 
-出典のページ番号は本文には書かれていない。`commands.tsv` の `page` 列から取る
-（節名は `file` 列のファイル名）。同じ番号を 2000 項目ぶん本文に重ねても、
-引く側が得るものが無いので落としてある。
+出典は本文には書かれていない。節名は `file` 列のファイル名、ページは
+`pdfpage` 列から取る。`pdfpage` は**元 PDF の物理ページ**なので、そのまま
+PDF ビューアで開ける。版面に刷られた番号（`3-29` など）は章ごとに振り直されて
+いて PDF のページ指定には使えないため、索引には入れていない。
 
 **ノートに制約が書かれていれば必ず伝える**（「複数のインタフェースに設定することはできません」等）。
 これを落とすと、設定投入時に初めて弾かれることになる。

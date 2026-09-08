@@ -35,7 +35,7 @@ type entry struct {
 	title   string
 	chapter int
 	section string
-	pageRef []string // 印刷ページ番号 (ページをまたぐ場合は複数)
+	pdfPage int // 項目が始まる PDF の物理ページ (1 始まり)
 	fields  []field
 	cmds    []string // 入力形式から抜いたコマンド行 = 索引のキー
 	line    int      // 出力ファイル中の見出し行番号 (1 始まり)。索引はここを指す
@@ -283,16 +283,15 @@ func parseEntries(p *Profile, pages []page) []entry {
 					title:   strings.TrimSpace(strings.TrimPrefix(t, p.EntryMarker)),
 					chapter: pg.chapter,
 					section: pg.section,
-					pageRef: []string{pg.printed},
+					// 版面に刷られたページ番号 (3-29) ではなく PDF の物理ページを持つ。
+					// 刷られた番号は章ごとに振り直されていて、PDF を開くときにも
+					// pdftotext -f にも使えない。3-29 は物理 61 ページ目にあたる。
+					pdfPage: pg.num,
 				}
 				continue
 			}
 			if cur == nil {
 				continue // 項目の外 (目次・章扉など) は無視
-			}
-			// 項目がページ・段をまたいだら出典ページを足す
-			if n := len(cur.pageRef); n > 0 && cur.pageRef[n-1] != pg.printed && pg.printed != "" {
-				cur.pageRef = append(cur.pageRef, pg.printed)
 			}
 
 			if label, rest, ok := splitLabel(t, p.FieldLabels); ok {
@@ -709,27 +708,24 @@ func writeIndex(outDir, docTitle string, chapters map[int]string, order []sectio
 	// (最大 68KB) を丸ごと開かずに、その行から数十行だけ読めばよい。
 	type row struct {
 		cmd, title, file string
-		line             int
-		page             string
+		line, pdfPage    int
 	}
 	var rows []row
 	for i := range entries {
 		e := &entries[i]
 		file := strings.ReplaceAll(relPath[sectionKey{e.chapter, e.section}], `\`, "/")
-		pg := ""
-		if len(e.pageRef) > 0 {
-			pg = e.pageRef[0]
-		}
 		for _, c := range e.cmds {
-			rows = append(rows, row{c, e.title, file, e.line, pg})
+			rows = append(rows, row{c, e.title, file, e.line, e.pdfPage})
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].cmd < rows[j].cmd })
 
+	// pdfpage は元 PDF の物理ページ。版面に刷られた番号 (3-29) は章ごとに
+	// 振り直されているので、PDF ビューアにも pdftotext -f にも渡せない。
 	var t strings.Builder
-	fmt.Fprintln(&t, "command\tentry\tfile\tline\tpage")
+	fmt.Fprintln(&t, "command\tentry\tfile\tline\tpdfpage")
 	for _, r := range rows {
-		fmt.Fprintf(&t, "%s\t%s\t%s\t%d\t%s\n", r.cmd, r.title, r.file, r.line, r.page)
+		fmt.Fprintf(&t, "%s\t%s\t%s\t%d\t%d\n", r.cmd, r.title, r.file, r.line, r.pdfPage)
 	}
 	if err := os.WriteFile(filepath.Join(outDir, "commands.tsv"), []byte(t.String()), 0o644); err != nil {
 		return err
@@ -743,7 +739,7 @@ func writeIndex(outDir, docTitle string, chapters map[int]string, order []sectio
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s — 目次\n\n", docTitle)
 	fmt.Fprintf(&b, "全 %d 項目 / %d 節。コマンド名から引くには `commands.tsv` "+
-		"(`command` / `entry` / `file` / `line` / `page` のタブ区切り) を検索する。\n",
+		"(`command` / `entry` / `file` / `line` / `pdfpage` のタブ区切り) を検索する。\n",
 		len(entries), len(order))
 	lastCh := -1
 	for _, k := range order {
@@ -772,7 +768,7 @@ func writeReadme(outDir, docTitle, source, pdf string, p *Profile, nEntries, nSe
 	fmt.Fprintf(&b, "- 抽出項目数: %d / 節数: %d\n", nEntries, nSections)
 	fmt.Fprintln(&b, "- 変換経路: pdftotext のテキスト層 (OCR 不使用)")
 	fmt.Fprintf(&b, "\n## 引き方\n\n")
-	fmt.Fprintln(&b, "- `commands.tsv` — `command / entry / file / line / page` のタブ区切り索引。")
+	fmt.Fprintln(&b, "- `commands.tsv` — `command / entry / file / line / pdfpage` のタブ区切り索引。")
 	fmt.Fprintln(&b, "  `line` は本文ファイル中の見出し行 (1 始まり)。そこから数十行読めば 1 項目に足りる。")
 	fmt.Fprintln(&b, "- `index.md` — 章・節の目次")
 	fmt.Fprintln(&b, "- `chNN-<章名>/<節名>.md` — 本文")

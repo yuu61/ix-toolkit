@@ -101,7 +101,7 @@ $ pdfbook md    pdf/CRM-ver10.11-1.1.pdf -profile profiles/nec-ix-crm.json \
 
 ```
 ~/.claude/ix-manuals/crm/
-├── commands.tsv      command / entry / file / line / page のタブ区切り索引
+├── commands.tsv      command / entry / file / line / pdfpage のタブ区切り索引
 ├── index.md          章・節の目次
 ├── README.md         生成条件と出典
 └── ch03-インタフェース編/
@@ -112,6 +112,10 @@ $ pdfbook md    pdf/CRM-ver10.11-1.1.pdf -profile profiles/nec-ix-crm.json \
 
 `line` は本文ファイル中の見出し行番号で、そこから 30 行読めば 1 項目が収まる。
 節ファイルは大きいもので 60KB あるので、丸ごと開くのと 100 倍近い差がつく。
+`pdfpage` は元 PDF の物理ページ。版面に刷られたページ番号（`3-29`）は章ごとに
+振り直されていて PDF ビューアにも `pdftotext -f` にも渡せないので、索引には
+入れない（`3-29` は物理 61 ページ目にあたる）。
+
 Markdown 側にも同じ考えを通してある。
 
 - **見出し語を強調しない。** 全 2039 項目が同じ 8 つの見出し語を持つ。
