@@ -5,6 +5,8 @@
 *.pdf
 
 # --- スキャン画像（巨大・再生成可能） ---
+# scan サブコマンドの入出力。誤って数百枚を巻き込まないよう拡張子ごと除外し、
+# 資料用の画像だけ docs/ で拾えるようにしてある。
 /crm/
 /processed/
 *.png
@@ -12,20 +14,29 @@
 *.jpeg
 *.tif
 *.tiff
+!docs/**/*.png
+!docs/**/*.jpg
 
-# --- ビルド成果物 ---
+# --- Go ---
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
-/bin/
-/dist/
-
-# --- Go ---
 *.test
 *.out
+/bin/
+/dist/
 vendor/
+
+# --- Python (skills/) ---
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.venv/
+venv/
 
 # --- エディタ・OS ---
 .DS_Store
