@@ -1,6 +1,6 @@
 ---
 name: ix-show
-description: NEC IX ルータの show コマンドを実行して状態を確認する（インターフェース, ルーティング, IPsec, ログ等）。対象機器は --device で指定する。ユーザーが NEC IX の状態確認・表示を求めたときに使用する
+description: NEC IX の show コマンドを実行して状態を確認する（インターフェース, ルーティング, IPsec, ログ等）。対象機器は --device で指定する。ユーザーが NEC IX の状態確認・表示を求めたときに使用する
 argument-hint: "[機器名] <show コマンド> (e.g., home show ip route)"
 allowed-tools:
   - Bash(python:*)

@@ -1,6 +1,6 @@
 ---
 name: ix-backup
-description: NEC IX ルータの running-config をファイルに退避する。対象機器は --device で指定する。設定変更前のバックアップや定期保存に使用する
+description: NEC IX の running-config をファイルに退避する。対象機器は --device で指定する。設定変更前のバックアップや定期保存に使用する
 argument-hint: "[機器名] [保存先パス（省略可）]"
 allowed-tools:
   - Bash(python:*)

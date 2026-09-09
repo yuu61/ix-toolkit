@@ -1,6 +1,6 @@
 # ix-toolkit
 
-NEC IX ルータを [Claude Code](https://claude.com/claude-code) から
+NEC IX を [Claude Code](https://claude.com/claude-code) から
 運用するための skill 一式と、その参照マニュアルを作る PDF → Markdown 変換ツール。
 
 ```
@@ -16,7 +16,7 @@ profiles/      pdfbook の変換プロファイル
 | skill | 用途 | 種別 |
 |---|---|---|
 | `/ix-show` | show コマンドで状態確認 | 読み取り専用 |
-| `/ix-manual` | コマンドリファレンスを引く | 読み取り専用・機器に接続しない |
+| `/ix-manual` | コマンドリファレンス・機能説明書を引く | 読み取り専用・機器に接続しない |
 | `/ix-backup` | running-config をファイルに退避 | 読み取り専用 |
 | `/ix-configure` | 設定を投入 | **破壊的**・実行前に確認必須 |
 | `/ix-save` | `write memory` で永続化 | **破壊的** |
@@ -98,7 +98,7 @@ $ pdfbook md    pdf/CRM-ver10.11-1.1.pdf -profile profiles/nec-ix-crm.json \
                 -out ~/.claude/ix-manuals/crm
 ```
 
-`/ix-manual` は `~/.claude/ix-manuals/*/commands.tsv` を探すので、そこへ出力すれば
+`/ix-manual` は `~/.claude/ix-manuals/*/*.tsv` を探すので、そこへ出力すれば
 そのまま引ける。852 ページで 8 秒ほど。
 
 ```
