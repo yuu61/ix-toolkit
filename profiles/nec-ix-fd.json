@@ -1,0 +1,15 @@
+{
+  "name": "nec-ix-fd",
+  "pageWidth": 600,
+  "pageHeight": 842,
+  "marginTop": 48,
+  "marginBottom": 46,
+  "columns": 1,
+  "gutterLeft": 0,
+  "gutterRight": 0,
+  "headerBand": 798,
+  "footerBand": 795,
+  "entryMarker": "",
+  "fieldLabels": [],
+  "chapterSep": "・"
+}

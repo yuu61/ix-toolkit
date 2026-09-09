@@ -83,6 +83,13 @@ func runMD(args []string) {
 		docTitle = strings.TrimSuffix(baseName(pdf), filepath.Ext(pdf))
 	}
 
+	// 項目の記号と見出し語を持たない資料はコマンド辞書として読めないので、
+	// 節見出しで割る経路へ回す (sections.go)。
+	if !p.HasCommandEntries() {
+		runSectionMD(*outDir, docTitle, *source, pdf, p)
+		return
+	}
+
 	fmt.Printf("読み込み: %s (プロファイル %s)\n", pdf, p.Name)
 	pages, stats, err := readPages(p, pdf)
 	if err != nil {
@@ -439,13 +446,24 @@ func dedent(lines []string) []string {
 	return out
 }
 
-var bulletPrefix = []string{"•", "・", "※", "‒", "–", "—", "-", "*"}
+// 機能説明書は "➢" を第 2 階層の箇条書きに使う。コマンドリファレンスには
+// 現れないが、どちらの読み方でも同じ判定を使うのでここに並べておく。
+var bulletPrefix = []string{"•", "・", "※", "➢", "‒", "–", "—", "-", "*"}
 
 func startsNewUnit(s string) bool {
 	return isBullet(s) || isParamDef(s)
 }
 
+// footnoteRef は "※1" のような脚注の参照。箇条書きの "※" とは別物で、
+// 記号として落としてはいけない。落とすと "※1 システム全体で 1000 まで" が
+// "- 1 システム全体で 1000 まで" になり、表の中の "1000 ※1" との対応が
+// 読み取れなくなる。番号がそのまま箇条書きの番号に見えるぶん、質が悪い。
+var footnoteRef = regexp.MustCompile(`^※\s*\d`)
+
 func isBullet(s string) bool {
+	if footnoteRef.MatchString(s) {
+		return false
+	}
 	for _, b := range bulletPrefix {
 		if strings.HasPrefix(s, b) {
 			return true
@@ -747,8 +765,7 @@ func writeIndex(outDir, docTitle string, chapters map[int]string, order []sectio
 			fmt.Fprintf(&b, "\n## %d. %s\n\n", k.chapter, chapters[k.chapter])
 			lastCh = k.chapter
 		}
-		link := strings.ReplaceAll(relPath[k], `\`, "/")
-		fmt.Fprintf(&b, "- [%s](%s) — %d 項目\n", k.section, link, len(grouped[k]))
+		fmt.Fprintf(&b, "- [%s](%s) — %d 項目\n", k.section, mdLinkDest(relPath[k]), len(grouped[k]))
 	}
 	return os.WriteFile(filepath.Join(outDir, "index.md"), []byte(b.String()), 0o644)
 }
@@ -773,6 +790,18 @@ func writeReadme(outDir, docTitle, source, pdf string, p *Profile, nEntries, nSe
 	fmt.Fprintln(&b, "- `index.md` — 章・節の目次")
 	fmt.Fprintln(&b, "- `chNN-<章名>/<節名>.md` — 本文")
 	return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644)
+}
+
+// mdLinkDest は Markdown のリンク先を書く。
+//
+// 節名には空白が入る (「IPv4 パケットフィルタ」)。素のまま括弧に入れると
+// 空白でリンクが切れて、目次のリンクが全部死ぬ。空白を含むときは山括弧で囲う。
+func mdLinkDest(path string) string {
+	p := filepath.ToSlash(path)
+	if strings.ContainsAny(p, " ()") {
+		return "<" + p + ">"
+	}
+	return p
 }
 
 var unsafeName = regexp.MustCompile(`[<>:"/\\|?*\x00-\x1f]`)

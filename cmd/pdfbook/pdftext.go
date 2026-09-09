@@ -46,8 +46,33 @@ type Profile struct {
 	FooterBand float64 `json:"footerBand"` // フッタだけ残す -margint。0 なら抽出しない
 
 	// --- 構造マーカー ---
+	//
+	// コマンド辞書 (コマンドリファレンス) は、項目が EntryMarker で始まり、
+	// 中身が FieldLabels で割れる、という形をしている。この 2 つが揃っている
+	// 資料だけがコマンド項目として読める。
+	//
+	// 揃っていない資料 (機能説明書のような解説書) は、階層番号の見出しで割る。
+	// 同じ記号でも資料ごとに指すものが違うので、記号の設定を流用してはいけない。
+	// "■" はコマンドリファレンスでは項目の頭 (2039 個) だが、機能説明書では
+	// 節見出しの頭 (353 個) であり、前者の設定で後者を読むと節見出しが
+	// そのまま偽のコマンドとして索引に並ぶ。
 	EntryMarker string   `json:"entryMarker"` // 項目の先頭記号 (例 "■")
 	FieldLabels []string `json:"fieldLabels"` // 項目内の見出し語 (例 入力形式/パラメータ...)
+
+	// ChapterSep は版面ヘッダの「章名/節名」の区切り。機能説明書のヘッダは
+	// "ルータの設定・PPP の設定" の形をしている。節名自体が "運用・保守" のように
+	// 区切りを含むことがあるので、最初の 1 つだけで割る。
+	ChapterSep string `json:"chapterSep,omitempty"`
+}
+
+// HasCommandEntries は、この資料をコマンド項目として読めるかを返す。
+//
+// 読めない資料は節見出しで読む。どちらで読むかを指す設定は別に持たない。
+// EntryMarker が無ければ parseEntries は項目を 1 つも開始できず、
+// FieldLabels が無ければ項目の中身を割れないので、この 2 つの有無は
+// 選択肢ではなく前提条件そのものである。
+func (p *Profile) HasCommandEntries() bool {
+	return p.EntryMarker != "" && len(p.FieldLabels) > 0
 }
 
 // DefaultProfile は NEC IX コマンドリファレンスマニュアル用の既定値。
@@ -161,6 +186,21 @@ func (p *Profile) ExtractColumns(pdf string) (left, right, full []string, err er
 		return nil, nil, nil, err
 	}
 	return left, right, full, nil
+}
+
+// ExtractBody は本文を 1 パスで読む。段組みを持たない資料の経路。
+//
+// -layout ではなく -table を使う。この違いは体裁ではなく正しさの問題である。
+// -layout は本文の座標をそのまま空白に写すため、罫線で組まれた表の行がずれる。
+// 実測 (機能説明書 1-7 の諸元表) では、-layout だと
+//
+//	VLAN 設定数    (空)  8  -  1000※1  32  同左
+//
+// となり、正しい 32/32/32/32/32/1000※1/32/32 と機種の対応が全部ずれた。
+// 抽出は成功しているように見えるので、この崩れは出力を見ても分からない。
+// -table は語の x 座標を列に束ね直すので、同じ表が正しく出る。
+func (p *Profile) ExtractBody(pdf string) ([]string, error) {
+	return extract(pdf, append([]string{"-table"}, p.bodyArgs()...)...)
 }
 
 // ExtractBands はヘッダ帯・フッタ帯を別々に抜く。
