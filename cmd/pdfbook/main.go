@@ -21,6 +21,7 @@ const usage = `pdfbook — PDF マニュアルを Markdown にする
   fetch   マニフェストに書いた PDF をまとめて取得する (SHA256 検証つき)
   probe   PDF を試し読みして段組み・ヘッダ位置を自動較正し、プロファイルを作る
   md      テキスト層のある PDF を構造つき Markdown に変換する
+  figures ページを PNG に焼く (図のページを画像で引けるようにする)
   scan    見開きスキャン画像 (PNG) を 1 ページずつに分割する (テキスト層が無い場合)
 
 典型的な流れ:
@@ -44,6 +45,8 @@ func main() {
 		runProbe(os.Args[2:])
 	case "md":
 		runMD(os.Args[2:])
+	case "figures":
+		runFigures(os.Args[2:])
 	case "scan":
 		runScan(os.Args[2:])
 	case "-h", "--help", "help":

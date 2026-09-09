@@ -14,8 +14,8 @@ import (
 
 // md サブコマンド: テキスト層を持つ PDF を、構造を保った Markdown に変換する。
 //
-// OCR も画像化も使わない。段組みとヘッダ・フッタを pdftotext のマージンで
-// 落とせれば、本文はそのまま取り出せる。
+// OCR も画像解析も使わない。段組みとヘッダ・フッタをページの端からの幅で
+// 落とせれば、本文はテキスト層からそのまま取り出せる。
 
 // --- 中間表現 ---
 
@@ -58,17 +58,16 @@ func runMD(args []string) {
 	outDir := fs.String("out", "out", "出力ディレクトリ")
 	title := fs.String("title", "", "資料タイトル (省略時は PDF のファイル名)")
 	source := fs.String("source", "", "出典表記 (取得元 URL 等。README に記載する)")
+	figures := fs.Bool("figures", false, "ページ画像も焼く (figures/ に置き、囲みから辿れるようにする)")
+	figureDPI := fs.Int("figure-dpi", 150, "-figures のときの解像度")
+	figurePages := fs.String("figure-pages", "", "-figures で焼くページ (例 1050-1060)。省略で全ページ")
 	pos := parseFlags(fs, args)
 
 	if len(pos) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: pdfbook md <pdf> [-profile profile.json] [-out out/]")
+		fmt.Fprintln(os.Stderr, "Usage: pdfbook md <pdf> [-profile profile.json] [-out out/] [-figures]")
 		os.Exit(1)
 	}
 	pdf := pos[0]
-
-	if err := pdftotextAvailable(); err != nil {
-		fatal(err)
-	}
 
 	p := DefaultProfile()
 	if *profilePath != "" {
@@ -81,6 +80,24 @@ func runMD(args []string) {
 	docTitle := *title
 	if docTitle == "" {
 		docTitle = strings.TrimSuffix(baseName(pdf), filepath.Ext(pdf))
+	}
+
+	// 画像は変換より先に焼く。囲みに [ページ画像] を付けるかどうかは
+	// 出力時に figures/ を見て決めるため、後から焼いてもリンクは付かない。
+	//
+	// 囲みとページリンクを出すのは節見出し経路 (sections.go) だけなので、
+	// コマンド辞書として読む資料では焼いても誰も参照しない。黙って焼くと
+	// 時間とディスクだけ使うため断る。
+	if *figures {
+		if p.HasCommandEntries() {
+			fatal(fmt.Errorf("-figures はこの資料 (プロファイル %s) では効きません。"+
+				"囲みにページ画像を添えるのは節見出しで割る資料だけです", p.Name))
+		}
+		n, err := renderFigures(pdf, *outDir, *figureDPI, *figurePages)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Printf("ページ画像: %d 枚を焼きました\n", n)
 	}
 
 	// 項目の記号と見出し語を持たない資料はコマンド辞書として読めないので、
@@ -119,7 +136,7 @@ func runMD(args []string) {
 
 type pageStats struct{ one, two int }
 
-// readPages は高々 5 回の pdftotext 起動で 1 冊を読み切り、
+// readPages は 1 冊を読み切り、
 // ページごとに段組みを判定して読み順の行列を作る。
 func readPages(p *Profile, pdf string) ([]page, pageStats, error) {
 	left, right, full, err := p.ExtractColumns(pdf)
@@ -292,7 +309,7 @@ func parseEntries(p *Profile, pages []page) []entry {
 					section: pg.section,
 					// 版面に刷られたページ番号 (3-29) ではなく PDF の物理ページを持つ。
 					// 刷られた番号は章ごとに振り直されていて、PDF を開くときにも
-					// pdftotext -f にも使えない。3-29 は物理 61 ページ目にあたる。
+					// ページ指定には使えない。3-29 は物理 61 ページ目にあたる。
 					pdfPage: pg.num,
 				}
 				continue
@@ -739,7 +756,7 @@ func writeIndex(outDir, docTitle string, chapters map[int]string, order []sectio
 	sort.Slice(rows, func(i, j int) bool { return rows[i].cmd < rows[j].cmd })
 
 	// pdfpage は元 PDF の物理ページ。版面に刷られた番号 (3-29) は章ごとに
-	// 振り直されているので、PDF ビューアにも pdftotext -f にも渡せない。
+	// 振り直されているので、PDF ビューアにも渡せない。
 	var t strings.Builder
 	fmt.Fprintln(&t, "command\tentry\tfile\tline\tpdfpage")
 	for _, r := range rows {
@@ -783,7 +800,7 @@ func writeReadme(outDir, docTitle, source, pdf string, p *Profile, nEntries, nSe
 	fmt.Fprintf(&b, "- プロファイル: `%s` (%d 段組み, 天地マージン %.0f/%.0f pt)\n",
 		p.Name, p.Columns, p.MarginTop, p.MarginBottom)
 	fmt.Fprintf(&b, "- 抽出項目数: %d / 節数: %d\n", nEntries, nSections)
-	fmt.Fprintln(&b, "- 変換経路: pdftotext のテキスト層 (OCR 不使用)")
+	fmt.Fprintln(&b, "- 変換経路: PDF のテキスト層を版面どおりに組み直したもの (OCR 不使用)")
 	fmt.Fprintf(&b, "\n## 引き方\n\n")
 	fmt.Fprintln(&b, "- `commands.tsv` — `command / entry / file / line / pdfpage` のタブ区切り索引。")
 	fmt.Fprintln(&b, "  `line` は本文ファイル中の見出し行 (1 始まり)。そこから数十行読めば 1 項目に足りる。")

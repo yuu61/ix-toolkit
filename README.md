@@ -82,21 +82,18 @@ $ uv run --script $HOME/.claude/skills/ix-toolkit/scripts/ix-ssh.py --list   # �
 ## pdfbook
 
 ```
-pdfbook fetch   マニフェストに書いた PDF をまとめて取得する (SHA256 検証つき)
+pdfbook fetch   マニフェストに書いた PDF をまとめて取得する
 pdfbook probe   段組み・ヘッダ位置を自動較正してプロファイルを作る
 pdfbook md      テキスト層のある PDF を構造つき Markdown に変換する
+pdfbook figures ページを PNG に焼く (図のページを画像で引けるようにする)
 pdfbook scan    見開きスキャン画像を 1 ページずつに分割する (テキスト層が無い場合)
 ```
 
-必要なもの:
-
-- Go 1.25 以降（ビルド用）
-- PATH に通った [Xpdf](https://www.xpdfreader.com/) 4.x の `pdftotext`。**poppler-utils の同名
-  コマンドでは動かない**（`-table` も `-marginl/r/t/b` も持たないため、`exit 99` と usage が出る）
-
 ```console
-$ go install github.com/yuu61/ix-toolkit/cmd/pdfbook@latest
+$ go build -ldflags="-s -w" -o pdfbook ./cmd/pdfbook
 ```
+
+windows Defender の`Trojan:Win32/Bearfoos.A!ml` の誤検知に引っ掛かるため、`-ldflags="-s -w"` は必須
 
 ### 使い方
 
@@ -112,17 +109,17 @@ $ pdfbook fetch -manifest manifest.json -out pdf/
 探すので、そこへ出せばそのまま引ける。どちらの資料も索引は同じ形で、
 
 - `line` は本文ファイル中の見出し行番号。そこから 30 行読めば 1 項目が収まる。
-- `pdfpage` は元 PDF の物理ページ。PDF ビューアにも `pdftotext -f` にもそのまま渡せる。
-- 出力は無損失ではない。段間に掛かった数文字が落ちるか二重になるページがある
-  (852 ページ中 63 ページ)。
+- `pdfpage` は元 PDF の物理ページ。PDF ビューアの `#page=` にそのまま渡せる。
+- 出力は無損失ではない。段間に掛かった数文字が落ちるページがある
+  (2 段として読む 629 ページ中 50 ページ・計 236 文字)。
 
-#### コマンドリファレンス
+#### コマンドリファレンス CRM
 
 ```console
 $ pdfbook md pdf/CRM-ver10.11-1.1.pdf -profile profiles/nec-ix-crm.json -out ~/.claude/ix-manuals/crm
 ```
 
-852 ページで 8 秒ほど。索引は `commands.tsv` (`command` / `entry` / `file` / `line` /
+852 ページで 9 秒ほど。索引は `commands.tsv` (`command` / `entry` / `file` / `line` /
 `pdfpage`) で、コマンド名から引く。
 
 ```
@@ -134,13 +131,13 @@ $ pdfbook md pdf/CRM-ver10.11-1.1.pdf -profile profiles/nec-ix-crm.json -out ~/.
     └── NGN.md        本文
 ```
 
-#### 機能説明書
+#### 機能説明書 FD
 
 ```console
 $ pdfbook md pdf/FD-ver10.11-1.1.pdf -profile profiles/nec-ix-fd.json -out ~/.claude/ix-manuals/fd
 ```
 
-1208 ページで 7 秒ほど。索引は `sections.tsv` (`section` / `title` / `file` / `line` /
+1208 ページで 10 秒ほど。索引は `sections.tsv` (`section` / `title` / `file` / `line` /
 `pdfpage`) で、コマンド名ではなく節番号と見出し語から引く。
 
 ### 図とページ画像
@@ -151,44 +148,32 @@ $ pdfbook md pdf/FD-ver10.11-1.1.pdf -profile profiles/nec-ix-fd.json -out ~/.cl
   順序は失われる。構成や流れを答えるにはページそのものを見るしかない。
 - その PDF リンクを辿れるのは PDF ビューアを開ける人だけ。`/ix-manual` を動かすエージェントは
   `#page=1057` を辿れないが、PNG なら `Read` で開ける。
-- pdfbook は `figures/` に置いてある画像を張る。焼くのは別の手順。
-
-焼く手順:
-
-1. レンダラを `bin/` に用意する（一度だけ。ビルドに Go 1.26 以降が要る）。
-2. 画像を焼く。
-3. 焼いてから変換し直す。変換時に `figures/` を見るので、焼く前に変換するとリンクは付かない
-   (変換は `figures/` を消さないので、焼いてから変換し直せば付く)。
+- ページ画像は `md -figures` で一緒に焼ける。変換と同じ PDFium が描くので、別の道具は要らない。
+  効くのは機能説明書だけ。コマンドリファレンスに付けると、焼く前に断られる (囲みとページ
+  リンクを出すのが機能説明書の側だけのため)。
 
 ```console
-$ go -C tools build -o ../bin/ github.com/klippa-app/pdfium-cli   # 一度だけ・ルートで
-$ mkdir -p ~/.claude/ix-manuals/fd/figures
-$ bin/pdfium-cli render pdf/FD-ver10.11-1.1.pdf \
-      ~/.claude/ix-manuals/fd/figures/p%d.png --file-type png --dpi 150
 $ pdfbook md pdf/FD-ver10.11-1.1.pdf -profile profiles/nec-ix-fd.json \
-             -out ~/.claude/ix-manuals/fd
+             -out ~/.claude/ix-manuals/fd -figures
 ```
 
 囲みの直後がこうなる。
 
 ```
-<sup>[元 PDF p1057](../../../FD-ver10.11-1.1.pdf#page=1057) / [ページ画像](../figures/p-1057.png)</sup>
+<sup>[元 PDF p1057](../../../FD-ver10.11-1.1.pdf#page=1057) / [ページ画像](../figures/p1057.png)</sup>
 ```
 
-- ファイル名は `figures/p<ページ番号>.png`（`.jpg` も可）。レンダラが付けるゼロ詰めの名前
-  (`p-1057.png` / `p-001057.png`) でも、手で置いた `p1057.png` でも拾う。
+- あとから焼き足すなら `pdfbook figures <pdf> -out ~/.claude/ix-manuals/fd` を流し、`md` を
+  もう一度流す。囲みに `[ページ画像]` を付けるかは変換時に `figures/` を見て決めるので、
+  この順序が要る（変換は `figures/` を消さない）。
 - 全ページ焼いてよい。焼き漏らしても、そのページが今までどおり PDF リンクだけになるだけで壊れ
-  はしない。FD 全 1208 ページで 63 秒・404 MB（150dpi の PNG が 1 ページ平均 340 KB）。区切る
-  なら `--pages 1050-1060`。
-- 要るのはページ描画。`pdfimages` のような画像の抽出では図にならない。
-- 解像度は 150dpi でよい。100dpi でも読めるが線が痩せる。
+  はしない。FD 全 1208 ページで 72 秒・404 MB（150dpi の PNG が 1 ページ平均 340 KB）。区切る
+  なら `-figure-pages 1050-1060`（`figures` サブコマンドでは `-pages`）。
+- 解像度は 150dpi でよい (`-figure-dpi`)。100dpi でも読めるが線が痩せる。
+- ファイル名は `figures/p<ページ番号>.png`。外の道具で焼いたゼロ詰めの名前
+  (`p-1057.png` / `p-001057.png`) や手で置いた `.jpg` も拾う。
 - ページ画像は本文テキストより直接的な複製物なので、`.gitignore` と同じく手元限りで扱う。
-
-```console
-$ bin/pdfium-cli render pdf/FD-ver10.11-1.1.pdf \
-      ~/.claude/ix-manuals/fd/figures/p%d.png --file-type png --dpi 150 --pages 1050-1060
-```
 
 ## ライセンス
 
-MIT
+MIT。バイナリに含まれる [PDFium](https://pdfium.googlesource.com/pdfium/) は Apache-2.0。

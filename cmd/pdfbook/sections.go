@@ -18,8 +18,8 @@ import (
 //  1. 項目の切れ目が記号ではなく階層番号の見出し (■2.11 / 2.11.6 / 2.11.6.1)。
 //     索引は「コマンド名 → 行」ではなく「節番号 → 行」になる。
 //
-//  2. 表が多く、-layout では列の対応が黙って崩れる。-table で読む
-//     (理由は ExtractBody のコメント)。
+//  2. 表が多く、行ごとの空きをそのまま空白にすると列の対応が黙って崩れる。
+//     ページ全体で同じ桁幅の格子に載せて読む (理由は layout.go のコメント)。
 //
 //  3. 図がある。ただし図は不透明なラスタではない。画像 XObject は作図と網掛けの
 //     レイヤで、ラベルはその上に載った PDF のテキストとして取れる。実測すると
@@ -62,7 +62,7 @@ var tocLeaderRe = regexp.MustCompile(`\.{6,}`)
 
 // --- 読み込み ---
 
-// readSectionPages は 1 冊を 3 回の pdftotext 起動で読み切る。
+// readSectionPages は本文帯とヘッダ・フッタ帯を読み、ページの列に組み立てる。
 func readSectionPages(p *Profile, pdf string) ([]page, error) {
 	body, err := p.ExtractBody(pdf)
 	if err != nil {
@@ -104,14 +104,15 @@ func readSectionPages(p *Profile, pdf string) ([]page, error) {
 	return pages, nil
 }
 
-// collapseTableBlanks は -table が行間に必ず挟む空行を畳む。
+// collapseTableBlanks は行送りのゆらぎで入った空行を畳む。
 //
-// -table は 1 行ごとに空行を入れる。これをそのまま残すと、地の文の折り返しが
-// 段落の切れ目と区別できなくなり、joinWrapped が働かない。「表示が 1 画面に
-// 収まら」と「ない場合は」が別の段落として残り、通しの文で grep できなくなる。
+// 表の行間のように 1 行分空いただけの箇所にも空行が入る (layout.go の
+// blankLines)。これをそのまま残すと、地の文の折り返しが段落の切れ目と区別
+// できなくなり、joinWrapped が働かない。「表示が 1 画面に収まら」と
+// 「ない場合は」が別の段落として残り、通しの文で grep できなくなる。
 //
-// 単独の空行は -table が入れたもの、2 つ以上続く空行は版面にもとからあった
-// 段落の切れ目、とみなす。
+// 単独の空行は組版の都合、2 つ以上続く空行は版面にもとからあった段落の
+// 切れ目、とみなす。
 func collapseTableBlanks(lines []string) []string {
 	out := make([]string, 0, len(lines))
 	i := 0
@@ -160,7 +161,7 @@ const (
 
 // interiorGap は行頭の字下げを除いた、行の内側の最大空白幅を返す。
 //
-// 字下げを含めて測ってはいけない。-table の出力では本文段落も 7 桁ほど
+// 字下げを含めて測ってはいけない。版面どおりに組み直した本文は段落も 7 桁ほど
 // 字下げされており、それを数えると地の文が丸ごと版面扱いになる。
 func interiorGap(s string) int {
 	body := strings.TrimLeft(strings.TrimRight(s, " "), " ")
@@ -244,8 +245,8 @@ func parseHeadings(p *Profile, pages []page) ([]heading, map[int]string) {
 	var heads []heading
 	var cur *heading
 
-	// 版面が続く塊をためる。空行 1 つでは切らない。-table は行と行の間に
-	// 必ず空行を挟むので、空行で切ると表が 1 行ずつばらばらになる。
+	// 版面が続く塊をためる。空行 1 つでは切らない。表の行間にも空行が入るので、
+	// 空行で切ると表が 1 行ずつばらばらになる。
 	var pend []string
 	var pendPage int
 	hole := 0
@@ -307,7 +308,7 @@ func parseHeadings(p *Profile, pages []page) ([]heading, map[int]string) {
 					section: secName,
 					// 版面に刷られた番号 (2-118) ではなく PDF の物理ページを持つ。
 					// 刷られた番号は章ごとに振り直されていて PDF ビューアにも
-					// pdftotext -f にも渡せない。
+					// ページ指定にも渡せない。
 					pdfPage: pg.num,
 				})
 				cur = &heads[len(heads)-1]
@@ -321,7 +322,7 @@ func parseHeadings(p *Profile, pages []page) ([]heading, map[int]string) {
 			case lineBlank:
 				if len(pend) > 0 {
 					// collapseTableBlanks を通したあとなので、空行はもう
-					// -table の癖ではなく版面にあった切れ目を指す。
+					// 組版の都合ではなく版面にあった切れ目を指す。
 					// 表の中の段の区切りは 1 つまで許し、2 つ続いたら塊を閉じる。
 					hole++
 					if hole > 1 {
@@ -354,16 +355,46 @@ func parseHeadings(p *Profile, pages []page) ([]heading, map[int]string) {
 // figureSet は出力先の figures/ に置かれたページ画像。キーは元 PDF の物理ページ。
 type figureSet map[int]string
 
-// pdftoppm は "p-0001.png"、Xpdf の pdftopng は "p-000001.png"、手で置くなら
-// "p1057.png" になる。どれも受ける。
+// レンダラごとに名前が違う。pdfium-cli は出力名のテンプレートに従うので "p1057.png"、
+// poppler の pdftoppm は総ページ数の桁でゼロ詰めして "p-1057.png" (1208 ページの資料) や
+// "p-007.png" (852 ページの資料)、Xpdf の pdftopng は 6 桁固定で "p-001057.png" になる。
+// 手で置くなら "p1057.png"。どれも受ける。
 var figureNameRe = regexp.MustCompile(`^p-?0*(\d+)\.(?:png|jpg|jpeg)$`)
+
+// ページを焼くときの実測値。すべて FD-ver10.11-1.1.pdf (全 1208 ページ) で測った。
+// 版が変わったら下の手順で取り直す。
+//
+//   - 解像度は 150dpi でよい。この資料の最小文字は約 7pt (pdftotext -bbox の語ボックス
+//     高さで実測。全 134892 語のうち約 7pt が 23 語、約 8pt が 3315 語、最小は p612 の
+//     6.96pt) で、150dpi ならその 7pt の吹き出しも読める。100dpi でも一応読めるが線が痩せる。
+//
+//   - 全ページ焼くと 63 秒・404 MB (150dpi の PNG が 1 ページ平均 340 KB)。
+//
+//   - 図があるのは 1208 ページのうち 361 ページ (pdfimages -list が画像オブジェクトを
+//     報告するページ数)。ただし囲みブロックの載るページは 1098 あるので、囲みを手がかりに
+//     焼くページを絞ってもほとんど減らない。README で全ページ焼くことを勧めているのはこのため。
+//
+//   - pdfimages のような抽出は使えない。要るのはページ描画で、p1057 では図 1 枚が
+//     271x39 px などの網掛け小片と smask に割れる (FD 全体で 11240 個)。
+//
+// 焼くのは pdfbook figures なので、測り直しに要るのは poppler (pdfimages / pdftotext
+// -bbox) だけ。MSYS2 なら pacman -S mingw-w64-x86_64-poppler。pdftopng は poppler に無く
+// Xpdf だけが持つので、下の figureNameRe が受ける名前を確かめるときだけ Xpdf tools
+// (https://www.xpdfreader.com/download.html) の zip を落として bin64/pdftopng.exe を使う。
+// figureNameRe の名前は xpdf-tools-win-4.06.zip
+// (sha256 2b6ca45da794e7854a6468fd6c8063fde62701f001ce03fa4f603eab7e15a0b6) で確かめた。
+//
+//	pdfimages -list FD-ver10.11-1.1.pdf | tail -n +3 | awk '{print $1}' | sort -nu | wc -l
+//	pdftotext -bbox FD-ver10.11-1.1.pdf - |
+//	    sed -n 's/.*yMin="\([0-9.]*\)".*yMax="\([0-9.]*\)".*/\1 \2/p' |
+//	    awk '{printf "%.0f\n", $2-$1}' | sort -n | uniq -c
 
 // loadFigures は出力先に置かれたページ画像を拾う。無ければ空を返す。
 //
-// pdfbook は画像を作らない。ページを焼くのは外部のレンダラ (pdftoppm など) の
-// 仕事で、ここは「置いてあれば張る、無ければ張らない」だけを引き受ける。
-// こうしておくとレンダラの有無が変換の成否に影響せず、必要な PDF ツールは
-// pdftotext 1 つのままでいられる。
+// ここは「置いてあれば張る、無ければ張らない」だけを引き受ける。焼くのは
+// pdfbook figures (md なら -figures) だが、外で焼いて置いた画像も同じように拾う。
+// 画像の有無が変換の成否に影響しないので、テキストだけ先に作って後から
+// 焼き足してもよい。
 //
 // どのページを焼くかも利用者側に残る。図のあるページだけを焼けば図のブロック
 // にだけ画像が付き、全ページ焼けば表にも付く。変換側で図と表を判別しない
@@ -610,7 +641,7 @@ func writeSectionReadme(outDir, docTitle, source, pdf string, p *Profile,
 	fmt.Fprintf(&b, "- プロファイル: `%s` (節見出しで割る, 天地マージン %.0f/%.0f pt)\n",
 		p.Name, p.MarginTop, p.MarginBottom)
 	fmt.Fprintf(&b, "- 見出し数: %d / 節数: %d\n", nHeads, nSections)
-	fmt.Fprintln(&b, "- 変換経路: pdftotext -table のテキスト層 (OCR・画像解析・モデル不使用)")
+	fmt.Fprintln(&b, "- 変換経路: PDF のテキスト層を版面どおりに組み直したもの (OCR・画像解析・モデル不使用)")
 
 	fmt.Fprintf(&b, "\n## 引き方\n\n")
 	fmt.Fprintln(&b, "- `sections.tsv` — `section / title / file / line / pdfpage` のタブ区切り索引。")
@@ -640,15 +671,14 @@ func writeSectionReadme(outDir, docTitle, source, pdf string, p *Profile,
 	} else {
 		fmt.Fprintln(&b, "`figures/` が無いので、囲みには元 PDF へのリンクしか付いていない。")
 		fmt.Fprintln(&b, "ページを焼いて `figures/` に置き、変換し直すと、囲みの直後に")
-		fmt.Fprintln(&b, "`[ページ画像]` が並ぶ。**pdfbook 自身は画像を作らない。**")
-		fmt.Fprintln(&b, "別途 poppler-utils の `pdftoppm` か Xpdf の `pdftopng` が要る。")
+		fmt.Fprintln(&b, "`[ページ画像]` が並ぶ。焼くのは `pdfbook figures` で、外部の道具は要らない。")
 		fmt.Fprintln(&b)
 		fmt.Fprintln(&b, "このディレクトリで:")
 		fmt.Fprintln(&b)
-		fmt.Fprintln(&b, "    mkdir figures")
-		fmt.Fprintf(&b, "    pdftoppm -png -r 150 <%s のあるパス> figures/p\n", baseName(pdf))
+		fmt.Fprintf(&b, "    pdfbook figures <%s のあるパス> -out .\n", baseName(pdf))
 		fmt.Fprintln(&b)
 		fmt.Fprintln(&b, "そのあと `pdfbook md` をもう一度流す (変換は figures/ を消さない)。")
+		fmt.Fprintln(&b, "はじめから `pdfbook md -figures` で流せば 1 回で済む。")
 	}
 	return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644)
 }

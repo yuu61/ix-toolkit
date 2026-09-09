@@ -4,23 +4,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
-	"strings"
 	"unicode"
 )
 
-// pdftotext (Xpdf 4.x / poppler) を唯一のテキスト抽出エンジンとして使う。
+// PDF の読み方。テキストは pdfium.go のエンジンから文字と外接矩形で受け取り、
+// 版面の組み直しは layout.go が行う。外部コマンドは使わない。
 //
-// 段組み・ヘッダ・フッタは座標ではなく「マージンで削り落とす」ことで扱う。
-// pdftotext の -marginl/-marginr/-margint/-marginb は、指定した端から
-// N ポイント以内にあるテキストを捨てる。これを使うと、
+// 段組み・ヘッダ・フッタは座標ではなく「端から N ポイントを削り落とす」形で
+// 扱う。切り出したい領域はどれもこの形で書ける。
 //
-//	左カラムだけ  : -marginr <ガター左端>
-//	右カラムだけ  : -marginl <ガター右端>
-//	ヘッダだけ    : -marginb <ヘッダのすぐ下>
-//	フッタだけ    : -margint <フッタのすぐ上>
+//	左カラムだけ  : 右端から <ガター右まで> を削る
+//	右カラムだけ  : 左端から <ガター左まで> を削る
+//	ヘッダだけ    : 下端から <ヘッダのすぐ下まで> を削る
+//	フッタだけ    : 上端から <フッタのすぐ上まで> を削る
 //
-// が 1 コマンドで得られる。OCR も座標計算も要らない。
+// プロファイルの数値がこの「端からの幅」であり、以前 pdftotext に渡していた
+// -marginl/r/t/b と同じ意味を持つ。較正済みのプロファイルはそのまま使える。
 
 // Profile は 1 冊の PDF のページ幾何と構造マーカーを表す。
 // probe サブコマンドが自動較正して JSON で吐く。
@@ -38,12 +37,12 @@ type Profile struct {
 	// --- 段組み ---
 	// Columns=1 なら GutterLeft/GutterRight は使わない。
 	Columns     int     `json:"columns"`
-	GutterLeft  float64 `json:"gutterLeft"`  // 左カラム抽出時の -marginr
-	GutterRight float64 `json:"gutterRight"` // 右カラム抽出時の -marginl
+	GutterLeft  float64 `json:"gutterLeft"`  // 左カラム抽出時に右端から削る幅
+	GutterRight float64 `json:"gutterRight"` // 右カラム抽出時に左端から削る幅
 
 	// --- ヘッダ・フッタ帯 (メタデータとして別に抜く) ---
-	HeaderBand float64 `json:"headerBand"` // ヘッダだけ残す -marginb。0 なら抽出しない
-	FooterBand float64 `json:"footerBand"` // フッタだけ残す -margint。0 なら抽出しない
+	HeaderBand float64 `json:"headerBand"` // ヘッダだけ残すため下端から削る幅。0 なら抽出しない
+	FooterBand float64 `json:"footerBand"` // フッタだけ残すため上端から削る幅。0 なら抽出しない
 
 	// --- 構造マーカー ---
 	//
@@ -117,59 +116,36 @@ func (p *Profile) Save(path string) error {
 	return os.WriteFile(path, append(b, '\n'), 0o644)
 }
 
-// --- pdftotext 実行 ---
+// --- 抽出 ---
 
-// pdftotextAvailable は pdftotext が PATH にあるか調べる。
-func pdftotextAvailable() error {
-	if _, err := exec.LookPath("pdftotext"); err != nil {
-		return fmt.Errorf("pdftotext が見つかりません。poppler-utils または Xpdf をインストールしてください: %w", err)
-	}
-	return nil
-}
-
-// extract は pdftotext を 1 回だけ起動し、ページごとに分割した文字列を返す。
-// pdftotext はページ境界に改ページ (\f) を出すので、それで分ける。
-// 852 ページでも 1 回の起動で 2 秒足らずで終わるため、ページ単位で呼んではいけない。
-func extract(pdf string, extraArgs ...string) ([]string, error) {
-	args := append([]string{"-enc", "UTF-8", "-eol", "unix"}, extraArgs...)
-	args = append(args, pdf, "-")
-
-	cmd := exec.Command("pdftotext", args...)
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+// extractPages は 1 冊を読み、ページごとのテキストを返す。
+// PDF は開いたまま使い回されるので、経路ごとに呼び直してよい。
+func extractPages(pdf string, c crop, grid bool) ([]string, error) {
+	d, err := openDoc(pdf)
 	if err != nil {
-		return nil, fmt.Errorf("pdftotext 失敗 (%w): %s", err, strings.TrimSpace(stderr.String()))
+		return nil, err
 	}
-
-	pages := strings.Split(string(out), "\f")
-	// 末尾の改ページで余分な空要素が 1 つ出る
-	if n := len(pages); n > 0 && strings.TrimSpace(pages[n-1]) == "" {
-		pages = pages[:n-1]
+	out := make([]string, len(d.pages))
+	for i, pg := range d.pages {
+		out[i] = renderPage(pg, c, grid)
 	}
-	for i := range pages {
-		pages[i] = strings.ReplaceAll(pages[i], "\r", "")
-	}
-	return pages, nil
+	return out, nil
 }
 
-// bodyArgs は本文帯 (ヘッダ・フッタを除いた領域) を切り出す共通マージン。
-func (p *Profile) bodyArgs() []string {
-	return []string{
-		"-margint", ftoa(p.MarginTop),
-		"-marginb", ftoa(p.MarginBottom),
-	}
+// bodyCrop は本文帯 (ヘッダ・フッタを除いた領域) の切り出し。
+func (p *Profile) bodyCrop() crop {
+	return crop{top: p.MarginTop, bottom: p.MarginBottom}
 }
 
-// ExtractColumns は 1 冊を高々 3 回のパスで読み、ページごとの本文を返す。
+// ExtractColumns は 1 冊を読み、ページごとの本文を返す。
 //
 //	left  : 左カラム
 //	right : 右カラム
 //	full  : ページ全幅 (段抜きの図表・目次・章扉用)
 func (p *Profile) ExtractColumns(pdf string) (left, right, full []string, err error) {
-	body := p.bodyArgs()
+	body := p.bodyCrop()
 
-	full, err = extract(pdf, append([]string{"-layout"}, body...)...)
+	full, err = extractPages(pdf, body, true)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -177,62 +153,60 @@ func (p *Profile) ExtractColumns(pdf string) (left, right, full []string, err er
 		return nil, nil, full, nil
 	}
 
-	left, err = extract(pdf, append([]string{"-layout", "-marginr", ftoa(p.GutterLeft)}, body...)...)
+	lc, rc := body, body
+	lc.right = p.GutterLeft
+	rc.left = p.GutterRight
+
+	left, err = extractPages(pdf, lc, true)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	right, err = extract(pdf, append([]string{"-layout", "-marginl", ftoa(p.GutterRight)}, body...)...)
+	right, err = extractPages(pdf, rc, true)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	return left, right, full, nil
 }
 
-// ExtractBody は本文を 1 パスで読む。段組みを持たない資料の経路。
-//
-// -layout ではなく -table を使う。この違いは体裁ではなく正しさの問題である。
-// -layout は本文の座標をそのまま空白に写すため、罫線で組まれた表の行がずれる。
-// 実測 (機能説明書 1-7 の諸元表) では、-layout だと
-//
-//	VLAN 設定数    (空)  8  -  1000※1  32  同左
-//
-// となり、正しい 32/32/32/32/32/1000※1/32/32 と機種の対応が全部ずれた。
-// 抽出は成功しているように見えるので、この崩れは出力を見ても分からない。
-// -table は語の x 座標を列に束ね直すので、同じ表が正しく出る。
+// ExtractBody は本文を読む。段組みを持たない資料の経路。
 func (p *Profile) ExtractBody(pdf string) ([]string, error) {
-	return extract(pdf, append([]string{"-table"}, p.bodyArgs()...)...)
+	return extractPages(pdf, p.bodyCrop(), true)
 }
 
 // ExtractBands はヘッダ帯・フッタ帯を別々に抜く。
 // このマニュアルではヘッダ = 節名、フッタ = 印刷ページ番号 (例 "3-29") であり、
 // 目次を解析しなくてもここから章・節の構造がそのまま取れる。
+//
+// 帯は桁を揃えない。1 行の文字列として読むだけなので、空きは空白 1 つに潰す。
 func (p *Profile) ExtractBands(pdf string) (headers, footers []string, err error) {
 	if p.HeaderBand > 0 {
-		headers, err = extract(pdf, "-raw", "-marginb", ftoa(p.HeaderBand))
+		headers, err = extractPages(pdf, crop{bottom: p.HeaderBand}, false)
 		if err != nil {
 			return nil, nil, err
-		}
-		for i := range headers {
-			headers[i] = strings.TrimSpace(headers[i])
 		}
 	}
 	if p.FooterBand > 0 {
-		footers, err = extract(pdf, "-raw", "-margint", ftoa(p.FooterBand))
+		footers, err = extractPages(pdf, crop{top: p.FooterBand}, false)
 		if err != nil {
 			return nil, nil, err
-		}
-		for i := range footers {
-			footers[i] = strings.TrimSpace(footers[i])
 		}
 	}
 	return headers, footers, nil
 }
 
-// --- 補助 ---
-
-func ftoa(f float64) string {
-	return fmt.Sprintf("%g", f)
+// pageSize は PDF の 1 ページ目の寸法を返す。probe が版面の較正に使う。
+func pageSize(pdf string) (width, height float64, err error) {
+	d, err := openDoc(pdf)
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(d.pages) == 0 {
+		return 0, 0, fmt.Errorf("ページがありません: %s", pdf)
+	}
+	return d.pages[0].width, d.pages[0].height, nil
 }
+
+// --- 補助 ---
 
 // countGlyphs は空白を除いた文字数を数える。
 // 段組み分割が「取りこぼしも二重取りも無い」ことを検証する不変条件に使う。
@@ -250,13 +224,16 @@ func countGlyphs(s string) int {
 // 紙スキャン由来の画像 PDF ならここが 0 に近くなり、md ではなく
 // scan + OCR の経路が必要だと分かる。
 func hasTextLayer(pdf string, nPages int) (int, error) {
-	pages, err := extract(pdf, "-raw", "-f", "1", "-l", fmt.Sprint(nPages))
+	d, err := openDoc(pdf)
 	if err != nil {
 		return 0, err
 	}
 	total := 0
-	for _, pg := range pages {
-		total += countGlyphs(pg)
+	for i, pg := range d.pages {
+		if i >= nPages {
+			break
+		}
+		total += len(pg.glyphs)
 	}
 	return total, nil
 }

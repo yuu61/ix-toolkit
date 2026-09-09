@@ -8,15 +8,16 @@ import (
 	"strings"
 )
 
-// probe サブコマンド: PDF を数十回試し読みして Profile を自動較正する。
+// probe サブコマンド: PDF を試し読みして Profile を自動較正する。
 //
-// 較正はすべて「pdftotext を走らせて文字数を数える」だけで行う。PDF の内部構造
-// (MediaBox, フォント, CMap) を一切パースしないので、CJK の CMap 対応で崩れる
-// 心配がない。判定はどれも目視ではなく数値の不変条件で行う。
+// 較正は「領域を削って、残る文字数を数える」だけで行う。判定はどれも目視では
+// なく数値の不変条件で行う。
+//
+// ページ寸法だけは数えずにエンジンから直接もらう。pdftotext を叩いていた頃は
+// マージンを二分探索して「全部消える幅」と「1 文字も欠けない幅」の和から寸法を
+// 復元していたが、ライブラリならページの寸法そのものが返ってくる。
 
 // sampleRange は較正に使う連続ページ範囲。
-// 飛び飛びのページを指定すると pdftotext が毎回全ページを読むことになるため、
-// 短い連続範囲を数か所とる。
 type sampleRange struct{ lo, hi int }
 
 func runProbe(args []string) {
@@ -33,10 +34,6 @@ func runProbe(args []string) {
 	}
 	pdf := pos[0]
 
-	if err := pdftotextAvailable(); err != nil {
-		fatal(err)
-	}
-
 	// --- 1. テキスト層の有無 ---
 	glyphs, err := hasTextLayer(pdf, 20)
 	if err != nil {
@@ -49,7 +46,7 @@ func runProbe(args []string) {
 		os.Exit(2)
 	}
 
-	all, err := extract(pdf, "-raw")
+	all, err := extractPages(pdf, crop{}, false)
 	if err != nil {
 		fatal(err)
 	}
@@ -68,8 +65,11 @@ func runProbe(args []string) {
 	fmt.Printf("サンプル: %s\n\n", describe(sample))
 
 	// --- 2. ページ寸法 ---
-	p.PageWidth = findPageSize(pdf, sample, false)
-	p.PageHeight = findPageSize(pdf, sample, true)
+	w, h, err := pageSize(pdf)
+	if err != nil {
+		fatal(err)
+	}
+	p.PageWidth, p.PageHeight = math.Round(w*100)/100, math.Round(h*100)/100
 	fmt.Printf("ページ寸法  : %.0f x %.0f pt\n", p.PageWidth, p.PageHeight)
 
 	// --- 3. ヘッダ・フッタ帯 ---
@@ -89,7 +89,7 @@ func runProbe(args []string) {
 	gl, gr, cols, score, total := findGutter(p, pdf, sample)
 	p.Columns, p.GutterLeft, p.GutterRight = cols, gl, gr
 	if cols >= 2 {
-		fmt.Printf("段組み      : %d 段 (左 -marginr %.0f / 右 -marginl %.0f)\n", cols, gl, gr)
+		fmt.Printf("段組み      : %d 段 (左カラムは右端から %.0f / 右カラムは左端から %.0f を削る)\n", cols, gl, gr)
 		fmt.Printf("段割り検証  : 取りこぼし・二重取り %d 文字 / %d 文字\n", score, total)
 	} else {
 		fmt.Printf("段組み      : 1 段 (最良の段割りでもずれ %d 文字 / %d 文字あり)\n", score, total)
@@ -149,69 +149,24 @@ func describe(s []sampleRange) string {
 	return strings.Join(parts, ", ")
 }
 
-// sampleGlyphs はサンプル窓を読み、空白を除いた総文字数を返す。
-func sampleGlyphs(pdf string, sample []sampleRange, args ...string) int {
+// sampleGlyphs はサンプル窓に残る文字数を数える。
+func sampleGlyphs(pdf string, sample []sampleRange, c crop) int {
+	d, err := openDoc(pdf)
+	if err != nil {
+		return 0
+	}
 	total := 0
 	for _, r := range sample {
-		pages, err := extract(pdf, append(args, "-f", fmt.Sprint(r.lo), "-l", fmt.Sprint(r.hi))...)
-		if err != nil {
-			return 0
-		}
-		for _, pg := range pages {
-			total += countGlyphs(pg)
+		for i := r.lo; i <= r.hi && i <= len(d.pages); i++ {
+			pg := d.pages[i-1]
+			for _, g := range pg.glyphs {
+				if c.keep(g, pg.width, pg.height) {
+					total++
+				}
+			}
 		}
 	}
 	return total
-}
-
-// findPageSize はページの幅または高さを求める。
-//
-// マージンは「ページの端から」測られるので、ページ寸法が分からないと
-// 段組みの位置を絶対座標で指定できない。PDF の MediaBox を読まずに、
-// pdftotext の応答だけから次の恒等式で復元する:
-//
-//	端Aからの余白 + 端Bからの余白 + 文字の占める幅 == ページ寸法
-//
-// 具体的には「全部消える -marginr の値」= 幅 - 左端 と
-// 「全部消え始める -marginl の値」= 左端 を足し合わせる。
-func findPageSize(pdf string, sample []sampleRange, vertical bool) float64 {
-	nearFlag, farFlag := "-marginr", "-marginl" // 水平: 右端から / 左端から
-	if vertical {
-		nearFlag, farFlag = "-margint", "-marginb"
-	}
-	span := findExtent(pdf, nearFlag, sample)  // ページ寸法 - 文字の最小座標
-	offset := findMargin(pdf, farFlag, sample) // 文字の最小座標
-	return math.Round(span + offset)
-}
-
-// findExtent はマージンを広げ、テキストが完全に消える境界を二分探索する。
-func findExtent(pdf string, marginFlag string, sample []sampleRange) float64 {
-	lo, hi := 0.0, 2400.0
-	for hi-lo > 1 {
-		mid := (lo + hi) / 2
-		if sampleGlyphs(pdf, sample, "-raw", marginFlag, ftoa(mid)) > 0 {
-			lo = mid // まだテキストが残っている
-		} else {
-			hi = mid // 全部消えた
-		}
-	}
-	return math.Round(hi)
-}
-
-// findMargin はテキストが 1 文字も欠けない最大のマージンを二分探索する。
-// これが版面の余白 (＝最も端に寄った文字の座標) になる。
-func findMargin(pdf string, marginFlag string, sample []sampleRange) float64 {
-	base := sampleGlyphs(pdf, sample, "-raw")
-	lo, hi := 0.0, 2400.0
-	for hi-lo > 1 {
-		mid := (lo + hi) / 2
-		if sampleGlyphs(pdf, sample, "-raw", marginFlag, ftoa(mid)) == base {
-			lo = mid // まだ 1 文字も欠けていない
-		} else {
-			hi = mid // 削り始めた
-		}
-	}
-	return math.Round(lo)
 }
 
 // findRunningBand は柱 (ヘッダ) またはノンブル (フッタ) の位置を突き止める。
@@ -221,15 +176,17 @@ func findMargin(pdf string, marginFlag string, sample []sampleRange) float64 {
 //
 // 戻り値は (本文を切り出すマージン, その帯だけを残すための逆側マージン)。
 func findRunningBand(pdf string, sample []sampleRange, top bool, pageHeight float64) (bodyMargin, bandMargin float64) {
-	cutFlag := "-marginb"
-	if top {
-		cutFlag = "-margint"
+	cut := func(m float64) crop {
+		if top {
+			return crop{top: m}
+		}
+		return crop{bottom: m}
 	}
 
-	base := sampleGlyphs(pdf, sample, "-raw")
+	base := sampleGlyphs(pdf, sample, crop{})
 	prev := base
 	for m := 2.0; m <= pageHeight/4; m += 2 {
-		n := sampleGlyphs(pdf, sample, "-raw", cutFlag, ftoa(m))
+		n := sampleGlyphs(pdf, sample, cut(m))
 		// 柱は既に落ちて (n < base)、本文にはまだ届いていない (n == prev)
 		if n < base && n == prev {
 			// 版面のゆらぎを見込んで本文側は少し内側に寄せる。
@@ -241,53 +198,115 @@ func findRunningBand(pdf string, sample []sampleRange, top bool, pageHeight floa
 	return 0, 0 // 柱・ノンブルなし
 }
 
-// findGutter は段間の切れ目を総当たりで決める。
+// findGutter は段間の切れ目を決める。
 //
-// 判定基準は目視ではなく不変条件:
+// 段間は「どの字も掛かっていない縦の帯」なので、字の占める x 区間を塗って、
+// ページ中央寄りで最も広い空白帯を採る。その帯の左端より左が左カラム、
+// 右端より右が右カラムになる。
+//
+// 不変条件の一致だけで決めてはいけない:
 //
 //	左カラムの文字数 + 右カラムの文字数 == ページ全体の文字数
 //
-// これが崩れるのは「どちらにも入らない文字がある」(ガターが広すぎる) か
-// 「両方に入る文字がある」(狭すぎる) ときだけなので、ずれ量が最小の位置を採る。
-// 4pt ずれていても目視では気づけないが、この数値は必ず反応する。
+// これは「取りこぼしも二重取りも無い」ことしか言わない。切れ目が右カラムの
+// 内側にあっても、はみ出した字は左カラム側に入るので数は合う。実際、この
+// 条件だけで選ぶと切れ目が右カラムの項目記号 (■) より右に寄り、記号が
+// 左カラムの末尾に紛れて項目が 2039 件から 1422 件に落ちた。数が合うことは
+// 必要だが、切れ目が空白帯にあることの証明にはならない。
+//
+// そこで空白帯で位置を決め、不変条件は検算に使う。
 func findGutter(p *Profile, pdf string, sample []sampleRange) (gutterLeft, gutterRight float64, columns, bestScore, total int) {
-	body := p.bodyArgs()
-	total = sampleGlyphs(pdf, sample, append([]string{"-layout"}, body...)...)
+	body := p.bodyCrop()
+	total = sampleGlyphs(pdf, sample, body)
 	if total == 0 {
 		return 0, 0, 1, 0, 0
 	}
 
-	bestScore = -1
-	var best []float64 // 最小スコアを出した切れ目 (絶対 x) をすべて覚える
-	center := p.PageWidth / 2
-	for c := center - p.PageWidth*0.25; c <= center+p.PageWidth*0.25; c += 4 {
-		lm := p.PageWidth - c + 3 // 左カラム: -marginr
-		rm := c + 3               // 右カラム: -marginl
-		if lm <= 0 || rm <= 0 {
-			continue
-		}
-		ln := sampleGlyphs(pdf, sample, append([]string{"-layout", "-marginr", ftoa(lm)}, body...)...)
-		rn := sampleGlyphs(pdf, sample, append([]string{"-layout", "-marginl", ftoa(rm)}, body...)...)
-		if ln == 0 || rn == 0 {
-			continue // 片側に寄りすぎ = 段組みとして成立していない
-		}
-		score := abs(ln + rn - total)
-		if bestScore < 0 || score < bestScore {
-			bestScore, best = score, []float64{c}
-		} else if score == bestScore {
-			best = append(best, c)
-		}
+	lo, hi, ok := findEmptyBand(pdf, sample, p, body)
+	if !ok {
+		return 0, 0, 1, total, total
 	}
+
+	// 切れ目は帯の中央に置き、前後 3pt だけを死角として残す。
+	//
+	// 帯の幅そのものを死角にしてはいけない。その中に落ちた字はどちらの段にも
+	// 入らず、ページごとの段組み判定 (左+右 == 全体) が崩れて、本文ページまで
+	// 全幅として読まれる (帯を 18pt 取ったとき 2 段と判定できたページが
+	// 703 から 603 に減った)。逆に死角を無くすと、段をまたぐ図表がきれいに
+	// 左右へ割れてしまい、全幅のページを見つけられなくなる。
+	c := (lo + hi) / 2
+	lc, rc := body, body
+	lc.right = p.PageWidth - (c - 3) // 左カラム: 切れ目から右を捨てる
+	rc.left = c + 3                  // 右カラム: 切れ目から左を捨てる
+	ln := sampleGlyphs(pdf, sample, lc)
+	rn := sampleGlyphs(pdf, sample, rc)
+	bestScore = abs(ln + rn - total)
 
 	// 取りこぼし・二重取りが本文の 1% を超えるなら 2 段組みではない
-	if bestScore < 0 || bestScore > total/100 {
+	if ln == 0 || rn == 0 || bestScore > total/100 {
 		return 0, 0, 1, bestScore, total
 	}
+	return math.Round(lc.right), math.Round(rc.left), 2, bestScore, total
+}
 
-	// 同点の切れ目が連続して並ぶのが段間の空白そのもの。その中央を採ると、
-	// 版面が多少ゆれても両側に余裕が残る。端を採ると片側だけ余裕が無くなる。
-	c := best[len(best)/2]
-	return math.Round(p.PageWidth - c + 3), math.Round(c + 3), 2, bestScore, total
+// findEmptyBand はページ中央寄りで最も広い、字の掛からない縦の帯を返す。
+func findEmptyBand(pdf string, sample []sampleRange, p *Profile, body crop) (lo, hi float64, ok bool) {
+	d, err := openDoc(pdf)
+	if err != nil {
+		return 0, 0, false
+	}
+
+	// 1pt 刻みで、その位置に字が掛かるページ数を数える。
+	//
+	// 「1 ページでも掛かったら段間ではない」としてはいけない。段抜きの表や図が
+	// あるページでは段間も埋まるので、サンプルを重ねると帯が消える (実測では
+	// 24 ページ中の数ページで塞がり、段組みなしと誤判定した)。
+	w := int(math.Ceil(p.PageWidth))
+	count := make([]int, w+1)
+	pages := 0
+	for _, r := range sample {
+		for i := r.lo; i <= r.hi && i <= len(d.pages); i++ {
+			pg := d.pages[i-1]
+			pages++
+			seen := make([]bool, w+1)
+			for _, g := range pg.glyphs {
+				if !body.keep(g, pg.width, pg.height) {
+					continue
+				}
+				for x := int(math.Floor(g.left)); x <= int(math.Ceil(g.right)) && x <= w; x++ {
+					if x >= 0 && !seen[x] {
+						seen[x] = true
+						count[x]++
+					}
+				}
+			}
+		}
+	}
+	if pages == 0 {
+		return 0, 0, false
+	}
+	limit := pages / 10
+
+	// 中央 50% の範囲だけを見る。左右の余白は段間ではない。
+	from, to := w/4, w*3/4
+	bestLo, bestHi := -1, -1
+	for x := from; x <= to; x++ {
+		if count[x] > limit {
+			continue
+		}
+		y := x
+		for y+1 <= to && count[y+1] <= limit {
+			y++
+		}
+		if bestLo < 0 || y-x > bestHi-bestLo {
+			bestLo, bestHi = x, y
+		}
+		x = y
+	}
+	if bestLo < 0 || bestHi-bestLo < 2 {
+		return 0, 0, false
+	}
+	return float64(bestLo), float64(bestHi), true
 }
 
 // --- 補助 ---
