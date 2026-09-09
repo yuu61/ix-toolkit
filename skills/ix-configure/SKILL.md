@@ -3,12 +3,14 @@ name: ix-configure
 description: NEC IX に設定を投入する。config モードで設定行を適用する。対象機器は --device で指定する。ユーザーが NEC IX の設定変更・投入を求めたときに使用する
 argument-hint: "[機器名] [変更内容の説明] (e.g., home デフォルトルート追加)"
 allowed-tools:
+  - Bash(uv:*)
   - Bash(python:*)
+  - Bash(python3:*)
 ---
 
 # NEC IX 設定投入
 
-`~/.claude/skills/ix-ssh.py --config` 経由で NEC IX に設定を投入する。
+`${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py --config` 経由で NEC IX に設定を投入する。
 
 **これは破壊的操作である。投入前に必ず「対象機器」と「設定行」をユーザーに提示し、確認を取ること。**
 
@@ -17,7 +19,7 @@ allowed-tools:
 機器はインベントリ `~/.claude/ix-devices.json` に定義し、`--device <名前>`（短縮 `-d`）で選ぶ。**既定機器は無い**。省略するとエラーと機器一覧が返る（設定が別の機器に流れ込む事故を防ぐための設計であり、埋め合わせに機器名を推測してはならない）。
 
 ```bash
-python ~/.claude/skills/ix-ssh.py --list
+uv run --script ${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py --list
 ```
 
 インベントリに無い機器は `--host <IP> --user <ユーザー>` でその場指定できる。認証はインベントリに書いた `password`（**平文でそのまま直書きしてよい**）が第一。以降 `password_env`（変数名だけ書く方式）→ `key_file`（鍵認証）→ `$IX_PASS` の順に解決される。機器自身の資格情報がグローバルな `$IX_PASS` より優先されるので、変数の消し忘れが別機器に飛ぶことはない。どこからも取得できなければ即エラー（自動でパスワードを聞きに行かない）。
@@ -65,7 +67,7 @@ python ~/.claude/skills/ix-ssh.py --list
 確認が取れたら実行する（どこからでも実行可。スクリプトは絶対パス指定）:
 
 ```bash
-python ~/.claude/skills/ix-ssh.py -d <機器名> \
+uv run --script ${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py -d <機器名> \
   --config "ip route default GigaEthernet1.0" \
   --config "logging buffered 100" \
   --save
@@ -74,7 +76,7 @@ python ~/.claude/skills/ix-ssh.py -d <機器名> \
 行数が多い場合はファイルから:
 
 ```bash
-python ~/.claude/skills/ix-ssh.py -d <機器名> --config-file changes.ix --save
+uv run --script ${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py -d <機器名> --config-file changes.ix --save
 ```
 
 （`--config-file` は 1 行 1 コマンド、`#` 始まりはコメント）

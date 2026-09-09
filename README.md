@@ -4,7 +4,9 @@ NEC IX を [Claude Code](https://claude.com/claude-code) から
 運用するための skill 一式と、その参照マニュアルを作る PDF → Markdown 変換ツール。
 
 ```
+.claude-plugin/ plugin manifest (これがあるので skills-dir plugin として載る)
 skills/        Claude Code の skill
+scripts/       skill が呼ぶ NEC IX 用 SSH クライアント
 cmd/pdfbook/   PDF のマニュアルを Markdown に変換する
 profiles/      pdfbook の変換プロファイル
 ```
@@ -23,11 +25,43 @@ profiles/      pdfbook の変換プロファイル
 
 ### インストール
 
+`~/.claude/skills/` の下へ clone する。`.claude-plugin/plugin.json` を持つディレクトリは
+skills-dir plugin として次のセッションから自動で載るので、marketplace も install 手続きも要らない。
+
 ```console
-$ git clone https://github.com/yuu61/ix-toolkit
-$ cp -r ix-toolkit/skills/* ~/.claude/skills/
-$ pip install netmiko paramiko
+$ git clone https://github.com/yuu61/ix-toolkit $HOME/.claude/skills/ix-toolkit
 ```
+
+**依存を入れる手順は無い。** `scripts/ix-ssh.py` の先頭に PEP 723 のインラインメタデータ
+（`requires-python` と netmiko / paramiko）を書いてあり、skill は
+[uv](https://docs.astral.sh/uv/) の `uv run --script` で呼ぶので、必要な Python 3.10 以上と
+依存は初回実行時に自動で用意される。2 回目以降はキャッシュが効いて素の `python` との差は
+0.2 秒ほど。**要るのは `uv` が PATH に通っていることだけ。**
+
+uv を置かない場合は venv を作る。**システムの Python へ直接 `pip install` する手は使えない。**
+Debian / Ubuntu / Fedora や Homebrew の Python は PEP 668 で外部管理と宣言されていて、
+`error: externally-managed-environment` で止まる。
+
+```console
+$ python3 -m venv $HOME/.venvs/ix-toolkit
+$ $HOME/.venvs/ix-toolkit/bin/pip install "netmiko>=4.7" "paramiko>=3.0"
+```
+
+この場合、skill は `uv: command not found` で止まるので、SKILL.md の `uv run --script` を
+その venv の python に書き換える（`allowed-tools` は `python` / `python3` も許可してある）。
+
+**`~` ではなく `$HOME` と書く。** `$HOME` は bash / zsh / PowerShell 7 / Windows PowerShell 5.1
+のどれでも展開されるが、`~` は 5.1 で展開されず、カレントに `~` という名前のディレクトリが
+作られたうえでエラーも出ない。無い親ディレクトリは `git clone` 自身が作るので `mkdir` は要らない。
+
+skill には plugin 名の名前空間が付いて `/ix-toolkit:ix-show` になる（名前が衝突しなければ
+`/ix-show` でも引ける）。更新は `git pull`、止めるときは
+`claude plugin disable ix-toolkit@skills-dir` かディレクトリごと削除する。
+
+**旧版（`cp -r` で置いた複製）から移るときは古い方を消す。** 残すと同じ skill が二重に載り、
+古い方は移動した `ix-ssh.py` を `~/.claude/skills/ix-ssh.py` に探して失敗する。消すのは
+`~/.claude/skills/` 直下の `ix-show` / `ix-manual` / `ix-backup` / `ix-configure` / `ix-save`
+の 5 ディレクトリと `ix-ssh.py`。
 
 接続先はインベントリ `~/.claude/ix-devices.json` に定義する。**このリポジトリには含まれない。**
 
@@ -47,7 +81,7 @@ $ pip install netmiko paramiko
 `host` は IP でも `~/.ssh/config` のエイリアスでもよく、`ProxyJump` の踏み台も自動で辿る。
 
 ```console
-$ python ~/.claude/skills/ix-ssh.py --list      # 登録済み機器の一覧 (パスワードは表示しない)
+$ uv run --script $HOME/.claude/skills/ix-toolkit/scripts/ix-ssh.py --list   # 登録済み機器の一覧
 ```
 
 **既定機器は無い。** `--device` を省略するとエラーになる。設定が意図しない機器へ流れ込む

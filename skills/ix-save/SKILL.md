@@ -3,12 +3,14 @@ name: ix-save
 description: NEC IX の running-config を startup-config に保存する（write memory）。対象機器は --device で指定する。設定変更後の永続化に使用する
 argument-hint: "[機器名] (e.g., home)"
 allowed-tools:
+  - Bash(uv:*)
   - Bash(python:*)
+  - Bash(python3:*)
 ---
 
 # NEC IX 設定保存（write memory）
 
-`~/.claude/skills/ix-ssh.py --save` 経由で、現在の running-config を startup-config に保存する。
+`${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py --save` 経由で、現在の running-config を startup-config に保存する。
 
 **save（write memory）を実行しないと、再起動時に設定が失われる。`/ix-configure` 実行後に必ず提案すること。**
 
@@ -17,7 +19,7 @@ allowed-tools:
 機器はインベントリ `~/.claude/ix-devices.json` に定義し、`--device <名前>`（短縮 `-d`）で選ぶ。**既定機器は無い**。省略するとエラーと機器一覧が返る。
 
 ```bash
-python ~/.claude/skills/ix-ssh.py --list
+uv run --script ${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py --list
 ```
 
 インベントリに無い機器は `--host <IP> --user <ユーザー>` でその場指定できる。認証はインベントリに書いた `password`（**平文でそのまま直書きしてよい**）が第一。以降 `password_env`（変数名だけ書く方式）→ `key_file`（鍵認証）→ `$IX_PASS` の順に解決される。機器自身の資格情報がグローバルな `$IX_PASS` より優先されるので、変数の消し忘れが別機器に飛ぶことはない。どこからも取得できなければ即エラー（自動でパスワードを聞きに行かない）。
@@ -44,7 +46,7 @@ running-config を startup-config に保存します（write memory）。よろ�
 ### 2. 保存実行（どこからでも実行可。スクリプトは絶対パス指定）
 
 ```bash
-python ~/.claude/skills/ix-ssh.py -d <機器名> --save
+uv run --script ${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py -d <機器名> --save
 ```
 
 スクリプトは config モードに入り `write memory` を実行する（netmiko `save_config`）。

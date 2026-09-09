@@ -3,12 +3,14 @@ name: ix-show
 description: NEC IX の show コマンドを実行して状態を確認する（インターフェース, ルーティング, IPsec, ログ等）。対象機器は --device で指定する。ユーザーが NEC IX の状態確認・表示を求めたときに使用する
 argument-hint: "[機器名] <show コマンド> (e.g., home show ip route)"
 allowed-tools:
+  - Bash(uv:*)
   - Bash(python:*)
+  - Bash(python3:*)
 ---
 
 # NEC IX show コマンド実行
 
-`~/.claude/skills/ix-ssh.py`（netmiko `nec_ix_ssh`）経由で NEC IX の show コマンドを実行する。**読み取り専用**。
+`${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py`（netmiko `nec_ix_ssh`）経由で NEC IX の show コマンドを実行する。**読み取り専用**。
 
 ## 接続先の指定
 
@@ -17,13 +19,13 @@ allowed-tools:
 対象が不明・未確定のときは推測せず、まず一覧を出してユーザーに確認する:
 
 ```bash
-python ~/.claude/skills/ix-ssh.py --list
+uv run --script ${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py --list
 ```
 
 インベントリに無い機器はその場で指定できる:
 
 ```bash
-python ~/.claude/skills/ix-ssh.py --host <IP/ホスト名> --user <ユーザー> "show version"
+uv run --script ${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py --host <IP/ホスト名> --user <ユーザー> "show version"
 ```
 
 認証はインベントリに書いた `password`（**平文でそのまま直書きしてよい**）が第一。以降 `password_env`（変数名だけ書く方式）→ `key_file`（鍵認証）→ `$IX_PASS` の順に解決される。機器自身の資格情報がグローバルな `$IX_PASS` より優先されるので、変数の消し忘れが別機器に飛ぶことはない。どこからも取得できなければ即エラー（自動でパスワードを聞きに行かない）。
@@ -54,9 +56,9 @@ show コマンドは `"show ..."` 全体を 1 つの引数として渡す（複�
 3. 以下を実行する（どこからでも実行可。スクリプトは絶対パス指定）:
 
    ```bash
-   python ~/.claude/skills/ix-ssh.py -d <機器名> "show ip route"
+   uv run --script ${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py -d <機器名> "show ip route"
    # 複数まとめて:
-   python ~/.claude/skills/ix-ssh.py -d <機器名> "show interfaces" "show ipv6 route"
+   uv run --script ${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py -d <機器名> "show interfaces" "show ipv6 route"
    ```
 
 4. 標準エラーに `# target: <機器名> (<user>@<host>:<port>, ...)` が出るので、**意図した機器に接続したことを確認**してから出力を整形し、状態をわかりやすくレポートする。

@@ -1,45 +1,49 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["netmiko>=4.7", "paramiko>=3.0"]
+# ///
 """Run commands on a NEC IX router (IX OS 10.x) over SSH using netmiko's nec_ix driver.
 
 Device-agnostic: no host, credential or model is baked into this file. Targets are
 resolved from an inventory file (default ~/.claude/ix-devices.json) via --device, or
-given inline with --host/--user. The global ix-* skills call this by absolute path.
+given inline with --host/--user. The ix-* skills call this as ${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py.
 
 Usage:
     # list the configured devices (never prints passwords):
-    python ix-ssh.py --list
+    uv run --script ix-ssh.py --list
 
     # show commands. NEC IX runs running-config and most feature shows only inside
     # "config/enable" mode, so every show is executed there. Paging is auto-off.
-    python ix-ssh.py --device home-ix3315 "show version"
-    python ix-ssh.py -d home-ix3315 "show ip route" "show interfaces"
+    uv run --script ix-ssh.py --device home-ix3315 "show version"
+    uv run --script ix-ssh.py -d home-ix3315 "show ip route" "show interfaces"
 
     # ad-hoc target without an inventory entry:
-    python ix-ssh.py --host 192.0.2.1 --user admin "show running-config"
+    uv run --script ix-ssh.py --host 192.0.2.1 --user admin "show running-config"
 
     # "host" may be a ~/.ssh/config alias; ProxyJump is followed automatically:
-    python ix-ssh.py --host room1 --user admin "show version"
+    uv run --script ix-ssh.py --host room1 --user admin "show version"
 
     # config changes (DESTRUCTIVE - confirm before running). Each --config is one
     # line; multiple are applied in a single config session.
-    python ix-ssh.py -d home-ix3315 \
+    uv run --script ix-ssh.py -d home-ix3315 \
         --config "ip route default GigaEthernet1.0" \
         --config "logging buffered 100" \
         --save
 
     # apply a batch of config lines from a file (one per line; # comments allowed):
-    python ix-ssh.py -d home-ix3315 --config-file changes.ix --save
+    uv run --script ix-ssh.py -d home-ix3315 --config-file changes.ix --save
 
     # persist running-config to startup (write memory):
-    python ix-ssh.py -d home-ix3315 --save
+    uv run --script ix-ssh.py -d home-ix3315 --save
 
     # back up running-config to a file (parent dirs auto-created; default name is
     # backups/<device>-<YYYYMMDD-HHMMSS>.conf):
-    python ix-ssh.py -d home-ix3315 --backup
-    python ix-ssh.py -d home-ix3315 --backup backups/before-change.conf
+    uv run --script ix-ssh.py -d home-ix3315 --backup
+    uv run --script ix-ssh.py -d home-ix3315 --backup backups/before-change.conf
 
     # clean output without "===== cmd =====" headers (for redirection):
-    python ix-ssh.py -d home-ix3315 --raw "show running-config" > ix.conf
+    uv run --script ix-ssh.py -d home-ix3315 --raw "show running-config" > ix.conf
 
 Inventory (JSON, default ~/.claude/ix-devices.json, override with $IX_INVENTORY or
 --inventory). Keys starting with "_" are ignored, so they can hold comments:

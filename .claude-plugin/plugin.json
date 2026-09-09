@@ -1,0 +1,11 @@
+{
+  "name": "ix-toolkit",
+  "description": "NEC IX を Claude Code から運用する skill 一式（show / manual / backup / configure / save）",
+  "version": "0.1.0",
+  "author": {
+    "name": "yuu61"
+  },
+  "homepage": "https://github.com/yuu61/ix-toolkit",
+  "repository": "https://github.com/yuu61/ix-toolkit",
+  "license": "MIT"
+}

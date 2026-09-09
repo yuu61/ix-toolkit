@@ -3,12 +3,14 @@ name: ix-backup
 description: NEC IX の running-config をファイルに退避する。対象機器は --device で指定する。設定変更前のバックアップや定期保存に使用する
 argument-hint: "[機器名] [保存先パス（省略可）]"
 allowed-tools:
+  - Bash(uv:*)
   - Bash(python:*)
+  - Bash(python3:*)
 ---
 
 # NEC IX 設定バックアップ
 
-`~/.claude/skills/ix-ssh.py --backup` で running-config を取得してファイルに保存する。**読み取り専用**。スクリプトが親ディレクトリ作成・タイムスタンプ既定名・UTF-8 書き込みまで行うため、`mkdir` やシェルリダイレクトは不要（単一の python コマンドで完結）。
+`${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py --backup` で running-config を取得してファイルに保存する。**読み取り専用**。スクリプトが親ディレクトリ作成・タイムスタンプ既定名・UTF-8 書き込みまで行うため、`mkdir` やシェルリダイレクトは不要（単一の python コマンドで完結）。
 
 ## 接続先の指定
 
@@ -17,7 +19,7 @@ allowed-tools:
 対象が不明なときは推測せず、まず一覧を出してユーザーに確認する:
 
 ```bash
-python ~/.claude/skills/ix-ssh.py --list
+uv run --script ${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py --list
 ```
 
 インベントリに無い機器は `--host <IP> --user <ユーザー>` でその場指定できる。認証はインベントリに書いた `password`（**平文でそのまま直書きしてよい**）が第一。以降 `password_env`（変数名だけ書く方式）→ `key_file`（鍵認証）→ `$IX_PASS` の順に解決される。機器自身の資格情報がグローバルな `$IX_PASS` より優先されるので、変数の消し忘れが別機器に飛ぶことはない。どこからも取得できなければ即エラー（自動でパスワードを聞きに行かない）。
@@ -43,10 +45,10 @@ python ~/.claude/skills/ix-ssh.py --list
 
    ```bash
    # 既定名（backups/<機器名>-<タイムスタンプ>.conf）に保存:
-   python ~/.claude/skills/ix-ssh.py -d <機器名> --backup
+   uv run --script ${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py -d <機器名> --backup
 
    # 保存先を明示:
-   python ~/.claude/skills/ix-ssh.py -d <機器名> --backup backups/before-change.conf
+   uv run --script ${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py -d <機器名> --backup backups/before-change.conf
    ```
 
 3. 標準エラーの `# target: ...` 行で接続先が意図した機器かを確認する。
