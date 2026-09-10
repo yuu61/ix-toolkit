@@ -1,9 +1,7 @@
-package main
+package application
 
 import (
 	"bytes"
-	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,13 +9,16 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
+	"github.com/yuu61/ix-toolkit/internal/manualbook/infrastructure"
 )
 
-// build サブコマンド: マニフェストの資料を取得し、変換し、系列間の差分表まで作る。
+// Build サブコマンド: マニフェストの資料を取得し、変換し、系列間の差分表まで作る。
 //
 // fetch → md → diff を資料ごとにフラグを並べて流すのは手順書を写す作業でしかなく、
 // その指定 (系列・冊子・版・プロファイル) はすべてマニフェストに書いてある。
-// build はマニフェストを唯一の入力にして、手元に何も無い状態から ix-manual が
+// Build はマニフェストを唯一の入力にして、手元に何も無い状態から ix-manual が
 // 読む形 (<manuals>/<系列>/<冊子>/ と <manuals>/ix-r/diff.tsv) まで 1 回で作る。
 //
 // 資料ごとに独立して進め、1 冊が取れなくても残りは作る (PDF は url を書けない
@@ -38,34 +39,20 @@ import (
 // が 150dpi (sections.go の実測)。
 const buildFigureDPI = 150
 
-func runBuild(args []string) {
-	fs := flag.NewFlagSet("build", flag.ExitOnError)
-	manifestPath := fs.String("manifest", "manifest.json", "マニフェスト JSON (profile 等の相対パスはこのファイルの場所から解く)")
-	cacheDir := fs.String("cache", "pdf", "取得キャッシュの置き場 (fetch の -out と同じ)")
-	manualsDir := fs.String("manuals", defaultManualsDir(), "変換結果の置き場。この下に <系列>/<冊子>/ を作る ($IX_MANUALS があればそれ)")
-	force := fs.Bool("force", false, "取得済みの資料も取り直す")
-	only := fs.String("only", "", "この name の資料だけ取得・変換する (diff は揃っていれば作る)")
-	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "使い方: manualbook build [-force] [-only <name>]")
-		fmt.Fprintln(os.Stderr, "  manifest.json の資料を pdf/ に取り、~/.ix-toolkit/manuals/<系列>/<冊子>/ に変換し、diff.tsv を作る。")
-		fmt.Fprintln(os.Stderr, "  PDF の機能説明書はページ画像も焼く (焼いてあれば飛ばす)。")
-		fs.PrintDefaults()
-	}
-	parseFlags(fs, args)
-
-	m, err := readManifest(*manifestPath)
+func Build(manifestPath, cacheDir, manualsDir string, force bool, only string) error {
+	m, err := infrastructure.ReadManifest(manifestPath)
 	if err != nil {
-		fatal(err)
+		return err
 	}
-	if *manualsDir == "" {
-		fatal(fmt.Errorf("変換結果の置き場が決まりません。-manuals で指定してください"))
+	if manualsDir == "" {
+		return fmt.Errorf("変換結果の置き場が決まりません。-manuals で指定してください")
 	}
-	if err := os.MkdirAll(*cacheDir, 0o755); err != nil {
-		fatal(err)
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return err
 	}
 	// マニフェストの中の相対パス (profile、手で導いた差分) はマニフェストの場所から解く。
 	// リポジトリ直下で流すのと、外から -manifest で指すのとで同じ意味になる。
-	manifestDir := filepath.Dir(*manifestPath)
+	manifestDir := filepath.Dir(manifestPath)
 	resolve := func(p string) string {
 		if p == "" || filepath.IsAbs(p) {
 			return p
@@ -76,20 +63,20 @@ func runBuild(args []string) {
 	// 手元で済む資料 (PDF と、取得済みの Web) と、取得を裏で先に始める資料 (これから
 	// 取る Web) に分ける。[i/n] はマニフェストの順ではなくこの順で振る。
 	// 置き場を決められない資料は取りに行っても無駄なので、裏には回さず
-	// 表で checkDoc の理由を出して終わる。
-	var local, web []Doc
+	// 表で CheckDoc の理由を出して終わる。
+	var local, web []domain.Doc
 	for _, d := range m.Docs {
-		if *only != "" && d.Name != *only {
+		if only != "" && d.Name != only {
 			continue
 		}
-		if d.Kind == "web" && checkDoc(d) == nil && (*force || !webFetched(d.cachePath(*cacheDir), d)) {
+		if d.Kind == "web" && domain.CheckDoc(d) == nil && (force || !infrastructure.WebFetched(infrastructure.CachePath(cacheDir, d), d)) {
 			web = append(web, d)
 		} else {
 			local = append(local, d)
 		}
 	}
 	if len(local)+len(web) == 0 {
-		fatal(fmt.Errorf("マニフェストに name %q の資料がありません", *only))
+		return fmt.Errorf("マニフェストに name %q の資料がありません", only)
 	}
 
 	client := &http.Client{Timeout: 5 * time.Minute}
@@ -103,7 +90,7 @@ func runBuild(args []string) {
 	go func() {
 		for k, d := range web {
 			w := &prefixWriter{prefix: d.Name + ": ", dst: os.Stdout}
-			fetched[k] <- fetchDoc(w, client, d, *cacheDir, *force, time.Second, defaultUserAgent)
+			fetched[k] <- infrastructure.FetchDoc(w, client, d, cacheDir, force, time.Second, infrastructure.DefaultUserAgent)
 		}
 	}()
 	if len(local) > 0 && len(web) > 0 {
@@ -115,14 +102,14 @@ func runBuild(args []string) {
 	}
 
 	n, i, failed := len(local)+len(web), 0, 0
-	step := func(d Doc, fetch func() error) {
+	step := func(d domain.Doc, fetch func() error) {
 		i++
-		err := checkDoc(d)
+		err := domain.CheckDoc(d)
 		if err == nil {
-			outDir := filepath.Join(*manualsDir, d.Series, d.Book)
+			outDir := filepath.Join(manualsDir, d.Series, d.Book)
 			fmt.Printf("[%d/%d] %s (%s) → %s\n", i, n, d.Name, d.Kind, outDir)
 			if err = fetch(); err == nil {
-				err = convertDoc(d, *cacheDir, outDir, resolve(d.Profile))
+				err = convertDoc(d, cacheDir, outDir, resolve(d.Profile))
 			}
 		} else {
 			fmt.Printf("[%d/%d] %s (%s)\n", i, n, d.Name, d.Kind)
@@ -134,21 +121,21 @@ func runBuild(args []string) {
 		fmt.Println()
 	}
 	for _, d := range local {
-		step(d, func() error { return fetchIfNeeded(os.Stdout, client, d, *cacheDir, *force) })
+		step(d, func() error { return fetchIfNeeded(os.Stdout, client, d, cacheDir, force) })
 	}
 	for k, d := range web {
 		step(d, func() error { return <-fetched[k] })
 	}
 
 	// 系列間の差分表。無印と IX-R の両方が揃ったときだけ作る。
-	ixDir, ixrDir := filepath.Join(*manualsDir, "ix"), filepath.Join(*manualsDir, "ix-r")
-	if missing := missingFiles(diffInputs(ixDir, ixrDir)); len(missing) == 0 {
+	ixDir, ixrDir := filepath.Join(manualsDir, "ix"), filepath.Join(manualsDir, "ix-r")
+	if missing := missingFiles(infrastructure.DiffInputs(ixDir, ixrDir)); len(missing) == 0 {
 		fmt.Println("diff.tsv (無印 → IX-R のコマンド対応表)")
 		derived := filepath.Join(manifestDir, "profiles", "ix-r-derived-diff.tsv")
 		if _, err := os.Stat(derived); err != nil {
-			derived = "" // writeDiff がカレントと実行ファイルの隣を探し、無ければ警告する
+			derived = "" // Diff がカレントと実行ファイルの隣を探し、無ければ警告する
 		}
-		if err := writeDiff(ixDir, ixrDir, "", derived); err != nil {
+		if err := Diff(ixDir, ixrDir, "", derived); err != nil {
 			fmt.Fprintf(os.Stderr, "  ✗ diff.tsv: %s\n", err)
 			failed++
 		}
@@ -156,46 +143,31 @@ func runBuild(args []string) {
 		fmt.Printf("diff.tsv は作らない (両系列が揃っていない: %s が無い)\n", missing[0])
 	}
 
-	fmt.Printf("\n完了: %d 件中 %d 件 → %s\n", n, n-failed, *manualsDir)
+	fmt.Printf("\n完了: %d 件中 %d 件 → %s\n", n, n-failed, manualsDir)
 	if failed > 0 {
-		os.Exit(1)
-	}
-}
-
-// checkDoc は置き場 <系列>/<冊子>/ を決めるのに要る欄が揃っているかを見る。
-// 冊子名は diff と ix-manual skill が crm / fd で読むので、それ以外は通さない。
-func checkDoc(d Doc) error {
-	switch d.Book {
-	case "crm", "fd":
-	case "":
-		return fmt.Errorf(`book が無い。"crm" (コマンドリファレンス) か "fd" (機能説明書) を書く`)
-	default:
-		return fmt.Errorf(`book %q は知らない ("crm" か "fd")`, d.Book)
-	}
-	if d.Series == "" {
-		return fmt.Errorf(`series が無い。"ix" (IX2000/IX3000) か "ix-r" (IX-R/IX-V) を書く`)
+		return ReportedError(1)
 	}
 	return nil
 }
 
-// fetchIfNeeded は取得済みなら取りに行かない fetchDoc。PDF は実体の有無 (fetchOne が
+// fetchIfNeeded は取得済みなら取りに行かない FetchDoc。PDF は実体の有無 (fetchOne が
 // 見る)、Web は取り切った印 (.manualbook.json の版) で決める。-force ならどちらも取り直す。
-func fetchIfNeeded(w io.Writer, client *http.Client, d Doc, cacheDir string, force bool) error {
-	if d.Kind == "web" && !force && webFetched(d.cachePath(cacheDir), d) {
+func fetchIfNeeded(w io.Writer, client *http.Client, d domain.Doc, cacheDir string, force bool) error {
+	if d.Kind == "web" && !force && infrastructure.WebFetched(infrastructure.CachePath(cacheDir, d), d) {
 		fmt.Fprintf(w, "  = %s (取得済み)\n", d.Name)
 		return nil
 	}
-	return fetchDoc(w, client, d, cacheDir, force, time.Second, defaultUserAgent)
+	return infrastructure.FetchDoc(w, client, d, cacheDir, force, time.Second, infrastructure.DefaultUserAgent)
 }
 
 // convertDoc は取得済みの資料 1 件を <manuals>/<系列>/<冊子>/ に変換する。
 // PDF の機能説明書なら、先にページ画像を焼く (囲みに [ページ画像] を付けるかは
 // 変換時に figures/ を見て決めるので、この順でないとリンクが付かない)。
-func convertDoc(d Doc, cacheDir, outDir, profilePath string) error {
-	p := DefaultProfile()
+func convertDoc(d domain.Doc, cacheDir, outDir, profilePath string) error {
+	p := domain.DefaultProfile()
 	if profilePath != "" {
 		var err error
-		if p, err = LoadProfile(profilePath); err != nil {
+		if p, err = infrastructure.LoadProfile(profilePath); err != nil {
 			return err
 		}
 	}
@@ -205,63 +177,26 @@ func convertDoc(d Doc, cacheDir, outDir, profilePath string) error {
 
 	// ページ画像が要るのは PDF の機能説明書だけ。コマンド辞書として読む資料では
 	// 誰も参照しない (md の側で -figures を断る条件と同じ)。
-	input := d.cachePath(cacheDir)
+	input := infrastructure.CachePath(cacheDir, d)
 	if d.Kind == "pdf" && !p.HasCommandEntries() {
-		if figuresDone(outDir, input, buildFigureDPI) {
+		if infrastructure.FiguresDone(outDir, input, buildFigureDPI) {
 			fmt.Printf("ページ画像: 焼いてある (%s)\n", filepath.Join(outDir, "figures"))
 		} else {
-			n, err := renderFigures(input, outDir, buildFigureDPI, "")
+			n, err := infrastructure.RenderFigures(input, outDir, buildFigureDPI, "")
 			if err != nil {
 				return err
 			}
 			fmt.Printf("ページ画像: %d 枚を焼きました\n", n)
-			if err := writeFiguresMark(outDir, input, buildFigureDPI, n); err != nil {
+			if err := infrastructure.WriteFiguresMark(outDir, input, buildFigureDPI, n); err != nil {
 				return err
 			}
 		}
 	}
 
-	return convert(mdOptions{
-		input: input, outDir: outDir, profilePath: profilePath,
-		title: d.Title, series: d.Series, version: d.Version,
+	return Convert(MDOptions{
+		Input: input, OutDir: outDir, ProfilePath: profilePath,
+		Title: d.Title, Series: d.Series, Version: d.Version,
 	})
-}
-
-// figuresMark は figures/ に全ページ焼いたときに build が残す印。どの PDF を何 dpi で
-// 焼いたかを持ち、同じなら次の build は焼かない。ページ数だけで判定すると版が
-// 上がって PDF が入れ替わっても気づけないので、元の名前で見る。
-//
-// 焼き直したいときは figures/ を消す (か manualbook figures を手で流す)。
-// build の -force は取得の話で、ここには効かない。
-type figuresMark struct {
-	Source   string `json:"source"` // 元 PDF のファイル名
-	DPI      int    `json:"dpi"`
-	Pages    int    `json:"pages"`
-	Rendered string `json:"rendered"`
-}
-
-// figuresMarkName は figureNameRe (p<番号>.png) に掛からない名前にしてある。
-const figuresMarkName = ".manualbook.json"
-
-func figuresDone(outDir, pdf string, dpi int) bool {
-	b, err := os.ReadFile(filepath.Join(outDir, "figures", figuresMarkName))
-	if err != nil {
-		return false
-	}
-	var m figuresMark
-	if err := json.Unmarshal(b, &m); err != nil {
-		return false
-	}
-	return m.Source == baseName(pdf) && m.DPI == dpi
-}
-
-func writeFiguresMark(outDir, pdf string, dpi, pages int) error {
-	m := figuresMark{Source: baseName(pdf), DPI: dpi, Pages: pages, Rendered: time.Now().Format("2006-01-02")}
-	b, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(outDir, "figures", figuresMarkName), append(b, '\n'), 0o644)
 }
 
 // prefixWriter は各行の頭に印を付ける。裏で走る Web 取得の進捗が表の出力に
@@ -295,8 +230,8 @@ func (w *prefixWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// defaultManualsDir は ix-manual skill が最初に探す場所と同じ: $IX_MANUALS → ~/.ix-toolkit/manuals。
-func defaultManualsDir() string {
+// DefaultManualsDir は ix-manual skill が最初に探す場所と同じ: $IX_MANUALS → ~/.ix-toolkit/manuals。
+func DefaultManualsDir() string {
 	if d := os.Getenv("IX_MANUALS"); d != "" {
 		return d
 	}

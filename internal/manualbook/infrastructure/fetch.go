@@ -1,9 +1,8 @@
-package main
+package infrastructure
 
 import (
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,10 +14,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 	"golang.org/x/net/html"
 )
 
-// fetch サブコマンド: マニフェストに書いた資料をまとめて取得する。
+// 資料の取得。マニフェストに書いた資料を取得キャッシュへ取る。
 //
 // 配布サイトを巡回してリンクを推測すると、ページ改装のたびに壊れる。
 // URL は人が 1 度書き、以降はマニフェストが唯一の真実になる方式を採る。
@@ -34,24 +34,9 @@ import (
 //
 // どちらも、利用者が明示的に叩いたときにだけ動く。定期的に取りに行く仕組みは無い。
 
-type Manifest struct {
-	Docs []Doc `json:"docs"`
-}
-
-type Doc struct {
-	Name    string `json:"name"`              // 出力ファイル名 / 取得キャッシュのディレクトリ名
-	Series  string `json:"series,omitempty"`  // 機種の系列 (ix / ix-r)
-	Book    string `json:"book,omitempty"`    // 冊子 (crm / fd)。変換結果の置き場 <系列>/<冊子>/ を決める
-	Kind    string `json:"kind"`              // "pdf" か "web"。明示する
-	URL     string `json:"url"`               // 取得元 (web は冊子の index の URL)
-	Version string `json:"version,omitempty"` // 版。web では <title> と突き合わせる
-	Profile string `json:"profile,omitempty"` // 変換に使うプロファイル JSON
-	Title   string `json:"title,omitempty"`   // 資料タイトル
-}
-
-// readManifest はマニフェストを読む。
-func readManifest(path string) (Manifest, error) {
-	var m Manifest
+// ReadManifest はマニフェストを読む。
+func ReadManifest(path string) (domain.Manifest, error) {
+	var m domain.Manifest
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return m, fmt.Errorf("マニフェストを読めません: %w", err)
@@ -65,21 +50,21 @@ func readManifest(path string) (Manifest, error) {
 	return m, nil
 }
 
-// cachePath は取得キャッシュの中で資料が置かれる場所。pdf は <name>.pdf、web は <name>/。
-func (d Doc) cachePath(cacheDir string) string {
+// CachePath は取得キャッシュの中で資料が置かれる場所。pdf は <name>.pdf、web は <name>/。
+func CachePath(cacheDir string, d domain.Doc) string {
 	if d.Kind == "pdf" {
 		return filepath.Join(cacheDir, d.Name+".pdf")
 	}
 	return filepath.Join(cacheDir, d.Name)
 }
 
-// fetchDoc は資料 1 件を取得キャッシュへ取る。kind で作法が変わる。
-func fetchDoc(w io.Writer, client *http.Client, d Doc, cacheDir string, force bool, delay time.Duration, ua string) error {
+// FetchDoc は資料 1 件を取得キャッシュへ取る。kind で作法が変わる。
+func FetchDoc(w io.Writer, client *http.Client, d domain.Doc, cacheDir string, force bool, delay time.Duration, ua string) error {
 	switch d.Kind {
 	case "pdf":
-		return fetchOne(w, client, d, d.cachePath(cacheDir), force)
+		return fetchOne(w, client, d, CachePath(cacheDir, d), force)
 	case "web":
-		return fetchWeb(w, client, d, d.cachePath(cacheDir), force, delay, ua)
+		return fetchWeb(w, client, d, CachePath(cacheDir, d), force, delay, ua)
 	case "":
 		return fmt.Errorf(`kind が無い。"pdf" か "web" を書く (取得と検証の作法が変わるので推測しない)`)
 	default:
@@ -87,46 +72,9 @@ func fetchDoc(w io.Writer, client *http.Client, d Doc, cacheDir string, force bo
 	}
 }
 
-func runFetch(args []string) {
-	fs := flag.NewFlagSet("fetch", flag.ExitOnError)
-	manifestPath := fs.String("manifest", "manifest.json", "マニフェスト JSON")
-	outDir := fs.String("out", "pdf", "保存先 (pdf はここに <name>.pdf、web は <name>/ を置く)")
-	force := fs.Bool("force", false, "既存ファイルがあっても再取得する")
-	only := fs.String("only", "", "この name の資料だけ取得する")
-	timeout := fs.Duration("timeout", 5*time.Minute, "1 件あたりのタイムアウト")
-	delay := fs.Duration("delay", time.Second, "web: リクエストの間隔")
-	ua := fs.String("user-agent", defaultUserAgent, "web: User-Agent")
-	parseFlags(fs, args)
-
-	m, err := readManifest(*manifestPath)
-	if err != nil {
-		fatal(err)
-	}
-	if err := os.MkdirAll(*outDir, 0o755); err != nil {
-		fatal(err)
-	}
-
-	client := &http.Client{Timeout: *timeout}
-	failed, total := 0, 0
-	for _, d := range m.Docs {
-		if *only != "" && d.Name != *only {
-			continue
-		}
-		total++
-		if err := fetchDoc(os.Stdout, client, d, *outDir, *force, *delay, *ua); err != nil {
-			fmt.Fprintf(os.Stderr, "  ✗ %s: %s\n", d.Name, err)
-			failed++
-		}
-	}
-	fmt.Printf("\n取得完了: %d 件中 %d 件成功\n", total, total-failed)
-	if failed > 0 {
-		os.Exit(1)
-	}
-}
-
 // --- pdf ---
 
-func fetchOne(w io.Writer, client *http.Client, d Doc, dst string, force bool) error {
+func fetchOne(w io.Writer, client *http.Client, d domain.Doc, dst string, force bool) error {
 	// url が空でも、別の経路で手に入れた PDF が置いてあれば取得済みとして扱う。
 	if !force {
 		if _, err := os.Stat(dst); err == nil {
@@ -178,7 +126,7 @@ func fetchOne(w io.Writer, client *http.Client, d Doc, dst string, force bool) e
 // 配布サイトはブラウザ以外の User-Agent に 403 を返す (manualbook の名前で名乗ると
 // index すら取れない)。この取得は利用者が自分の手で 1 回叩くもので、ブラウザで
 // 同じページを順に開くのと変わらないので、ブラウザとして名乗る。-user-agent で変えられる。
-const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+const DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 // etagFile は取得キャッシュに置く、ページごとの ETag / Last-Modified。
 // 2 回目以降は条件付き GET にして、変わったページだけ落とす。
@@ -192,19 +140,19 @@ type etagEntry struct {
 
 var docnamesRe = regexp.MustCompile(`"docnames"\s*:\s*(\[[^\]]*\])`)
 
-// webFetched は取得キャッシュがその版で取り切ってあるか。.manualbook.json は
+// WebFetched は取得キャッシュがその版で取り切ってあるか。.manualbook.json は
 // fetchWeb が全ページを置いた最後に書くので、これが版つきで残っていれば完備と
 // みなせる (途中で止まったキャッシュには無い)。
 //
 // fetch 自身はこれを見ない。fetch は ETag で 1 ページずつ確かめる軽い更新の口で、
 // 全ページを 1 秒おきに問い合わせる (数分掛かる)。build は初回に 1 回取れば
 // よいので、完備なら問い合わせず飛ばす。
-func webFetched(dst string, d Doc) bool {
-	meta, err := readWebMeta(dst)
+func WebFetched(dst string, d domain.Doc) bool {
+	meta, err := ReadWebMeta(dst)
 	return err == nil && meta.Version == d.Version
 }
 
-func fetchWeb(w io.Writer, client *http.Client, d Doc, dst string, force bool, delay time.Duration, userAgent string) error {
+func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force bool, delay time.Duration, userAgent string) error {
 	if d.URL == "" {
 		return errors.New("url が空 (配布ページを見て転記する)")
 	}
@@ -358,12 +306,12 @@ func fetchWeb(w io.Writer, client *http.Client, d Doc, dst string, force bool, d
 	fmt.Fprintf(w, "    画像: 取得 %d / 変化なし %d\n", imgFetched, imgUnchanged)
 
 	// 5. 変換が読む覚え書きと、次回の条件付き GET 用の ETag。
-	meta := webMeta{
+	meta := WebMeta{
 		Name: d.Name, Title: d.Title, URL: base.String(), Version: d.Version,
 		Series: d.Series, Profile: d.Profile, Fetched: time.Now().Format("2006-01-02"),
 	}
 	if b, err := json.MarshalIndent(meta, "", "  "); err == nil {
-		if err := os.WriteFile(filepath.Join(dst, webMetaName), append(b, '\n'), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dst, WebMetaName), append(b, '\n'), 0o644); err != nil {
 			return err
 		}
 	}
@@ -384,7 +332,7 @@ func htmlTitle(page []byte) string {
 	if t == nil {
 		return ""
 	}
-	return collapse(nodeText(t))
+	return domain.Collapse(nodeText(t))
 }
 
 // imageSources はページが参照する <img src> (ページからの相対パス)。

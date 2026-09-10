@@ -1,4 +1,4 @@
-package main
+package infrastructure
 
 import (
 	"fmt"
@@ -45,9 +45,12 @@ type glyph struct {
 }
 
 func (g glyph) centerX() float64 { return (g.left + g.right) / 2 }
+
 func (g glyph) centerY() float64 { return (g.top + g.bottom) / 2 }
-func (g glyph) width() float64   { return g.right - g.left }
-func (g glyph) height() float64  { return g.top - g.bottom }
+
+func (g glyph) width() float64 { return g.right - g.left }
+
+func (g glyph) height() float64 { return g.top - g.bottom }
 
 // pdfPage は 1 ページ分の文字と、その表示上のページ寸法。
 type pdfPage struct {
@@ -121,9 +124,9 @@ func openDoc(path string) (*pdfDoc, error) {
 	return d, nil
 }
 
-// closeDoc は openDoc で開いた PDF を閉じ、文字の配列と PDFium 側の資源を返す。
+// CloseDoc は openDoc で開いた PDF を閉じ、文字の配列と PDFium 側の資源を返す。
 // 1 冊で終わるサブコマンドでは要らないが、build は続けて次の冊を開く。
-func closeDoc(path string) {
+func CloseDoc(path string) {
 	docsMu.Lock()
 	defer docsMu.Unlock()
 	d, ok := docs[path]

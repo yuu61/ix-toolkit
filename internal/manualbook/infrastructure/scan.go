@@ -1,8 +1,7 @@
-package main
+package infrastructure
 
 import (
 	"bufio"
-	"flag"
 	"fmt"
 	"image"
 	"image/draw"
@@ -47,51 +46,26 @@ type decodeResult struct {
 	err error
 }
 
-// --- scan サブコマンド ---
-//
-// 見開きスキャン画像 (PNG) を 1 ページずつに分割する。
-// テキスト層を持たない紙スキャン由来の PDF を画像化したあとの前処理であり、
-// テキスト層のある PDF では md サブコマンドを使うこと（分割も OCR も不要）。
+// ScanReport は SplitSpreads の集計。
+type ScanReport struct {
+	Input   int // 取り上げた入力ファイル数。0 なら何もしていない
+	Split   int // 見開きとして左右に分けた数
+	Copied  int // 1 ページとしてそのまま写した数
+	Errors  int
+	Skipped int
+	Pages   int // 出力したページ数
+}
 
-func runScan(args []string) {
-	fs := flag.NewFlagSet("scan", flag.ExitOnError)
-	inputDir := fs.String("input", "", "入力ディレクトリ (必須)")
-	outputDir := fs.String("output", "", "出力ディレクトリ (デフォルト: <input>/processed)")
-	dryRun := fs.Bool("dry-run", false, "DryRunモード")
-	pos := parseFlags(fs, args)
-
-	if *inputDir == "" {
-		if len(pos) > 0 {
-			*inputDir = pos[0]
-		} else {
-			fmt.Fprintln(os.Stderr, "Error: 入力ディレクトリを指定してください")
-			fmt.Fprintln(os.Stderr, "Usage: manualbook scan -input <dir> [-output <dir>] [-dry-run]")
-			os.Exit(1)
-		}
-	}
-
-	info, err := os.Stat(*inputDir)
-	if err != nil || !info.IsDir() {
-		fmt.Fprintf(os.Stderr, "ディレクトリが見つかりません: %s\n", *inputDir)
-		os.Exit(1)
-	}
-
-	if *outputDir == "" {
-		*outputDir = filepath.Join(*inputDir, "processed")
-	}
-	if !*dryRun {
-		if mkdirErr := os.MkdirAll(*outputDir, 0o755); mkdirErr != nil {
-			fmt.Fprintf(os.Stderr, "出力ディレクトリの作成に失敗: %s\n", mkdirErr)
-			os.Exit(1)
-		}
-	}
+// SplitSpreads は inputDir の見開き PNG を 1 ページずつ outputDir に置く。
+// dryRun なら何をするかを出すだけで書かない。経過は標準出力に、失敗は標準エラーに出す。
+func SplitSpreads(inputDir, outputDir string, dryRun bool) (ScanReport, error) {
+	var report ScanReport
 
 	// --- 1. ファイル列挙・ソート ---
 	digitRe := regexp.MustCompile(`\d+`)
-	entries, err := os.ReadDir(*inputDir)
+	entries, err := os.ReadDir(inputDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ディレクトリの読み取りに失敗: %s\n", err)
-		os.Exit(1)
+		return report, fmt.Errorf("ディレクトリの読み取りに失敗: %w", err)
 	}
 
 	var validFiles []fileEntry
@@ -109,15 +83,15 @@ func runScan(args []string) {
 		n.SetString(matches[0], 10)
 		validFiles = append(validFiles, fileEntry{
 			name:    e.Name(),
-			path:    filepath.Join(*inputDir, e.Name()),
+			path:    filepath.Join(inputDir, e.Name()),
 			sortKey: n,
 		})
 	}
 
 	if len(validFiles) == 0 {
-		fmt.Fprintln(os.Stderr, "処理対象のファイルがありません")
-		os.Exit(0)
+		return report, nil
 	}
+	report.Input = len(validFiles)
 
 	slices.SortFunc(validFiles, func(a, b fileEntry) int {
 		return a.sortKey.Cmp(b.sortKey)
@@ -159,12 +133,12 @@ func runScan(args []string) {
 	)
 
 	// --- 3a. 処理ワーカープール起動（DryRun以外） ---
-	if !*dryRun {
+	if !dryRun {
 		taskCh = make(chan taskInfo, numWorkers)
 		for range numWorkers {
 			processWg.Go(func() {
 				for t := range taskCh {
-					if err := processTask(&t, *outputDir); err != nil {
+					if err := processTask(&t, outputDir); err != nil {
 						mu.Lock()
 						fmt.Fprintf(os.Stderr, "処理失敗: %s - %s\n", t.fileName, err)
 						mu.Unlock()
@@ -245,7 +219,7 @@ func runScan(args []string) {
 		if hasCenterContent {
 			counter++
 			outName := fmt.Sprintf("%s%0*d%s%s", prefix, digitWidth, counter, suffix, ext)
-			if *dryRun {
+			if dryRun {
 				fmt.Printf("[DryRun] コピー: %s -> %s\n", f.name, outName)
 			} else {
 				taskCh <- taskInfo{
@@ -266,7 +240,7 @@ func runScan(args []string) {
 			leftName := fmt.Sprintf("%s%0*d%s%s", prefix, digitWidth, counter, suffix, ext)
 			counter++
 			rightName := fmt.Sprintf("%s%0*d%s%s", prefix, digitWidth, counter, suffix, ext)
-			if *dryRun {
+			if dryRun {
 				fmt.Printf("[DryRun] 分割: %s -> %s, %s\n", f.name, leftName, rightName)
 			} else {
 				taskCh <- taskInfo{
@@ -288,26 +262,16 @@ func runScan(args []string) {
 	}
 
 	// ワーカー完了待ち
-	if !*dryRun {
+	if !dryRun {
 		close(taskCh)
 		processWg.Wait()
 		errorCount += int(parallelErrors.Load())
 	}
 
-	// --- 4. 完了レポート ---
-	totalPages := counter - int(failedPages.Load())
-	fmt.Println()
-	if *dryRun {
-		fmt.Println("=== DryRun完了 ===")
-	} else {
-		fmt.Println("=== 処理完了 ===")
-	}
-	fmt.Printf("  分割: %d件\n", splitCount)
-	fmt.Printf("  コピー: %d件\n", copyCount)
-	fmt.Printf("  エラー: %d件\n", errorCount)
-	fmt.Printf("  スキップ: %d件\n", skipCount)
-	fmt.Printf("  合計出力ページ数: %d\n", totalPages)
-	fmt.Printf("  出力先: %s\n", *outputDir)
+	// --- 4. 集計 ---
+	report.Split, report.Copied, report.Errors, report.Skipped = splitCount, copyCount, errorCount, skipCount
+	report.Pages = counter - int(failedPages.Load())
+	return report, nil
 }
 
 // --- PNG読み込み（バッファ付き） ---

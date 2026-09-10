@@ -1,14 +1,16 @@
-package main
+package infrastructure
 
 import (
-	"flag"
+	"errors"
 	"fmt"
+	"io"
 	"math"
-	"os"
 	"strings"
+
+	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 )
 
-// probe サブコマンド: PDF を試し読みして Profile を自動較正する。
+// PDF を試し読みして Profile を自動較正する (probe サブコマンドの中身)。
 //
 // 較正は「領域を削って、残る文字数を数える」だけで行う。判定はどれも目視では
 // なく数値の不変条件で行う。
@@ -20,67 +22,58 @@ import (
 // sampleRange は較正に使う連続ページ範囲。
 type sampleRange struct{ lo, hi int }
 
-func runProbe(args []string) {
-	fs := flag.NewFlagSet("probe", flag.ExitOnError)
-	out := fs.String("out", "profile.json", "出力するプロファイル JSON")
-	name := fs.String("name", "", "プロファイル名 (デフォルト: PDF のファイル名)")
-	windows := fs.Int("windows", 3, "較正に使うサンプル窓の数")
-	winSize := fs.Int("window-size", 8, "サンプル窓 1 つあたりのページ数")
-	pos := parseFlags(fs, args)
+// ErrNoTextLayer は先頭ページに実テキストがほとんど無い (紙スキャン由来の画像 PDF)。
+// テキスト層から読む経路は使えず、scan + OCR の経路が要る。
+var ErrNoTextLayer = errors.New("テキスト層がほとんど無い")
 
-	if len(pos) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: manualbook probe <pdf> [-out profile.json]")
-		os.Exit(1)
-	}
-	pdf := pos[0]
-
+// Calibrate は PDF を試し読みして較正済みのプロファイルを返す。経過は w に書く。
+// name が空なら PDF のファイル名をプロファイル名にする。
+func Calibrate(w io.Writer, pdf, name string, windows, winSize int) (*domain.Profile, error) {
 	// --- 1. テキスト層の有無 ---
 	glyphs, err := hasTextLayer(pdf, 20)
 	if err != nil {
-		fatal(err)
+		return nil, err
 	}
-	fmt.Printf("テキスト層: 先頭 20 ページで %d 文字\n", glyphs)
+	fmt.Fprintf(w, "テキスト層: 先頭 20 ページで %d 文字\n", glyphs)
 	if glyphs < 200 {
-		fmt.Fprintln(os.Stderr, "\n  ⚠ テキスト層がほとんどありません（紙スキャン由来の画像 PDF の可能性）。")
-		fmt.Fprintln(os.Stderr, "    md サブコマンドは使えません。画像化 → manualbook scan で分割 → OCR の経路が必要です。")
-		os.Exit(2)
+		return nil, ErrNoTextLayer
 	}
 
 	all, err := extractPages(pdf, crop{}, false)
 	if err != nil {
-		fatal(err)
+		return nil, err
 	}
-	fmt.Printf("ページ数: %d\n", len(all))
+	fmt.Fprintf(w, "ページ数: %d\n", len(all))
 
-	p := DefaultProfile()
-	p.Name = *name
+	p := domain.DefaultProfile()
+	p.Name = name
 	if p.Name == "" {
-		p.Name = strings.TrimSuffix(baseName(pdf), ".pdf")
+		p.Name = strings.TrimSuffix(BaseName(pdf), ".pdf")
 	}
 
-	sample := pickSampleRanges(all, *windows, *winSize)
+	sample := pickSampleRanges(all, windows, winSize)
 	if len(sample) == 0 {
-		fatal(fmt.Errorf("本文のあるページが見つかりません"))
+		return nil, errors.New("本文のあるページが見つかりません")
 	}
-	fmt.Printf("サンプル: %s\n\n", describe(sample))
+	fmt.Fprintf(w, "サンプル: %s\n\n", describe(sample))
 
 	// --- 2. ページ寸法 ---
-	w, h, err := pageSize(pdf)
+	width, height, err := pageSize(pdf)
 	if err != nil {
-		fatal(err)
+		return nil, err
 	}
-	p.PageWidth, p.PageHeight = math.Round(w*100)/100, math.Round(h*100)/100
-	fmt.Printf("ページ寸法  : %.0f x %.0f pt\n", p.PageWidth, p.PageHeight)
+	p.PageWidth, p.PageHeight = math.Round(width*100)/100, math.Round(height*100)/100
+	fmt.Fprintf(w, "ページ寸法  : %.0f x %.0f pt\n", p.PageWidth, p.PageHeight)
 
 	// --- 3. ヘッダ・フッタ帯 ---
 	p.MarginTop, p.HeaderBand = findRunningBand(pdf, sample, true, p.PageHeight)
 	p.MarginBottom, p.FooterBand = findRunningBand(pdf, sample, false, p.PageHeight)
 	report := func(what string, body, band float64) {
 		if band == 0 {
-			fmt.Printf("%s: 検出されず\n", what)
+			fmt.Fprintf(w, "%s: 検出されず\n", what)
 			return
 		}
-		fmt.Printf("%s: 本文マージン %.0f pt / 帯の切り出し %.0f pt\n", what, body, band)
+		fmt.Fprintf(w, "%s: 本文マージン %.0f pt / 帯の切り出し %.0f pt\n", what, body, band)
 	}
 	report("ヘッダ      ", p.MarginTop, p.HeaderBand)
 	report("フッタ      ", p.MarginBottom, p.FooterBand)
@@ -89,17 +82,12 @@ func runProbe(args []string) {
 	gl, gr, cols, score, total := findGutter(p, pdf, sample)
 	p.Columns, p.GutterLeft, p.GutterRight = cols, gl, gr
 	if cols >= 2 {
-		fmt.Printf("段組み      : %d 段 (左カラムは右端から %.0f / 右カラムは左端から %.0f を削る)\n", cols, gl, gr)
-		fmt.Printf("段割り検証  : 取りこぼし・二重取り %d 文字 / %d 文字\n", score, total)
+		fmt.Fprintf(w, "段組み      : %d 段 (左カラムは右端から %.0f / 右カラムは左端から %.0f を削る)\n", cols, gl, gr)
+		fmt.Fprintf(w, "段割り検証  : 取りこぼし・二重取り %d 文字 / %d 文字\n", score, total)
 	} else {
-		fmt.Printf("段組み      : 1 段 (最良の段割りでもずれ %d 文字 / %d 文字あり)\n", score, total)
+		fmt.Fprintf(w, "段組み      : 1 段 (最良の段割りでもずれ %d 文字 / %d 文字あり)\n", score, total)
 	}
-
-	if err := p.Save(*out); err != nil {
-		fatal(err)
-	}
-	fmt.Printf("\nプロファイルを書き出しました: %s\n", *out)
-	fmt.Printf("次: manualbook md %s -profile %s -out out/\n", pdf, *out)
+	return p, nil
 }
 
 // pickSampleRanges は本文の詰まったページから、連続した窓を数か所選ぶ。
@@ -215,8 +203,8 @@ func findRunningBand(pdf string, sample []sampleRange, top bool, pageHeight floa
 // 必要だが、切れ目が空白帯にあることの証明にはならない。
 //
 // そこで空白帯で位置を決め、不変条件は検算に使う。
-func findGutter(p *Profile, pdf string, sample []sampleRange) (gutterLeft, gutterRight float64, columns, bestScore, total int) {
-	body := p.bodyCrop()
+func findGutter(p *domain.Profile, pdf string, sample []sampleRange) (gutterLeft, gutterRight float64, columns, bestScore, total int) {
+	body := bodyCrop(p)
 	total = sampleGlyphs(pdf, sample, body)
 	if total == 0 {
 		return 0, 0, 1, 0, 0
@@ -250,7 +238,7 @@ func findGutter(p *Profile, pdf string, sample []sampleRange) (gutterLeft, gutte
 }
 
 // findEmptyBand はページ中央寄りで最も広い、字の掛からない縦の帯を返す。
-func findEmptyBand(pdf string, sample []sampleRange, p *Profile, body crop) (lo, hi float64, ok bool) {
+func findEmptyBand(pdf string, sample []sampleRange, p *domain.Profile, body crop) (lo, hi float64, ok bool) {
 	d, err := openDoc(pdf)
 	if err != nil {
 		return 0, 0, false
@@ -318,15 +306,10 @@ func abs(n int) int {
 	return n
 }
 
-func baseName(p string) string {
+func BaseName(p string) string {
 	p = strings.ReplaceAll(p, "\\", "/")
 	if i := strings.LastIndex(p, "/"); i >= 0 {
 		return p[i+1:]
 	}
 	return p
-}
-
-func fatal(err error) {
-	fmt.Fprintf(os.Stderr, "エラー: %s\n", err)
-	os.Exit(1)
 }

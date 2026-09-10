@@ -1,7 +1,6 @@
-package main
+package infrastructure
 
 import (
-	"flag"
 	"fmt"
 	"image/png"
 	"os"
@@ -10,40 +9,9 @@ import (
 	"strings"
 )
 
-// figures サブコマンド: ページを PNG に焼いて figures/ に置く。
-//
-// 図は変換できない。ラベルはテキストとして取れるが、矢印の向き・包含関係・
-// 順序は失われるので、構成や流れを答えるにはページそのものが要る。PDF への
-// リンクを辿れるのは PDF ビューアを開ける人だけで、マニュアルを引く
-// エージェントは #page=1057 を開けない。PNG なら読める。
-//
-// 焼くのは以前は外部のレンダラ (poppler の pdftoppm か Xpdf の pdftopng) の
-// 仕事だった。テキストを読むのに PDFium を持つようになった今、同じ道具で
-// 描画もできるので、外部レンダラは要らない。
-
-func runFigures(args []string) {
-	fs := flag.NewFlagSet("figures", flag.ExitOnError)
-	out := fs.String("out", "out", "出力先ディレクトリ (この下の figures/ に置く)")
-	dpi := fs.Int("dpi", 150, "解像度")
-	pages := fs.String("pages", "", "焼くページ (例 1050-1060,1100)。省略で全ページ")
-	pos := parseFlags(fs, args)
-
-	if len(pos) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: manualbook figures <pdf> [-out out/] [-dpi 150] [-pages 1050-1060]")
-		os.Exit(1)
-	}
-
-	n, err := renderFigures(pos[0], *out, *dpi, *pages)
-	if err != nil {
-		fatal(err)
-	}
-	fmt.Printf("%d ページを焼きました: %s\n", n, filepath.Join(*out, "figures"))
-	fmt.Println("囲みの直後に [ページ画像] を付けるには manualbook md を流し直してください。")
-}
-
-// renderFigures はページを焼いて <outDir>/figures/p<ページ番号>.png に置く。
+// RenderFigures はページを焼いて <outDir>/figures/p<ページ番号>.png に置く。
 // 焼いた枚数を返す。
-func renderFigures(pdf, outDir string, dpi int, pageSpec string) (int, error) {
+func RenderFigures(pdf, outDir string, dpi int, pageSpec string) (int, error) {
 	d, err := openDoc(pdf)
 	if err != nil {
 		return 0, err

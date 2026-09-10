@@ -1,0 +1,85 @@
+package cli
+
+import (
+	"flag"
+	"fmt"
+	"os"
+)
+
+const usage = `manualbook — NEC IX のマニュアル (PDF / Web) を Markdown にする
+
+使い方:
+  manualbook <サブコマンド> [オプション]
+
+サブコマンド:
+  build   manifest.json の資料を取得 → 変換 → 差分表まで 1 回で作る (ふつうはこれだけ)
+  fetch   マニフェストに書いた資料をまとめて取得する (Web は版で検証)
+  probe   PDF を試し読みして段組み・ヘッダ位置を自動較正し、プロファイルを作る
+  md      PDF か Web の取得キャッシュを構造つき Markdown に変換する
+  diff    無印と IX-R の変換結果から系列間のコマンド対応表 diff.tsv を作る
+  figures ページを PNG に焼く (PDF の図のページを画像で引けるようにする)
+  scan    見開きスキャン画像 (PNG) を 1 ページずつに分割する (テキスト層が無い場合)
+
+典型的な流れ:
+  manualbook build   # pdf/ に取り、~/.ix-toolkit/manuals/<系列>/<冊子>/ に変換し、diff.tsv を作る
+
+1 冊ずつ手で流すなら fetch / md / diff を順に使う (各サブコマンドの詳細は -h)。
+`
+
+func Main() {
+	if len(os.Args) < 2 {
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(1)
+	}
+
+	switch cmd := os.Args[1]; cmd {
+	case "build":
+		runBuild(os.Args[2:])
+	case "fetch":
+		runFetch(os.Args[2:])
+	case "probe":
+		runProbe(os.Args[2:])
+	case "md":
+		runMD(os.Args[2:])
+	case "diff":
+		runDiff(os.Args[2:])
+	case "figures":
+		runFigures(os.Args[2:])
+	case "scan":
+		runScan(os.Args[2:])
+	case "-h", "--help", "help":
+		fmt.Print(usage)
+	default:
+		fmt.Fprintf(os.Stderr, "不明なサブコマンド: %s\n\n", cmd)
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(1)
+	}
+}
+
+// parseFlags は flag パッケージの「最初の非フラグ引数で解析を打ち切る」挙動を
+// 回避し、`manualbook md foo.pdf -out out/` のようにフラグを後置しても効くようにする。
+// 位置引数を順に取り出しながら、残りを繰り返し解析する。
+func parseFlags(fs *flag.FlagSet, args []string) []string {
+	var positional []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			os.Exit(2)
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			return positional
+		}
+		positional = append(positional, rest[0])
+		args = rest[1:]
+	}
+}
+
+// fatal はエラーを表示して終了する。原因を表示し終えている失敗 (application.ReportedError)
+// は黙って終了コードだけ返す。
+func fatal(err error) {
+	if e, ok := err.(interface{ ExitCode() int }); ok {
+		os.Exit(e.ExitCode())
+	}
+	fmt.Fprintf(os.Stderr, "エラー: %s\n", err)
+	os.Exit(1)
+}

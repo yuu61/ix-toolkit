@@ -8,18 +8,30 @@
 |---|---|---|
 | `skills/` | SKILL.md 形式の skill 5 つ | Markdown |
 | `src/ix_ssh/` | skill が呼ぶ `ix-ssh` コマンド | Python (netmiko / paramiko) |
-| `cmd/manualbook/` | PDF / Web マニュアル → Markdown 変換、系列間差分。`build` が manifest から取得 → 変換 → diff まで流す | Go (PDFium, x/net/html) |
+| `cmd/manualbook/` | manualbook の起動点 | Go |
+| `internal/manualbook/domain/` | 資料・プロファイル・本文・出典の値と、系列間対応の規則 | Go |
+| `internal/manualbook/application/` | manifest から取得 → 変換 → diff まで進める実行手順 | Go |
+| `internal/manualbook/infrastructure/` | HTTP、PDFium、HTML の解析と、JSON / Markdown / TSV / 画像の入出力 | Go (PDFium, x/net/html) |
+| `internal/manualbook/cli/` | サブコマンド、引数解析、エラーの最終表示と終了コード | Go |
 | `profiles/` | manualbook の変換プロファイルと、手で導いた系列間差分 (`ix-r-derived-diff.tsv`) | JSON / TSV |
 | `manifest.json` | 取得する資料の一覧 (系列・冊子・種別・版・URL・プロファイル)。`build` の唯一の入力 | JSON |
 
 ```console
 $ go build -ldflags="-s -w" -o manualbook ./cmd/manualbook   # -s -w は Defender の誤検知回避で必須
 $ ./manualbook build                                          # 変換結果を作り直して確かめる
+$ go test ./...                                               # ドメイン規則 (索引のキー・系列間対応・出典) の検証
 $ ruff check src/ && ruff format src/
 ```
 
 manualbook の変換結果の形 (`<manuals>/<系列>/<冊子>/` と索引の列) は `ix-manual` の SKILL.md が
 そのまま読む。片方を変えたらもう片方も直す。
+
+機器運用 (`src/ix_ssh/`) とマニュアル整備 (`internal/manualbook/`) は独立した領域として扱う。
+manualbook の `domain` は他の層、HTTP、PDFium、HTML DOM、ファイル入出力に依存させない。
+`infrastructure` は `domain` を使い、`application` / `cli` には依存させない。
+`application` は `domain` と `infrastructure` を組み合わせる。`cli` は `application` だけを呼ぶ
+(`infrastructure` を直接呼ばない)。プロセス終了 (`os.Exit`) は `cli` に置き、原因を表示し終えた
+失敗は `application.ReportedError` で終了コードだけ伝える。
 
 ## skill を書き換えるときの決まり
 

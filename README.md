@@ -127,6 +127,15 @@ $ uvx --from git+https://github.com/yuu61/ix-toolkit ix-ssh --list   # 入れて
 
 NEC のマニュアルを取得して、`ix-manual` が引く Markdown と索引に変換するツール。
 
+コードは機器運用 (`src/ix_ssh/`) とマニュアル整備 (`internal/manualbook/`) に分かれている。
+manualbook は DDD の責務分離に沿って、資料・本文・出典・系列間対応の規則を `domain` に置く。
+取得と変換の手順は `application`、HTTP・PDFium・HTML とファイルの読み書きは `infrastructure`、
+引数解析と終了コードは `cli` が受け持つ。`cmd/manualbook/main.go` は CLI を起動する。
+
+`domain` は外部入出力に依存せず、`infrastructure` は `domain`、`application` はその両方を使い、
+`cli` は `application` だけを呼ぶ。`go test ./...` はドメイン規則 (索引のキーの抜き方、系列間の
+対応、出典の書き方) を検証する。ビルド方法、サブコマンド、生成ファイルの形式は以下のとおり。
+
 ```console
 $ go build -ldflags="-s -w" -o manualbook ./cmd/manualbook
 $ ./manualbook build

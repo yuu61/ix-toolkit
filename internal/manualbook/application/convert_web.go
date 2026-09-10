@@ -1,56 +1,59 @@
-package main
+package application
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
+	"github.com/yuu61/ix-toolkit/internal/manualbook/infrastructure"
 )
 
 // convertWeb は md の、取得キャッシュ (Sphinx の HTML) を読む経路。
 //
 // 入力がディレクトリならこちらに来る。fetch が置いた .manualbook.json があれば
 // 題・版・系列・プロファイルの既定値にし、指定があればそちらが勝つ。
-func convertWeb(o mdOptions) error {
-	dir, outDir := o.input, o.outDir
-	meta, err := readWebMeta(dir)
+func convertWeb(o MDOptions) error {
+	dir, outDir := o.Input, o.OutDir
+	meta, err := infrastructure.ReadWebMeta(dir)
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("%s: %w", filepath.Join(dir, webMetaName), err)
+		return fmt.Errorf("%s: %w", filepath.Join(dir, infrastructure.WebMetaName), err)
 	}
-	profilePath := o.profilePath
+	profilePath := o.ProfilePath
 	if profilePath == "" {
 		profilePath = meta.Profile
 	}
-	p := DefaultProfile()
+	p := domain.DefaultProfile()
 	if profilePath != "" {
-		if p, err = LoadProfile(profilePath); err != nil {
+		if p, err = infrastructure.LoadProfile(profilePath); err != nil {
 			return err
 		}
 	}
-	title := o.title
+	title := o.Title
 	if title == "" {
 		title = meta.Title
 	}
 	if title == "" {
-		title = baseName(dir)
+		title = infrastructure.BaseName(dir)
 	}
-	series := o.series
+	series := o.Series
 	if series == "" {
 		series = meta.Series
 	}
-	version := o.version
+	version := o.Version
 	if version == "" {
 		version = meta.Version
 	}
 	if meta.URL == "" {
 		fmt.Fprintln(os.Stderr, "⚠ 取得元 URL が分かりません (.manualbook.json が無い)。出典リンクは相対パスだけになります。")
 	}
-	src := source{
-		kind: "web", baseURL: meta.URL, cacheDir: dir, label: o.sourceLabel,
-		series: series, version: version, fetched: meta.Fetched, profile: p,
+	src := infrastructure.Source{
+		Kind: "web", BaseURL: meta.URL, CacheDir: dir, Label: o.SourceLabel,
+		Series: series, Version: version, Fetched: meta.Fetched, Profile: p,
 	}
 
 	fmt.Printf("読み込み: %s (プロファイル %s)\n", dir, p.Name)
-	pages, err := readWebPages(dir)
+	pages, err := infrastructure.ReadWebPages(dir)
 	if err != nil {
 		return err
 	}
@@ -60,13 +63,13 @@ func convertWeb(o mdOptions) error {
 	}
 
 	if p.HasCommandEntries() {
-		entries, chapters := parseWebEntries(pages, p)
+		entries, chapters := infrastructure.ParseWebEntries(pages, p)
 		fmt.Printf("  抽出項目: %d 件 / 章: %d\n", len(entries), len(chapters))
 		if len(entries) == 0 {
 			return fmt.Errorf("項目を 1 件も抽出できませんでした。" +
 				"プロファイルの fieldLabels が資料の <dt> の見出し語に合っているか確認してください")
 		}
-		if err := writeAll(outDir, title, src, chapters, entries); err != nil {
+		if err := infrastructure.WriteAll(outDir, title, src, chapters, entries); err != nil {
 			return err
 		}
 		fmt.Printf("\n出力しました: %s\n", outDir)
@@ -75,17 +78,17 @@ func convertWeb(o mdOptions) error {
 		return nil
 	}
 
-	figs := newFigureStore(dir, outDir)
-	heads, chapters := parseWebHeadings(pages, figs)
+	figs := infrastructure.NewFigureStore(dir, outDir)
+	heads, chapters := infrastructure.ParseWebHeadings(pages, figs)
 	nTable, nFigure, nLayout := 0, 0, 0
 	for i := range heads {
-		for _, b := range heads[i].blocks {
-			switch b.kind {
-			case blockTable:
+		for _, b := range heads[i].Blocks {
+			switch b.Kind {
+			case domain.BlockTable:
 				nTable++
-			case blockFigure:
+			case domain.BlockFigure:
 				nFigure++
-			case blockLayout:
+			case domain.BlockLayout:
 				nLayout++
 			}
 		}
@@ -95,7 +98,7 @@ func convertWeb(o mdOptions) error {
 	if len(heads) == 0 {
 		return fmt.Errorf("見出しを 1 件も抽出できませんでした")
 	}
-	if err := writeSections(outDir, title, src, heads, chapters); err != nil {
+	if err := infrastructure.WriteSections(outDir, title, src, heads, chapters); err != nil {
 		return err
 	}
 	fmt.Printf("\n出力しました: %s\n", outDir)

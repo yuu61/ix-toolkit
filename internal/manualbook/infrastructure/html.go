@@ -1,4 +1,4 @@
-package main
+package infrastructure
 
 import (
 	"encoding/json"
@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 	"golang.org/x/net/html"
 )
 
@@ -34,9 +35,9 @@ import (
 //
 // 表は Markdown の表に、図は SVG のまま figures/ に置く (design memo の決定)。
 
-// webMeta は fetch が取得キャッシュに置く .manualbook.json。
+// WebMeta は fetch が取得キャッシュに置く .manualbook.json。
 // md はこれを読んで、題・版・系列・プロファイルの既定値にする。
-type webMeta struct {
+type WebMeta struct {
 	Name    string `json:"name"`
 	Title   string `json:"title"`
 	URL     string `json:"url"`
@@ -46,11 +47,11 @@ type webMeta struct {
 	Fetched string `json:"fetched"`
 }
 
-const webMetaName = ".manualbook.json"
+const WebMetaName = ".manualbook.json"
 
-func readWebMeta(dir string) (webMeta, error) {
-	var m webMeta
-	b, err := os.ReadFile(filepath.Join(dir, webMetaName))
+func ReadWebMeta(dir string) (WebMeta, error) {
+	var m WebMeta
+	b, err := os.ReadFile(filepath.Join(dir, WebMetaName))
 	if err != nil {
 		return m, err
 	}
@@ -58,8 +59,8 @@ func readWebMeta(dir string) (webMeta, error) {
 	return m, err
 }
 
-// webPage は取得キャッシュの 1 ページ。
-type webPage struct {
+// WebPage は取得キャッシュの 1 ページ。
+type WebPage struct {
 	path         string     // 冊子の起点からの相対パス (cli/remoteaccess/cli_aaa.html)
 	number       []int      // <h1> の番号 (21.1 → [21 1])
 	title        string     // <h1> の題 (番号を除く)
@@ -69,10 +70,10 @@ type webPage struct {
 
 // --- 読み込み ---
 
-// readWebPages は取得キャッシュの HTML を全部読み、番号順に並べる。
+// ReadWebPages は取得キャッシュの HTML を全部読み、番号順に並べる。
 // 番号付きの <h1> を持たないページ (表紙・検索・索引) は本文ではないので落とす。
-func readWebPages(dir string) ([]webPage, error) {
-	var pages []webPage
+func ReadWebPages(dir string) ([]WebPage, error) {
+	var pages []WebPage
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -106,33 +107,33 @@ func lessNumber(a, b []int) bool {
 	return len(a) < len(b)
 }
 
-func readWebPage(file, rel string) (webPage, bool, error) {
+func readWebPage(file, rel string) (WebPage, bool, error) {
 	f, err := os.Open(file)
 	if err != nil {
-		return webPage{}, false, err
+		return WebPage{}, false, err
 	}
 	defer f.Close()
 	doc, err := html.Parse(f)
 	if err != nil {
-		return webPage{}, false, err
+		return WebPage{}, false, err
 	}
 	body := findNode(doc, func(n *html.Node) bool { return attr(n, "itemprop") == "articleBody" })
 	if body == nil {
-		return webPage{}, false, nil
+		return WebPage{}, false, nil
 	}
 	sec := findNode(body, func(n *html.Node) bool { return n.Type == html.ElementNode && n.Data == "section" })
 	if sec == nil {
-		return webPage{}, false, nil
+		return WebPage{}, false, nil
 	}
 	h1 := findNode(sec, func(n *html.Node) bool { return n.Type == html.ElementNode && n.Data == "h1" })
 	if h1 == nil {
-		return webPage{}, false, nil
+		return WebPage{}, false, nil
 	}
 	num, title := headingParts(h1)
 	if len(num) == 0 {
-		return webPage{}, false, nil
+		return WebPage{}, false, nil
 	}
-	pg := webPage{path: rel, number: num, title: title, body: sec}
+	pg := WebPage{path: rel, number: num, title: title, body: sec}
 
 	// 章名はパンくずから。「21. リモートアクセス編」のように番号が 1 段のものが章。
 	// 章そのもののページ (機能説明書の「8. IXシリーズとの差分」) はパンくずに
@@ -169,7 +170,7 @@ func headingParts(n *html.Node) ([]int, string) {
 		}
 		return true
 	})
-	t := collapse(title.String())
+	t := domain.Collapse(title.String())
 	numText = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(numText), "."))
 	if numText == "" {
 		return nil, t
@@ -229,17 +230,17 @@ func numberString(num []int) string {
 
 // --- コマンド辞書 (entry) ---
 
-// parseWebEntries はコマンドリファレンスのページ群から項目を切り出す。
+// ParseWebEntries はコマンドリファレンスのページ群から項目を切り出す。
 //
 // 項目は「<dl> を直接の子に持ち、その最初の <dt> が見出し語の <section>」。
 // PDF の entryMarker にあたる記号は無く、この構造そのものが項目の頭になる。
-func parseWebEntries(pages []webPage, p *Profile) ([]entry, map[int]string) {
+func ParseWebEntries(pages []WebPage, p *domain.Profile) ([]domain.Entry, map[int]string) {
 	labels := map[string]bool{}
 	for _, l := range p.FieldLabels {
-		labels[normalizeLabel(l)] = true
+		labels[domain.NormalizeLabel(l)] = true
 	}
 	chapters := map[int]string{}
-	var entries []entry
+	var entries []domain.Entry
 	for _, pg := range pages {
 		chapters[pg.number[0]] = pg.chapterTitle
 		walk(pg.body, func(n *html.Node) bool {
@@ -252,14 +253,14 @@ func parseWebEntries(pages []webPage, p *Profile) ([]entry, map[int]string) {
 			}
 			h := findNode(n, func(c *html.Node) bool { return c.Type == html.ElementNode && isHeadingTag(c.Data) })
 			_, title := headingParts(h)
-			e := entry{
-				title:   title,
-				chapter: pg.number[0],
-				section: pg.title,
-				ref:     ref{path: pg.path, anchor: anchorOf(n)},
-				fields:  fields,
+			e := domain.Entry{
+				Title:   title,
+				Chapter: pg.number[0],
+				Section: pg.title,
+				Ref:     domain.Ref{Path: pg.path, Anchor: anchorOf(n)},
+				Fields:  fields,
 			}
-			e.cmds = commandsOf(&e)
+			e.Cmds = domain.CommandsOf(&e)
 			entries = append(entries, e)
 			return false // 項目の中に項目は無い
 		})
@@ -276,9 +277,9 @@ func parseWebEntries(pages []webPage, p *Profile) ([]entry, map[int]string) {
 //
 // 後者は見出し語の <p> から次の見出し語の <p> の手前までが欄の中身。
 // どちらも節の直下だけを見る (入れ子の節は別の項目)。
-func entryFields(sec *html.Node, labels map[string]bool) []field {
-	var fields []field
-	var cur *field // <p> 形式で開いている欄
+func entryFields(sec *html.Node, labels map[string]bool) []domain.Field {
+	var fields []domain.Field
+	var cur *domain.Field // <p> 形式で開いている欄
 	flush := func() {
 		if cur != nil {
 			fields = append(fields, *cur)
@@ -286,14 +287,14 @@ func entryFields(sec *html.Node, labels map[string]bool) []field {
 		}
 	}
 	add := func(label string, nodes ...*html.Node) {
-		f := field{label: label}
+		f := domain.Field{Label: label}
 		for _, n := range nodes {
 			// 構文の欄は 1 行 1 コマンドの生の行。それ以外は論理行で、
 			// joinWrapped が行を繋がないよう空行で区切る (proseLines)。
-			if syntaxLabels[label] {
-				f.lines = append(f.lines, rawLines(n)...)
+			if domain.SyntaxLabels[label] {
+				f.Lines = append(f.Lines, rawLines(n)...)
 			} else {
-				f.lines = append(f.lines, proseLines(n)...)
+				f.Lines = append(f.Lines, proseLines(n)...)
 			}
 		}
 		fields = append(fields, f)
@@ -313,7 +314,7 @@ func entryFields(sec *html.Node, labels map[string]bool) []field {
 					continue
 				}
 				label := dtLabel(d)
-				if !labels[normalizeLabel(label)] {
+				if !labels[domain.NormalizeLabel(label)] {
 					continue
 				}
 				dd := d.NextSibling
@@ -321,22 +322,22 @@ func entryFields(sec *html.Node, labels map[string]bool) []field {
 					dd = dd.NextSibling
 				}
 				if dd != nil {
-					add(normalizeLabel(label), dd)
+					add(domain.NormalizeLabel(label), dd)
 				} else {
-					add(normalizeLabel(label))
+					add(domain.NormalizeLabel(label))
 				}
 			}
-		case c.Data == "p" && labels[normalizeLabel(dtLabel(c))]:
+		case c.Data == "p" && labels[domain.NormalizeLabel(dtLabel(c))]:
 			flush()
-			cur = &field{label: normalizeLabel(dtLabel(c))}
+			cur = &domain.Field{Label: domain.NormalizeLabel(dtLabel(c))}
 		default:
 			if cur == nil {
 				continue
 			}
-			if syntaxLabels[cur.label] {
-				cur.lines = append(cur.lines, rawLines(c)...)
+			if domain.SyntaxLabels[cur.Label] {
+				cur.Lines = append(cur.Lines, rawLines(c)...)
 			} else {
-				cur.lines = append(cur.lines, proseLines(c)...)
+				cur.Lines = append(cur.Lines, proseLines(c)...)
 			}
 		}
 	}
@@ -348,7 +349,7 @@ var dtBracketRe = regexp.MustCompile(`^\s*[\[［]\s*(.*?)\s*[\]］]\s*$`)
 
 // dtLabel は <dt><strong>[入力形式]</strong></dt> から見出し語を取る。
 func dtLabel(dt *html.Node) string {
-	t := collapse(nodeText(dt))
+	t := domain.Collapse(nodeText(dt))
 	if m := dtBracketRe.FindStringSubmatch(t); m != nil {
 		return m[1]
 	}
@@ -357,17 +358,17 @@ func dtLabel(dt *html.Node) string {
 
 // --- 解説書 (heading) ---
 
-// figureStore は取得キャッシュの画像を figures/ へ写す。同じ図が複数の節から
+// FigureStore は取得キャッシュの画像を figures/ へ写す。同じ図が複数の節から
 // 参照されても 1 度しか写さない。
-type figureStore struct {
+type FigureStore struct {
 	srcDir string // 取得キャッシュ
 	dstDir string // <outDir>/figures
 	copied map[string]string
 	labels map[string][]string
 }
 
-func newFigureStore(cacheDir, outDir string) *figureStore {
-	return &figureStore{
+func NewFigureStore(cacheDir, outDir string) *FigureStore {
+	return &FigureStore{
 		srcDir: cacheDir,
 		dstDir: filepath.Join(outDir, "figures"),
 		copied: map[string]string{},
@@ -377,7 +378,7 @@ func newFigureStore(cacheDir, outDir string) *figureStore {
 
 // add は <img src> の参照 (../_images/1_loop-guard.svg) を figures/ に写し、
 // 置いたファイル名と図中のラベルを返す。写せなければ名前を空で返す。
-func (fs *figureStore) add(pagePath, src string) (string, []string) {
+func (fs *FigureStore) add(pagePath, src string) (string, []string) {
 	// src はページからの相対パス。冊子の起点からの相対に直す。
 	rel := path.Join(path.Dir(pagePath), src)
 	if name, ok := fs.copied[rel]; ok {
@@ -420,10 +421,10 @@ func copyFile(from, to string) error {
 	return out.Close()
 }
 
-// parseWebHeadings は機能説明書のページ群から見出しと本文を切り出す。
-func parseWebHeadings(pages []webPage, figs *figureStore) ([]heading, map[int]string) {
+// ParseWebHeadings は機能説明書のページ群から見出しと本文を切り出す。
+func ParseWebHeadings(pages []WebPage, figs *FigureStore) ([]domain.Heading, map[int]string) {
 	chapters := map[int]string{}
-	var heads []heading
+	var heads []domain.Heading
 	for _, pg := range pages {
 		chapters[pg.number[0]] = pg.chapterTitle
 		var visit func(sec *html.Node)
@@ -433,14 +434,14 @@ func parseWebHeadings(pages []webPage, figs *figureStore) ([]heading, map[int]st
 			if len(num) == 0 {
 				return
 			}
-			r := ref{path: pg.path, anchor: anchorOf(sec)}
-			hd := heading{
-				number:  numberString(num),
-				title:   title,
-				depth:   len(num),
-				chapter: pg.number[0],
-				section: pg.title,
-				ref:     r,
+			r := domain.Ref{Path: pg.path, Anchor: anchorOf(sec)}
+			hd := domain.Heading{
+				Number:  numberString(num),
+				Title:   title,
+				Depth:   len(num),
+				Chapter: pg.number[0],
+				Section: pg.title,
+				Ref:     r,
 			}
 			var content []*html.Node
 			var subs []*html.Node
@@ -456,7 +457,7 @@ func parseWebHeadings(pages []webPage, figs *figureStore) ([]heading, map[int]st
 					content = append(content, c)
 				}
 			}
-			hd.blocks = contentBlocks(content, pg.path, r, figs)
+			hd.Blocks = contentBlocks(content, pg.path, r, figs)
 			heads = append(heads, hd)
 			for _, s := range subs {
 				visit(s)
@@ -468,18 +469,18 @@ func parseWebHeadings(pages []webPage, figs *figureStore) ([]heading, map[int]st
 }
 
 // contentBlocks は節の直下の要素を本文の塊に組み立てる。
-func contentBlocks(nodes []*html.Node, pagePath string, r ref, figs *figureStore) []block {
-	var blocks []block
+func contentBlocks(nodes []*html.Node, pagePath string, r domain.Ref, figs *FigureStore) []domain.Block {
+	var blocks []domain.Block
 	addProse := func(lines []string) {
 		if len(lines) == 0 {
 			return
 		}
 		n := len(blocks)
-		if n > 0 && blocks[n-1].kind == blockProse {
-			blocks[n-1].lines = append(blocks[n-1].lines, lines...)
+		if n > 0 && blocks[n-1].Kind == domain.BlockProse {
+			blocks[n-1].Lines = append(blocks[n-1].Lines, lines...)
 			return
 		}
-		blocks = append(blocks, block{kind: blockProse, ref: r, lines: lines})
+		blocks = append(blocks, domain.Block{Kind: domain.BlockProse, Ref: r, Lines: lines})
 	}
 	addFigure := func(n *html.Node) {
 		img := n
@@ -490,10 +491,10 @@ func contentBlocks(nodes []*html.Node, pagePath string, r ref, figs *figureStore
 			return
 		}
 		name, labels := figs.add(pagePath, attr(img, "src"))
-		blocks = append(blocks, block{kind: blockFigure, ref: r, figure: name, lines: labels})
+		blocks = append(blocks, domain.Block{Kind: domain.BlockFigure, Ref: r, Figure: name, Lines: labels})
 		// figcaption があれば地の文として続ける
 		if cap := findNode(n, func(c *html.Node) bool { return c.Type == html.ElementNode && c.Data == "figcaption" }); cap != nil {
-			addProse([]string{collapse(nodeText(cap)), ""})
+			addProse([]string{domain.Collapse(nodeText(cap)), ""})
 		}
 	}
 	// nestedFigures は箇条書きなどの中に埋まった図を拾う。地の文の塊には図を
@@ -515,11 +516,11 @@ func contentBlocks(nodes []*html.Node, pagePath string, r ref, figs *figureStore
 		class := attr(n, "class")
 		switch {
 		case n.Data == "table":
-			blocks = append(blocks, block{kind: blockTable, ref: r, rows: tableRows(n)})
+			blocks = append(blocks, domain.Block{Kind: domain.BlockTable, Ref: r, Rows: tableRows(n)})
 		case n.Data == "figure" || n.Data == "img":
 			addFigure(n)
 		case n.Data == "pre":
-			blocks = append(blocks, block{kind: blockLayout, ref: r, lines: rawLines(n)})
+			blocks = append(blocks, domain.Block{Kind: domain.BlockLayout, Ref: r, Lines: rawLines(n)})
 		case n.Data == "div" && strings.Contains(class, "line-block"):
 			// line-block は「| 行」の書式で、この資料では地の文の段落にも
 			// コンソール出力や設定例にも使われている。行の中身で見分ける
@@ -541,7 +542,7 @@ func contentBlocks(nodes []*html.Node, pagePath string, r ref, figs *figureStore
 				addProse(pl)
 				return
 			}
-			blocks = append(blocks, block{kind: blockLayout, ref: r, lines: lines})
+			blocks = append(blocks, domain.Block{Kind: domain.BlockLayout, Ref: r, Lines: lines})
 		case n.Data == "div" && strings.Contains(class, "toctree-wrapper"):
 			// 目次は本文ではない
 		case n.Data == "div" || n.Data == "blockquote" || n.Data == "aside" && strings.Contains(class, "footnote-list"):
@@ -628,7 +629,7 @@ func cellText(c *html.Node) string {
 			parts = append(parts, rawLines(n)...)
 			continue
 		}
-		if t := collapse(nodeText(n)); t != "" {
+		if t := domain.Collapse(nodeText(n)); t != "" {
 			parts = append(parts, t)
 		}
 	}
@@ -642,7 +643,7 @@ func cellText(c *html.Node) string {
 //
 // 長い構文は原稿で行を分けてあり、続きの行 (src SRC … / [ device … ]) は
 // 入れ子の line-block になっている (reST の行ブロックで字下げした行)。
-// PDF では続きが 1 段深く字下げされていて commandsOf がそれを見て繋ぐので、
+// PDF では続きが 1 段深く字下げされていて domain.CommandsOf がそれを見て繋ぐので、
 // 入れ子の深さをそのまま 2 桁の字下げに写す。1 行目と先頭語が違う行を続きと
 // みなす推測はしない。IKEv2 の項目のように、プロファイルモードの
 // anti-replay とインタフェースモードの ikev2 anti-replay を同じ高さに
@@ -650,7 +651,7 @@ func cellText(c *html.Node) string {
 // コマンドだからである。
 //
 // 1 行目が入れ子の深さにある欄が 1 つある (IKEv2 の local-ts: 原稿の入れ子が
-// 崩れている)。そのまま写し、索引の側 (commandsOf) が 1 行目の字下げを基準にする。
+// 崩れている)。そのまま写し、索引の側 (domain.CommandsOf) が 1 行目の字下げを基準にする。
 func rawLines(n *html.Node) []string {
 	var lines []string
 	if n.Type == html.ElementNode && n.Data == "pre" {
@@ -675,7 +676,7 @@ func rawLines(n *html.Node) []string {
 				// ただし no で始まる行は入れ子にあっても no 形の頭とみなす
 				// (tunnel keepalive の項目で no 形が続きの深さに書かれている
 				// 原稿の誤り。続きの行が語 no で始まることはない)。
-				text := collapse(nodeText(c))
+				text := domain.Collapse(nodeText(c))
 				indent := ""
 				if depth > 1 && !strings.HasPrefix(text, "no ") {
 					indent = strings.Repeat("  ", depth-1)
@@ -716,7 +717,7 @@ func proseLines(n *html.Node) []string {
 	var visit func(n *html.Node, indent string)
 	visit = func(n *html.Node, indent string) {
 		if n.Type == html.TextNode {
-			emit(indent + collapse(n.Data))
+			emit(indent + domain.Collapse(n.Data))
 			return
 		}
 		if n.Type != html.ElementNode {
@@ -725,11 +726,11 @@ func proseLines(n *html.Node) []string {
 		class := attr(n, "class")
 		switch n.Data {
 		case "p", "dt", "figcaption":
-			emit(indent + collapse(nodeText(n)))
+			emit(indent + domain.Collapse(nodeText(n)))
 		case "aside":
 			// 脚注 <aside class="footnote"> は "[1] 本文" の 1 行。footnote-list は入れ物。
 			if strings.Contains(class, "footnote") && !strings.Contains(class, "footnote-list") {
-				emit(indent + collapse(nodeText(n)))
+				emit(indent + domain.Collapse(nodeText(n)))
 				return
 			}
 			for c := n.FirstChild; c != nil; c = c.NextSibling {
@@ -742,7 +743,7 @@ func proseLines(n *html.Node) []string {
 				if c.Type == html.ElementNode && (c.Data == "ul" || c.Data == "ol") {
 					continue
 				}
-				if t := collapse(nodeText(c)); t != "" {
+				if t := domain.Collapse(nodeText(c)); t != "" {
 					own = append(own, t)
 				}
 			}
@@ -754,7 +755,7 @@ func proseLines(n *html.Node) []string {
 			}
 		case "ul", "ol", "dd", "dl", "blockquote", "div", "section", "span":
 			if strings.Contains(class, "admonition-title") {
-				emit(indent + collapse(nodeText(n)) + ":")
+				emit(indent + domain.Collapse(nodeText(n)) + ":")
 				return
 			}
 			if strings.Contains(class, "toctree-wrapper") {
@@ -779,7 +780,7 @@ func proseLines(n *html.Node) []string {
 		case "img", "figure":
 			// 地の文の中の図は落とす (節の直下にある図は contentBlocks が拾う)
 		default:
-			emit(indent + collapse(nodeText(n)))
+			emit(indent + domain.Collapse(nodeText(n)))
 		}
 	}
 	visit(n, "")
@@ -855,7 +856,7 @@ func svgLabels(file string) []string {
 			if t.Name.Local != "text" || cur == nil {
 				continue
 			}
-			if s := collapse(buf.String()); s != "" {
+			if s := domain.Collapse(buf.String()); s != "" {
 				it := *cur
 				it.s = s
 				items = append(items, it)
@@ -1002,12 +1003,4 @@ func nodeText(n *html.Node) string {
 	}
 	visit(n)
 	return b.String()
-}
-
-var spaceRun = regexp.MustCompile(`[ \t\r\n\x{3000}]+`)
-
-// collapse は空白の並びを 1 つに畳む。日本語の語間に空白は無いので、
-// 改行で割れていた語を空白で繋いでも意味は変わらない。
-func collapse(s string) string {
-	return strings.TrimSpace(spaceRun.ReplaceAllString(s, " "))
 }

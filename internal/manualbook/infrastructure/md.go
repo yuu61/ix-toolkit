@@ -1,7 +1,6 @@
-package main
+package infrastructure
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 )
 
 // md サブコマンド: テキスト層を持つ PDF を、構造を保った Markdown に変換する。
@@ -19,8 +20,8 @@ import (
 
 // --- 中間表現 ---
 
-// page は 1 ページ分の本文と、ヘッダ・フッタ帯から得たメタデータ。
-type page struct {
+// Page は 1 ページ分の本文と、ヘッダ・フッタ帯から得たメタデータ。
+type Page struct {
 	num       int      // PDF 上のページ番号 (1 始まり)
 	printed   string   // 印刷ページ番号 (例 "3-29")
 	chapter   int      // 印刷ページ番号の章部分
@@ -30,164 +31,26 @@ type page struct {
 	twoColumn bool
 }
 
-// entry は entryMarker で始まる 1 コマンド項目。
-type entry struct {
-	title   string
-	chapter int
-	section string
-	ref     ref // 項目の元資料上の位置 (PDF の物理ページ / Web のページとアンカー)
-	fields  []field
-	cmds    []string // 入力形式から抜いたコマンド行 = 索引のキー
-	line    int      // 出力ファイル中の見出し行番号 (1 始まり)。索引はここを指す
-}
-
-type field struct {
-	label string
-	lines []string
-}
-
-// sectionKey は出力ファイルの単位。章 + 節で 1 ファイルにする。
-type sectionKey struct {
-	chapter int
-	section string
-}
-
-func runMD(args []string) {
-	fs := flag.NewFlagSet("md", flag.ExitOnError)
-	var o mdOptions
-	fs.StringVar(&o.profilePath, "profile", "", "プロファイル JSON (省略時は NEC IX CRM 用の既定値)")
-	fs.StringVar(&o.outDir, "out", "out", "出力ディレクトリ")
-	fs.StringVar(&o.title, "title", "", "資料タイトル (省略時は PDF のファイル名)")
-	fs.StringVar(&o.sourceLabel, "source", "", "出典表記 (取得元 URL 等。README に記載する)")
-	fs.StringVar(&o.series, "series", "", "機種の系列 (ix / ix-r。README に記載する)")
-	fs.StringVar(&o.version, "version", "", "資料の版 (README に記載する)")
-	fs.BoolVar(&o.figures, "figures", false, "ページ画像も焼く (figures/ に置き、囲みから辿れるようにする)")
-	fs.IntVar(&o.figureDPI, "figure-dpi", 150, "-figures のときの解像度")
-	fs.StringVar(&o.figurePages, "figure-pages", "", "-figures で焼くページ (例 1050-1060)。省略で全ページ")
-	pos := parseFlags(fs, args)
-
-	if len(pos) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: manualbook md <pdf | 取得キャッシュのディレクトリ> [-profile profile.json] [-out out/] [-figures]")
-		os.Exit(1)
-	}
-	o.input = pos[0]
-	if err := convert(o); err != nil {
-		fatal(err)
-	}
-}
-
-// mdOptions は 1 冊分の変換の指定。md サブコマンドはフラグから、build は
-// マニフェストから組み立てる。
-type mdOptions struct {
-	input       string // PDF か、fetch が置いた取得キャッシュのディレクトリ
-	outDir      string
-	profilePath string
-	title       string
-	sourceLabel string
-	series      string
-	version     string
-	figures     bool
-	figureDPI   int
-	figurePages string
-}
-
-// convert は 1 冊を Markdown にする。
-//
-// 入力が PDF なら版面を解析する前段、fetch が置いた取得キャッシュの
-// ディレクトリなら Sphinx の HTML を読む前段 (html.go)。後段は共通。
-func convert(o mdOptions) error {
-	if st, err := os.Stat(o.input); err == nil && st.IsDir() {
-		if o.figures {
-			return fmt.Errorf("-figures は PDF 専用です。Web から読む資料は図をそのまま figures/ に置きます")
-		}
-		return convertWeb(o)
-	}
-	pdf := o.input
-	defer closeDoc(pdf) // build は続けて次の冊を開く
-
-	p := DefaultProfile()
-	if o.profilePath != "" {
-		var err error
-		if p, err = LoadProfile(o.profilePath); err != nil {
-			return err
-		}
-	}
-
-	docTitle := o.title
-	if docTitle == "" {
-		docTitle = strings.TrimSuffix(baseName(pdf), filepath.Ext(pdf))
-	}
-
-	// 画像は変換より先に焼く。囲みに [ページ画像] を付けるかどうかは
-	// 出力時に figures/ を見て決めるため、後から焼いてもリンクは付かない。
-	//
-	// 囲みとページリンクを出すのは節見出し経路 (sections.go) だけなので、
-	// コマンド辞書として読む資料では焼いても誰も参照しない。黙って焼くと
-	// 時間とディスクだけ使うため断る。
-	if o.figures {
-		if p.HasCommandEntries() {
-			return fmt.Errorf("-figures はこの資料 (プロファイル %s) では効きません。"+
-				"囲みにページ画像を添えるのは節見出しで割る資料だけです", p.Name)
-		}
-		n, err := renderFigures(pdf, o.outDir, o.figureDPI, o.figurePages)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("ページ画像: %d 枚を焼きました\n", n)
-	}
-
-	// 項目の記号と見出し語を持たない資料はコマンド辞書として読めないので、
-	// 節見出しで割る経路へ回す (sections.go)。
-	src := source{kind: "pdf", pdf: pdf, label: o.sourceLabel, series: o.series, version: o.version, profile: p}
-	if !p.HasCommandEntries() {
-		return convertSections(o.outDir, docTitle, src)
-	}
-
-	fmt.Printf("読み込み: %s (プロファイル %s)\n", pdf, p.Name)
-	pages, stats, err := readPages(p, pdf)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("  ページ数: %d (2段組み %d / 全幅 %d)\n", len(pages), stats.two, stats.one)
-
-	chapters := collectChapterTitles(pages)
-	entries := parseEntries(p, pages)
-	fmt.Printf("  抽出項目: %d 件 / 章: %d\n", len(entries), len(chapters))
-
-	if len(entries) == 0 {
-		return fmt.Errorf("項目を 1 件も抽出できませんでした。"+
-			"プロファイルの entryMarker (%q) と fieldLabels が資料に合っているか確認してください", p.EntryMarker)
-	}
-
-	if err := writeAll(o.outDir, docTitle, src, chapters, entries); err != nil {
-		return err
-	}
-	fmt.Printf("\n出力しました: %s\n", o.outDir)
-	fmt.Printf("  機械可読索引: %s\n", filepath.Join(o.outDir, "commands.tsv"))
-	fmt.Printf("  目次:         %s\n", filepath.Join(o.outDir, "index.md"))
-	return nil
-}
-
 // --- 読み込み ---
 
-type pageStats struct{ one, two int }
+type PageStats struct{ One, Two int }
 
-// readPages は 1 冊を読み切り、
+// ReadPages は 1 冊を読み切り、
 // ページごとに段組みを判定して読み順の行列を作る。
-func readPages(p *Profile, pdf string) ([]page, pageStats, error) {
-	left, right, full, err := p.ExtractColumns(pdf)
+func ReadPages(p *domain.Profile, pdf string) ([]Page, PageStats, error) {
+	left, right, full, err := extractColumns(p, pdf)
 	if err != nil {
-		return nil, pageStats{}, err
+		return nil, PageStats{}, err
 	}
-	headers, footers, err := p.ExtractBands(pdf)
+	headers, footers, err := extractBands(p, pdf)
 	if err != nil {
-		return nil, pageStats{}, err
+		return nil, PageStats{}, err
 	}
 
-	var stats pageStats
-	pages := make([]page, 0, len(full))
+	var stats PageStats
+	pages := make([]Page, 0, len(full))
 	for i := range full {
-		pg := page{num: i + 1}
+		pg := Page{num: i + 1}
 		pg.section = at(headers, i)
 		pg.printed = firstToken(at(footers, i))
 		pg.chapter = chapterOf(pg.printed)
@@ -210,12 +73,12 @@ func readPages(p *Profile, pdf string) ([]page, pageStats, error) {
 				pg.twoColumn = true
 				// 読み順は左段を読み切ってから右段 (検証済み)
 				pg.lines = append(splitLines(l), splitLines(r)...)
-				stats.two++
+				stats.Two++
 			}
 		}
 		if !pg.twoColumn {
 			pg.lines = splitLines(full[i])
-			stats.one++
+			stats.One++
 		}
 		pages = append(pages, pg)
 	}
@@ -273,9 +136,9 @@ func chapterOf(printed string) int {
 
 var chapterTitleRe = regexp.MustCompile(`^(\d+)\.\s*(\S.*?)\s*$`)
 
-// collectChapterTitles は章扉ページ (印刷ページ番号が "N-1") から章名を拾う。
+// CollectChapterTitles は章扉ページ (印刷ページ番号が "N-1") から章名を拾う。
 // 目次を解析しなくても、版面そのものが構造を持っている。
-func collectChapterTitles(pages []page) map[int]string {
+func CollectChapterTitles(pages []Page) map[int]string {
 	out := map[int]string{}
 	for _, pg := range pages {
 		if pg.chapter == 0 || !strings.HasSuffix(pg.printed, "-1") {
@@ -299,19 +162,19 @@ func collectChapterTitles(pages []page) map[int]string {
 
 // --- 項目の切り出し ---
 
-func parseEntries(p *Profile, pages []page) []entry {
+func ParseEntries(p *domain.Profile, pages []Page) []domain.Entry {
 	labels := map[string]bool{}
 	for _, l := range p.FieldLabels {
 		labels[l] = true
 	}
 
-	var entries []entry
-	var cur *entry
-	var curField *field
+	var entries []domain.Entry
+	var cur *domain.Entry
+	var curField *domain.Field
 
 	flushField := func() {
 		if cur != nil && curField != nil {
-			cur.fields = append(cur.fields, *curField)
+			cur.Fields = append(cur.Fields, *curField)
 		}
 		curField = nil
 	}
@@ -331,7 +194,7 @@ func parseEntries(p *Profile, pages []page) []entry {
 			t := strings.TrimSpace(raw)
 			if t == "" {
 				if curField != nil {
-					curField.lines = append(curField.lines, "")
+					curField.Lines = append(curField.Lines, "")
 				}
 				continue
 			}
@@ -339,14 +202,14 @@ func parseEntries(p *Profile, pages []page) []entry {
 			// 新しい項目の開始
 			if p.EntryMarker != "" && strings.HasPrefix(t, p.EntryMarker) {
 				flushEntry()
-				cur = &entry{
-					title:   strings.TrimSpace(strings.TrimPrefix(t, p.EntryMarker)),
-					chapter: pg.chapter,
-					section: pg.section,
+				cur = &domain.Entry{
+					Title:   strings.TrimSpace(strings.TrimPrefix(t, p.EntryMarker)),
+					Chapter: pg.chapter,
+					Section: pg.section,
 					// 版面に刷られたページ番号 (3-29) ではなく PDF の物理ページを持つ。
 					// 刷られた番号は章ごとに振り直されていて、PDF を開くときにも
 					// ページ指定には使えない。3-29 は物理 61 ページ目にあたる。
-					ref: ref{page: pg.num},
+					Ref: domain.Ref{Page: pg.num},
 				}
 				continue
 			}
@@ -356,22 +219,22 @@ func parseEntries(p *Profile, pages []page) []entry {
 
 			if label, rest, ok := splitLabel(t, p.FieldLabels); ok {
 				flushField()
-				curField = &field{label: normalizeLabel(label)}
+				curField = &domain.Field{Label: domain.NormalizeLabel(label)}
 				if rest != "" {
 					// 見出し語と同じ行に載ってしまった中身を拾う
-					curField.lines = append(curField.lines, rest)
+					curField.Lines = append(curField.Lines, rest)
 				}
 				continue
 			}
 			if curField != nil {
-				curField.lines = append(curField.lines, raw)
+				curField.Lines = append(curField.Lines, raw)
 			}
 		}
 	}
 	flushEntry()
 
 	for i := range entries {
-		entries[i].cmds = commandsOf(&entries[i])
+		entries[i].Cmds = domain.CommandsOf(&entries[i])
 	}
 	return entries
 }
@@ -401,7 +264,7 @@ func splitLabel(t string, fieldLabels []string) (label, rest string, ok bool) {
 // 開きっぱなしの見出しに目次の行が流れ込んで中身が汚れる。
 // この資料では、そうしたページは前付け・章扉・節扉・目次・索引だけだった
 // (本文が続くだけのページには必ずいずれかの見出し語が現れる)。
-func isNavigation(pg *page, marker string, labels map[string]bool) bool {
+func isNavigation(pg *Page, marker string, labels map[string]bool) bool {
 	for _, raw := range pg.lines {
 		t := strings.TrimSpace(raw)
 		if t == "" {
@@ -415,68 +278,6 @@ func isNavigation(pg *page, marker string, labels map[string]bool) bool {
 		}
 	}
 	return true
-}
-
-// syntaxLabels は「コマンド構文そのもの」を載せる見出し語。
-// ここだけはコードブロックにし、行の折り返しをいじらない。
-var syntaxLabels = map[string]bool{"入力形式": true, "入力例": true}
-
-// commandsOf は入力形式からコマンド行を取り出す (no 形は除く)。
-//
-// 長い構文は版面で折り返されており、その続きは 1 段深く字下げされている。
-// 折り返し行をそのまま拾うと "128][aes-cbc-192]..." のような断片が索引に並ぶので、
-// 字下げの深い行は直前のコマンドに繋ぎ直す。
-//
-// 「深い」の基準は欄の 1 行目の字下げ。共通の字下げを取り除く (dedent) だけだと、
-// no 形が 1 行目より浅く置かれた項目 (無印 CRM の snmp-agent ip trap や
-// ike proposal、IX-R CRM の local-ts: 版面と原稿の癖) で 1 行目が続き扱いになり、
-// 項目ごと索引から消える。欄の 1 行目が続きであることは無い。
-func commandsOf(e *entry) []string {
-	var joined []string
-	for _, f := range e.fields {
-		if f.label != "入力形式" {
-			continue
-		}
-		base := -1
-		for _, ln := range f.lines {
-			t := strings.TrimSpace(ln)
-			if t == "" {
-				continue
-			}
-			if base < 0 {
-				base = indentOf(ln)
-			}
-			// コマンドは必ず英小文字で始まる。1 行目より字下げが深い行と、
-			// 英小文字で始まらない行 ("ADDRESS]" のような折り返しの後半) は
-			// 直前のコマンドの続きとして繋ぎ直す。
-			if indentOf(ln) > base || !startsLowerASCII(t) {
-				if len(joined) == 0 {
-					continue // 繋ぐ先が無い断片 = 版面のにじみ。索引には載せない
-				}
-				joined[len(joined)-1] += " " + t
-				continue
-			}
-			joined = append(joined, t)
-		}
-	}
-
-	var out []string
-	seen := map[string]bool{}
-	for _, c := range joined {
-		if strings.HasPrefix(c, "no ") || seen[c] {
-			continue
-		}
-		seen[c] = true
-		out = append(out, c)
-	}
-	return out
-}
-
-func indentOf(s string) int { return len(s) - len(strings.TrimLeft(s, " ")) }
-
-func startsLowerASCII(s string) bool {
-	r := []rune(s)
-	return len(r) > 0 && r[0] >= 'a' && r[0] <= 'z'
 }
 
 // --- 整形 ---
@@ -650,18 +451,18 @@ func inlineMarkup(s string) string {
 
 // --- 出力 ---
 
-func writeAll(outDir, docTitle string, src source,
-	chapters map[int]string, entries []entry,
+func WriteAll(outDir, docTitle string, src Source,
+	chapters map[int]string, entries []domain.Entry,
 ) error {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
 
 	// 章 → 節 → 項目 に束ねる (出現順を保つ)
-	var order []sectionKey
-	grouped := map[sectionKey][]*entry{}
+	var order []domain.SectionKey
+	grouped := map[domain.SectionKey][]*domain.Entry{}
 	for i := range entries {
-		k := sectionKey{entries[i].chapter, entries[i].section}
+		k := domain.SectionKey{Chapter: entries[i].Chapter, Section: entries[i].Section}
 		if _, ok := grouped[k]; !ok {
 			order = append(order, k)
 		}
@@ -669,13 +470,13 @@ func writeAll(outDir, docTitle string, src source,
 	}
 
 	// 節ごとに 1 ファイル。852 ページを 1 ファイルにすると skill から引けない。
-	relPath := map[sectionKey]string{}
+	relPath := map[domain.SectionKey]string{}
 	for _, k := range order {
 		chDir := "ch00-その他"
-		if k.chapter > 0 {
-			chDir = fmt.Sprintf("ch%02d-%s", k.chapter, safeName(chapters[k.chapter]))
+		if k.Chapter > 0 {
+			chDir = fmt.Sprintf("ch%02d-%s", k.Chapter, safeName(chapters[k.Chapter]))
 		}
-		rel := filepath.Join(chDir, safeName(k.section)+".md")
+		rel := filepath.Join(chDir, safeName(k.Section)+".md")
 		relPath[k] = rel
 
 		full := filepath.Join(outDir, rel)
@@ -685,7 +486,7 @@ func writeAll(outDir, docTitle string, src source,
 		// 章名は親ディレクトリ名に、節名はこの見出しに入っている。
 		// 版面の柱をそのまま複製しても、引く側の役には立たない。
 		var b strings.Builder
-		fmt.Fprintf(&b, "# %s\n\n", k.section)
+		fmt.Fprintf(&b, "# %s\n\n", k.Section)
 
 		// 索引が項目を行番号で指すので、書きながら行数を数える。
 		// 索引側はこの値をそのまま Read の offset に渡せる。
@@ -693,7 +494,7 @@ func writeAll(outDir, docTitle string, src source,
 		for _, e := range grouped[k] {
 			var eb strings.Builder
 			renderEntry(&eb, e)
-			e.line = line
+			e.Line = line
 			line += strings.Count(eb.String(), "\n")
 			b.WriteString(eb.String())
 		}
@@ -713,17 +514,17 @@ func writeAll(outDir, docTitle string, src source,
 // 見出し以外の装飾は付けない。全項目が同じ 8 つの見出し語を持つので、見出し語
 // 1 つを強調するだけで 5 万バイト増える。ページ番号も節名も索引側が持っており、
 // 本文に書いても引く側が得るものが無い。
-func renderEntry(b *strings.Builder, e *entry) {
-	fmt.Fprintf(b, "## %s\n\n", e.title)
-	for _, f := range e.fields {
-		lines := dedent(f.lines)
-		if syntaxLabels[f.label] {
+func renderEntry(b *strings.Builder, e *domain.Entry) {
+	fmt.Fprintf(b, "## %s\n\n", e.Title)
+	for _, f := range e.Fields {
+		lines := dedent(f.Lines)
+		if domain.SyntaxLabels[f.Label] {
 			// コマンド構文は版面どおりに残す。折り返しも字下げも意味を持つ。
 			body := strings.Trim(strings.Join(lines, "\n"), "\n ")
 			if body == "" {
 				continue
 			}
-			fmt.Fprintf(b, "%s:\n```\n%s\n```\n\n", f.label, body)
+			fmt.Fprintf(b, "%s:\n```\n%s\n```\n\n", f.Label, body)
 			continue
 		}
 		joined := joinWrapped(lines)
@@ -733,10 +534,10 @@ func renderEntry(b *strings.Builder, e *entry) {
 		// デフォルト値・実行モード・ユーザ権限のように 1 行で済む項目は
 		// 見出し語と同じ行に置く。3 行が 1 行になる。
 		if len(joined) == 1 {
-			fmt.Fprintf(b, "%s: %s\n\n", f.label, inlineMarkup(joined[0]))
+			fmt.Fprintf(b, "%s: %s\n\n", f.Label, inlineMarkup(joined[0]))
 			continue
 		}
-		fmt.Fprintf(b, "%s:\n", f.label)
+		fmt.Fprintf(b, "%s:\n", f.Label)
 		renderBody(b, joined)
 	}
 }
@@ -779,8 +580,8 @@ func renderBody(b *strings.Builder, joined []string) {
 	b.WriteString("\n")
 }
 
-func writeIndex(outDir, docTitle string, chapters map[int]string, order []sectionKey,
-	grouped map[sectionKey][]*entry, relPath map[sectionKey]string, entries []entry,
+func writeIndex(outDir, docTitle string, chapters map[int]string, order []domain.SectionKey,
+	grouped map[domain.SectionKey][]*domain.Entry, relPath map[domain.SectionKey]string, entries []domain.Entry,
 ) error {
 	// --- 機械可読索引 (skill が引くのはこちら) ---
 	//
@@ -793,9 +594,9 @@ func writeIndex(outDir, docTitle string, chapters map[int]string, order []sectio
 	var rows []row
 	for i := range entries {
 		e := &entries[i]
-		file := strings.ReplaceAll(relPath[sectionKey{e.chapter, e.section}], `\`, "/")
-		for _, c := range e.cmds {
-			rows = append(rows, row{c, e.title, file, e.ref.String(), e.line})
+		file := strings.ReplaceAll(relPath[domain.SectionKey{Chapter: e.Chapter, Section: e.Section}], `\`, "/")
+		for _, c := range e.Cmds {
+			rows = append(rows, row{c, e.Title, file, e.Ref.String(), e.Line})
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].cmd < rows[j].cmd })
@@ -824,16 +625,16 @@ func writeIndex(outDir, docTitle string, chapters map[int]string, order []sectio
 		len(entries), len(order))
 	lastCh := -1
 	for _, k := range order {
-		if k.chapter != lastCh {
-			fmt.Fprintf(&b, "\n## %d. %s\n\n", k.chapter, chapters[k.chapter])
-			lastCh = k.chapter
+		if k.Chapter != lastCh {
+			fmt.Fprintf(&b, "\n## %d. %s\n\n", k.Chapter, chapters[k.Chapter])
+			lastCh = k.Chapter
 		}
-		fmt.Fprintf(&b, "- [%s](%s) — %d 項目\n", k.section, mdLinkDest(relPath[k]), len(grouped[k]))
+		fmt.Fprintf(&b, "- [%s](%s) — %d 項目\n", k.Section, mdLinkDest(relPath[k]), len(grouped[k]))
 	}
 	return os.WriteFile(filepath.Join(outDir, "index.md"), []byte(b.String()), 0o644)
 }
 
-func writeReadme(outDir, docTitle string, src source, nEntries, nSections int) error {
+func writeReadme(outDir, docTitle string, src Source, nEntries, nSections int) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s (Markdown 変換版)\n\n", docTitle)
 	fmt.Fprintln(&b, "この配下は元資料から機械変換した生成物であり、著作権は原著作者に帰属する。")
