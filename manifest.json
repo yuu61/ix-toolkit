@@ -1,14 +1,20 @@
 {
   "_comment": [
-    "取得する PDF の一覧。url は配布ページを見て人が転記する (版ごとにリンクが変わるため、",
+    "取得する資料の一覧。url は配布ページを見て人が転記する (版ごとにリンクが変わるため、",
     "推測して書かないこと)。url が空のエントリは fetch が失敗するので、まず埋める。",
-    "sha256 を書いておくと取得時に検証され、次回以降は取得済み判定にも使われる。",
-    "空のまま取得すると実際の sha256 が表示されるので、それを貼れば固定できる。",
-    "profile / title は md サブコマンドに渡す値のメモ (fetch は読まない)。"
+    "kind は \"pdf\" か \"web\" を明示する (取得と検証の作法が変わるので推測しない)。",
+    "pdf: sha256 を書いておくと取得時に検証され、次回以降は取得済み判定にも使われる。",
+    "     空のまま取得すると実際の sha256 が表示されるので、それを貼れば固定できる。",
+    "web: version が index の <title> に含まれるかで検証する。版が上がっていたら取得せずに",
+    "     止まるので、配布ページを確かめて version と url を更新する。",
+    "series は機種の系列 (ix = IX2000/IX3000, ix-r = IX-R/IX-V)。変換結果の README に載る。",
+    "profile / title は md サブコマンドに渡す値 (web は取得キャッシュの .manualbook.json 経由で渡る)。"
   ],
   "docs": [
     {
       "name": "CRM-ver10.11-1.1",
+      "series": "ix",
+      "kind": "pdf",
       "title": "IX2000/IX3000 コマンドリファレンスマニュアル 10.11",
       "url": "",
       "version": "10.11-1.1",
@@ -17,11 +23,31 @@
     },
     {
       "name": "FD-ver10.11-1.1",
+      "series": "ix",
+      "kind": "pdf",
       "title": "IX2000/IX3000 機能説明書 10.11",
       "url": "",
       "version": "10.11-1.1",
       "sha256": "81174569857f3055f10f08b761dc2a25cfddb9e3044fbba57e689f2feeeb1958",
       "profile": "profiles/nec-ix-fd.json"
+    },
+    {
+      "name": "IX-R-CRM-1.5a",
+      "series": "ix-r",
+      "kind": "web",
+      "title": "IX-R/IX-V コマンドリファレンス 1.5a",
+      "url": "https://www.necplatforms.co.jp/dl/ix-nrv/manual/crm/",
+      "version": "1.5a",
+      "profile": "profiles/nec-ix-r-crm.json"
+    },
+    {
+      "name": "IX-R-FD-1.5a",
+      "series": "ix-r",
+      "kind": "web",
+      "title": "IX-R/IX-V 機能説明書 1.5a版",
+      "url": "https://www.necplatforms.co.jp/dl/ix-nrv/manual/fd/",
+      "version": "1.5a",
+      "profile": "profiles/nec-ix-r-fd.json"
     }
   ]
 }

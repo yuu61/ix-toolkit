@@ -67,11 +67,12 @@ type Profile struct {
 // HasCommandEntries は、この資料をコマンド項目として読めるかを返す。
 //
 // 読めない資料は節見出しで読む。どちらで読むかを指す設定は別に持たない。
-// EntryMarker が無ければ parseEntries は項目を 1 つも開始できず、
-// FieldLabels が無ければ項目の中身を割れないので、この 2 つの有無は
-// 選択肢ではなく前提条件そのものである。
+// FieldLabels が無ければ項目の中身を割れないので、その有無は選択肢ではなく
+// 前提条件そのものである。EntryMarker は見ない。PDF では項目の頭を記号で
+// 見つけるが、Web (Sphinx) では項目が <section> と <dl> の構造で分かれていて
+// 記号が無い。記号は PDF 前段の解析の都合であって、資料の型を決めるものではない。
 func (p *Profile) HasCommandEntries() bool {
-	return p.EntryMarker != "" && len(p.FieldLabels) > 0
+	return len(p.FieldLabels) > 0
 }
 
 // DefaultProfile は NEC IX コマンドリファレンスマニュアル用の既定値。

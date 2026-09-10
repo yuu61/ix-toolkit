@@ -1,6 +1,6 @@
 ---
 name: ix-configure
-description: NEC IX に設定を投入する。config モードで設定行を適用する。対象機器は --device で指定する。ユーザーが NEC IX の設定変更・投入を求めたときに使用する
+description: NEC IX（IX2000/IX3000 と IX-R/IX-V）に設定を投入する。config モードで設定行を適用する。対象機器は --device で指定する。ユーザーが NEC IX の設定変更・投入を求めたときに使用する
 argument-hint: "[機器名] [変更内容の説明] (e.g., home デフォルトルート追加)"
 allowed-tools: Bash(ix-ssh:*) Bash(uvx:*) Bash(uv:*)
 compatibility: uv と ix-ssh コマンドが要る（uv tool install git+https://github.com/yuu61/ix-toolkit）。対象の NEC IX へ SSH が通ること、インベントリ ~/.ix-toolkit/devices.json があること（場所は ix-ssh --list が表示する）。
@@ -49,7 +49,21 @@ ix-ssh --list
 
 対象機器を確定し（不明なら `--list` で確認）、ユーザーの要求と関連設計書（`docs/design/` 等がある場合）から投入すべき設定行を特定する。インターフェース名は機種・構成で異なるため、`ix-show` で `show interfaces` / `show running-config` を確認してから決める（決め打ちしない）。
 
-**コマンドの綴り・入力形式・実行モードが不確かなときは、記憶で書かずに `ix-manual` で調べる。** その際、`--list` や `# target: ...` 行に出ている `model`（機種名）を添える。マニュアルは IX2000/IX3000 の全機種をまとめたもので、諸元値（設定数の上限など）は機種ごとに列が分かれているため、機種名が無いと別機種の値を読む。 特に `no` 形の綴りと、そのコマンドが属するコンフィグモードは間違えやすい。`ix-manual` はコマンドリファレンスマニュアルの該当項目（入力形式・パラメータ・実行モード・ユーザ権限・ノート）を返す。ノートに書かれた制約（再起動要否、併用不可など）は投入前にユーザーへ伝えること。
+**系列を先に決める。** NEC IX は IX2000/IX3000（無印）と IX-R/IX-V の 2 系列でコマンドが違う（同じ名前でも登録するモードが違うものがある）。`--list` や `# target: ...` 行の `model` が `IX-R…` / `IX-V…` なら IX-R/IX-V、`IX2…` / `IX3…` なら無印。`model` はヒントであってゲートではない。無い・分からなければ会話の文脈から決め、それでも決まらなければ `ix-show` で `show version` を実行して機種名を取る（推測で系列を決めて設定を書かない）。
+
+**コマンドの綴り・入力形式・実行モードが不確かなときは、記憶で書かずに `ix-manual` で調べる。** その際、系列と `model`（機種名）を添える。無印のマニュアルは IX2000/IX3000 の全機種をまとめたもので、諸元値（設定数の上限など）は機種ごとに列が分かれているため、機種名が無いと別機種の値を読む。 特に `no` 形の綴りと、そのコマンドが属するコンフィグモードは間違えやすい。`ix-manual` はコマンドリファレンスマニュアルの該当項目（入力形式・パラメータ・実行モード・ユーザー権限・ノート）を返す。ノートに書かれた制約（再起動要否、併用不可など）は投入前にユーザーへ伝えること。
+
+**IX-R/IX-V に投入するときは、設定行を `ix-manual` の `diff.tsv`（無印 → IX-R の対応表）で照合する。** 無印の設定を移す場合、無印で覚えたコマンドをそのまま書いた場合に効く。当たった行の `kind` で扱いが変わる（`source` が `ch8` / `derived` の行が対象。`setdiff` は後述）。
+
+| `kind` | 設定行の扱い |
+|---|---|
+| `removed` / `limit` | **案から外す。** `ix-r` 列か `note` に統一先があれば（`restart` → `reload`、`show config` → `show startup-config`）それを示す。無ければ代替をユーザーと相談する |
+| `renamed` | `ix-r` 列の綴りに**置き換えて残す**（`logging buffered` → `syslog enable`） |
+| `moved` | コマンドは同じだが**登録するモードが変わる。** インタフェースコンフィグへ移すものは `interface` ブロックの中に書き直す（`http-server ip enable` はグローバルではなく該当インタフェース配下）。IX-R 機能説明書 8.3.3 のリスト 8.3.1 / 8.3.2 に移し方の前後が載っている |
+| `range` / `changed` | **行は残し、値とオプションを `note` と突き合わせる。** 範囲外の値・廃止されたオプション（`ip max-route unlimited`、`ipsec policy` の `in` / `out`）は直してから提示する |
+
+- `source` が `setdiff`（索引の集合差）の行に当たったら**警告として添える**だけでよい。本当に無いかは `commands.tsv` で確かめる。
+- 照合は手段であって、投入の可否を決めるのは次項のユーザー確認である（`diff.tsv` に無いから安全、とはしない。8 章は使用頻度の高い差分だけを載せている）。
 
 ### 2. ユーザーへの確認提示
 
@@ -57,9 +71,11 @@ ix-ssh --list
 
 ```
 対象機器: <機器名>（<user>@<host>） ← --list の表示と一致すること
+系列    : IX-R/IX-V（model IX-R2530）← 何から決めたかを添える（model / 会話 / show version）
 投入する設定:
   ip route default GigaEthernet1.0
   logging buffered 100
+diff.tsv 照合: 該当なし（または「logging buffered → syslog enable に置き換えた (renamed, ch8)」「logging packet は廃止 (removed, ch8) → 案から外した」）
 永続化: write memory を実行する（--save）
 
 この設定を投入しますか？

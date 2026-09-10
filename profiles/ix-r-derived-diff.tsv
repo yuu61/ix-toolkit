@@ -1,0 +1,21 @@
+# 無印 IX (IX2000/IX3000) と IX-R/IX-V の差分のうち、両系列の機能説明書「制限事項」を
+# 読み比べて手で導いたもの。manualbook diff がこれを読み、source=derived の行として
+# diff.tsv に写す (8 章の書き起こし ch8 と、索引の集合差 setdiff はそこで機械的に付く)。
+#
+# 前提にした版:  無印 FD/CRM Ver 10.11-1.1  ×  IX-R/IX-V FD/CRM Ver 1.5a
+# どちらかの版が上がったら、ref_ix / ref_ixr の節を読み直して行を直すか消す。
+# 版の組が合わないまま使うと、直った制限を「非対応」と答え続ける。
+#
+# 列: kind / ix / ix-r / ref_ix / ref_ixr / note
+#   kind    limit = 対応していた機能が非対応になった
+#   ix      無印のコマンド (commands.tsv の先頭語に合わせる)。空なら機能そのもの
+#   ix-r    IX-R での置き換え先。空なら置き換えが無い
+#   ref_ix  無印側の出典。crm:pNNN (コマンドリファレンス) か fd:pNNN (機能説明書)
+#   ref_ixr IX-R 側の出典。crm:<path#anchor> か fd:<path#anchor>
+#   note    根拠 (両側の記述をそのまま引く)
+kind	ix	ix-r	ref_ix	ref_ixr	note
+limit	area AID virtual-link A.B.C.D		fd:p45	fd:00_main/01_synopsis.html#id78	OSPFv2 の仮想リンク。無印の制限事項は OSPFv3 だけ「バーチャルリンク非対応」で OSPFv2 は対応 (CRM p275 に area virtual-link がある)。IX-R は OSPF 全体で「仮想リンクはサポートしておりません」で、IX-R CRM に area virtual-link は無い
+limit	snmp-agent ip trap COMMUNITY vrrp		fd:p410	fd:00_main/01_synopsis.html#id78	VRRPv2 (IPv4) の MIB/Trap。無印は「IPv4 は RFC2787 の VRRP MIB に対応」(FD 2.27.1.1) で、CRM p608 の snmp-agent ip trap に vrrp auth-fail / new-master がある。IX-R は「VRRPv2 (IPv4)、VRRPv3 (IPv6) の MIB/Trap は対応しておりません」で、snmp-agent ip trap に vrrp は無い
+limit	ip rip receive version VERSION	ip rip receive	crm:p253	fd:00_main/01_synopsis.html#ripv2	RIPv1。無印は receive/send version で 1 と 2 を選べる (FD 2.22.4.3 に RIPv1 利用時の注意事項がある)。IX-R は「サポートする RIP のプロトコルバージョンは RIPv2 のみとなり RIPv1 は廃止」で、version パラメータそのものが無い
+limit	ip rip send version VERSION	ip rip send	crm:p254	fd:00_main/01_synopsis.html#ripv2	RIPv1。上と同じ (送信側)
+limit	aaa authentication login		crm:p581	fd:00_main/01_synopsis.html#id78	AAA の縮小。IX-R は「MAC 認証と IEEE802.1X 認証のみサポート」で、aaa authentication login / ppp / ngn、aaa authorization exec / network、aaa accounting exec / network / ngn / resource / system は IX-R CRM に無い (aaa 系は無印 20 件 → IX-R 9 件)。対象は先頭の aaa authentication login を代表にしている

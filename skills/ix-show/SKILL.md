@@ -1,6 +1,6 @@
 ---
 name: ix-show
-description: NEC IX の show コマンドを実行して状態を確認する（インターフェース, ルーティング, IPsec, ログ等）。対象機器は --device で指定する。ユーザーが NEC IX の状態確認・表示を求めたときに使用する
+description: NEC IX（IX2000/IX3000 と IX-R/IX-V）の show コマンドを実行して状態を確認する（インターフェース, ルーティング, IPsec, ログ等）。対象機器は --device で指定する。ユーザーが NEC IX の状態確認・表示を求めたときに使用する
 argument-hint: "[機器名] <show コマンド> (e.g., home show ip route)"
 allowed-tools: Bash(ix-ssh:*) Bash(uvx:*) Bash(uv:*)
 compatibility: uv と ix-ssh コマンドが要る（uv tool install git+https://github.com/yuu61/ix-toolkit）。対象の NEC IX へ SSH が通ること、インベントリ ~/.ix-toolkit/devices.json があること（場所は ix-ssh --list が表示する）。
@@ -62,7 +62,19 @@ show コマンドは `"show ..."` 全体を 1 つの引数として渡す（複�
    ix-ssh -d <機器名> "show interfaces" "show ipv6 route"
    ```
 
-4. 標準エラーに `# target: <機器名> (<user>@<host>:<port>, ...)` が出るので、**意図した機器に接続したことを確認**してから出力を整形し、状態をわかりやすくレポートする。インベントリに `model` が書いてあれば `..., model IX2215` として同じ行に出る。**機種名は諸元値の読み取りに要るので、`ix-manual` を引くときはこの値を添える**（マニュアルは IX2000/IX3000 の全機種をまとめたもので、諸元表は機種ごとに列が分かれている）。
+4. 標準エラーに `# target: <機器名> (<user>@<host>:<port>, ...)` が出るので、**意図した機器に接続したことを確認**してから出力を整形し、状態をわかりやすくレポートする。インベントリに `model` が書いてあれば `..., model IX2215` として同じ行に出る。**機種名は系列（下記）と諸元値の読み取りに要るので、`ix-manual` を引くときはこの値を添える**（無印のマニュアルは IX2000/IX3000 の全機種をまとめたもので、諸元表は機種ごとに列が分かれている）。
+
+## 系列で変わるコマンド名
+
+NEC IX は **IX2000/IX3000（無印）と IX-R/IX-V の 2 系列**で、show コマンドの名前が一部違う。系列はインベントリの `model`（`IX-R…` / `IX-V…` なら IX-R/IX-V、`IX2…` / `IX3…` なら無印）か会話から決める。`model` はヒントであってゲートではない。無い・分からなければ `show version` を実行して出力の機種名で決める（この skill は接続するので自分で確かめられる）。
+
+| 無印 | IX-R/IX-V | 用途 |
+|---|---|---|
+| `show logging` | `show syslog` | ログバッファ |
+| `show config` | `show startup-config` | 保存済み設定 |
+| `show nm information` | `show nm status` | NetMeister 状態 |
+
+片方の綴りで `% ` エラーが返ったら、もう片方を試す前に `ix-manual` の `diff.tsv` で対応を確かめる。
 
 ## よく使う show コマンド
 
@@ -72,10 +84,10 @@ show コマンドは `"show ..."` 全体を 1 つの引数として渡す（複�
 - `show arp` — ARP テーブル
 - `show running-config` — 現在の設定（config モード内で実行）
 - `show ipsec sa` / `show ike sa` — IPsec / IKE 状態
-- `show logging` — ログバッファ
+- `show logging`（無印）/ `show syslog`（IX-R）— ログバッファ
 - `show environment` — 電圧・温度
 - `show ntp` / `show dns` — 時刻同期 / 名前解決
 
 > インターフェース名（`GigaEthernet0.0` 等）は機種・構成で異なる。決め打ちせず `show interfaces` の出力で確認すること。サブコマンドが不明なときは、まず大分類（例: `show ip route`）を実行して出力から判断する。`?` 補完はスクリプト経由では使えないため、フルコマンドで指定すること。
 
-> コマンドの綴りや出力の読み方が分からないときは `ix-manual` でコマンドリファレンスマニュアルを引く（読み取り専用・機器に接続しない）。ただしインターフェース名だけはマニュアルでは決まらないので、必ず実機の `show interfaces` で確認すること。
+> コマンドの綴りや出力の読み方が分からないときは `ix-manual` でコマンドリファレンスマニュアルを引く（読み取り専用・機器に接続しない）。系列を添えて引くこと。ただしインターフェース名だけはマニュアルでは決まらないので、必ず実機の `show interfaces` で確認すること。

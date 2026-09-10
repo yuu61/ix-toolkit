@@ -42,16 +42,32 @@ type heading struct {
 	depth   int // 番号の階層の深さ (2.11 なら 2)
 	chapter int
 	section string
-	pdfPage int // 見出しが現れた PDF の物理ページ (1 始まり)
+	ref     ref // 見出しの元資料上の位置 (PDF の物理ページ / Web のページとアンカー)
 	blocks  []block
 	line    int // 出力ファイル中の見出し行番号 (1 始まり)。索引はここを指す
 }
 
-// block は本文の一区切り。地の文か、版面どおりに囲う塊か。
+// blockKind は本文の一区切りの種類。
+//
+// PDF から読むと prose と layout の 2 つしか出ない。テキストからは表と図を
+// 見分けられないので、どちらも版面どおりに囲う (layout)。Web から読むと
+// 表は <table>、図は <figure> と元から分かれているので、table と figure が増える。
+type blockKind int
+
+const (
+	blockProse  blockKind = iota // 地の文
+	blockLayout                  // 版面固定 (表・図・コンソール出力を ```text で囲う)
+	blockTable                   // 表 (Markdown の表に出す)
+	blockFigure                  // 図 (figures/ に置いたファイルへのリンクとラベル列)
+)
+
+// block は本文の一区切り。
 type block struct {
-	layout bool // true なら版面固定 (表・図・コンソール出力)
-	page   int  // この塊が現れた PDF の物理ページ
-	lines  []string
+	kind   blockKind
+	ref    ref        // この塊が現れた元資料上の位置
+	lines  []string   // prose / layout の本文行。figure では図中のラベル列
+	rows   [][]string // table の行。先頭行が見出し
+	figure string     // figure: figures/ に置いたファイル名
 }
 
 // 見出し行。"■2.11 PPP の設定" と "2.11.6 オンデマンド帯域幅制御（BOD）の設定" の両方。
@@ -256,11 +272,11 @@ func parseHeadings(p *Profile, pages []page) ([]heading, map[int]string) {
 			return
 		}
 		n := len(cur.blocks)
-		if n > 0 && !cur.blocks[n-1].layout {
+		if n > 0 && cur.blocks[n-1].kind == blockProse {
 			cur.blocks[n-1].lines = append(cur.blocks[n-1].lines, s)
 			return
 		}
-		cur.blocks = append(cur.blocks, block{page: pg, lines: []string{s}})
+		cur.blocks = append(cur.blocks, block{ref: ref{page: pg}, lines: []string{s}})
 	}
 	flushLayout := func() {
 		if cur == nil || len(pend) == 0 {
@@ -278,7 +294,7 @@ func parseHeadings(p *Profile, pages []page) ([]heading, map[int]string) {
 			pend, hole = nil, 0
 			return
 		}
-		cur.blocks = append(cur.blocks, block{layout: true, page: pendPage, lines: pend})
+		cur.blocks = append(cur.blocks, block{kind: blockLayout, ref: ref{page: pendPage}, lines: pend})
 		pend, hole = nil, 0
 	}
 
@@ -309,7 +325,7 @@ func parseHeadings(p *Profile, pages []page) ([]heading, map[int]string) {
 					// 版面に刷られた番号 (2-118) ではなく PDF の物理ページを持つ。
 					// 刷られた番号は章ごとに振り直されていて PDF ビューアにも
 					// ページ指定にも渡せない。
-					pdfPage: pg.num,
+					ref: ref{page: pg.num},
 				})
 				cur = &heads[len(heads)-1]
 				continue
@@ -377,7 +393,7 @@ var figureNameRe = regexp.MustCompile(`^p-?0*(\d+)\.(?:png|jpg|jpeg)$`)
 //   - pdfimages のような抽出は使えない。要るのはページ描画で、p1057 では図 1 枚が
 //     271x39 px などの網掛け小片と smask に割れる (FD 全体で 11240 個)。
 //
-// 焼くのは pdfbook figures なので、測り直しに要るのは poppler (pdfimages / pdftotext
+// 焼くのは manualbook figures なので、測り直しに要るのは poppler (pdfimages / pdftotext
 // -bbox) だけ。MSYS2 なら pacman -S mingw-w64-x86_64-poppler。pdftopng は poppler に無く
 // Xpdf だけが持つので、下の figureNameRe が受ける名前を確かめるときだけ Xpdf tools
 // (https://www.xpdfreader.com/download.html) の zip を落として bin64/pdftopng.exe を使う。
@@ -392,7 +408,7 @@ var figureNameRe = regexp.MustCompile(`^p-?0*(\d+)\.(?:png|jpg|jpeg)$`)
 // loadFigures は出力先に置かれたページ画像を拾う。無ければ空を返す。
 //
 // ここは「置いてあれば張る、無ければ張らない」だけを引き受ける。焼くのは
-// pdfbook figures (md なら -figures) だが、外で焼いて置いた画像も同じように拾う。
+// manualbook figures (md なら -figures) だが、外で焼いて置いた画像も同じように拾う。
 // 画像の有無が変換の成否に影響しないので、テキストだけ先に作って後から
 // 焼き足してもよい。
 //
@@ -425,8 +441,9 @@ func loadFigures(outDir string) figureSet {
 // links は 1 つの節ファイルから外へ張るリンク。相対パスは節ファイルの
 // 置き場所から辿れる形で持つ。
 type links struct {
-	pdf  string    // 元 PDF への相対パス
-	figs figureSet // ページ画像 (無ければ nil)
+	src  source
+	pdf  string    // 元 PDF への相対パス (pdf のとき)
+	figs figureSet // ページ画像 (pdf のとき。無ければ nil)
 	base string    // figures/ への相対パス
 }
 
@@ -439,7 +456,7 @@ func (l links) image(n int) string {
 	return l.base + "/" + name
 }
 
-func writeSections(outDir, docTitle, source, pdf string, p *Profile,
+func writeSections(outDir, docTitle string, src source,
 	heads []heading, chapters map[int]string,
 ) error {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
@@ -475,9 +492,12 @@ func writeSections(outDir, docTitle, source, pdf string, p *Profile,
 
 		// 図表から外へ張るリンク。節ファイルの位置から実際に辿れる形で書く。
 		lk := links{
-			pdf:  pdfLinkBase(filepath.Dir(full), pdf),
+			src:  src,
 			figs: figs,
 			base: relLink(filepath.Dir(full), filepath.Join(outDir, "figures")),
+		}
+		if src.kind == "pdf" {
+			lk.pdf = pdfLinkBase(filepath.Dir(full), src.pdf)
 		}
 
 		var b strings.Builder
@@ -498,7 +518,7 @@ func writeSections(outDir, docTitle, source, pdf string, p *Profile,
 	if err := writeSectionIndex(outDir, docTitle, chapters, order, grouped, relPath, heads); err != nil {
 		return err
 	}
-	return writeSectionReadme(outDir, docTitle, source, pdf, p, len(heads), len(order), figs)
+	return writeSectionReadme(outDir, docTitle, src, len(heads), len(order), figs)
 }
 
 // pdfLinkBase は節ファイルの置き場所から元 PDF へ辿る相対パスを返す。
@@ -536,8 +556,15 @@ func renderHeading(b *strings.Builder, h *heading, lk links) {
 	fmt.Fprintf(b, "%s %s %s\n\n", strings.Repeat("#", level), h.number, h.title)
 
 	for _, blk := range h.blocks {
-		if blk.layout {
+		switch blk.kind {
+		case blockLayout:
 			renderLayoutBlock(b, blk, lk)
+			continue
+		case blockTable:
+			renderTableBlock(b, blk, lk)
+			continue
+		case blockFigure:
+			renderFigureBlock(b, blk, lk)
 			continue
 		}
 		joined := joinWrapped(blk.lines)
@@ -574,12 +601,87 @@ func renderLayoutBlock(b *strings.Builder, blk block, lk links) {
 		b.WriteString(ln + "\n")
 	}
 	b.WriteString("```\n")
-	fmt.Fprintf(b, "<sup>[元 PDF p%d](%s)", blk.page,
-		mdLinkDest(fmt.Sprintf("%s#page=%d", lk.pdf, blk.page)))
-	if img := lk.image(blk.page); img != "" {
-		fmt.Fprintf(b, " / [ページ画像](%s)", mdLinkDest(img))
+	renderRef(b, blk.ref, lk, "")
+}
+
+// renderRef は塊の直後に出所を書く。
+//
+// PDF なら元 PDF のページと、置いてあればページ画像。Web なら元のページと節の
+// URL。extra は図のように出所より先に並べたいリンク (無ければ空)。
+func renderRef(b *strings.Builder, r ref, lk links, extra string) {
+	b.WriteString("<sup>")
+	if extra != "" {
+		b.WriteString(extra + " / ")
+	}
+	if lk.src.kind == "web" {
+		fmt.Fprintf(b, "[出典](%s)", mdLinkDest(lk.src.urlOf(r)))
+	} else {
+		fmt.Fprintf(b, "[元 PDF p%d](%s)", r.page,
+			mdLinkDest(fmt.Sprintf("%s#page=%d", lk.pdf, r.page)))
+		if img := lk.image(r.page); img != "" {
+			fmt.Fprintf(b, " / [ページ画像](%s)", mdLinkDest(img))
+		}
 	}
 	b.WriteString("</sup>\n\n")
+}
+
+// renderTableBlock は表を Markdown の表として出す。
+//
+// Web から読んだ表は列の構造を持っているので、版面固定の囲みに落とさない。
+// 引く側は桁位置ではなく見出し行の列名で値を取る。
+func renderTableBlock(b *strings.Builder, blk block, lk links) {
+	if len(blk.rows) == 0 {
+		return
+	}
+	width := 0
+	for _, r := range blk.rows {
+		width = max(width, len(r))
+	}
+	cell := func(s string) string {
+		s = strings.ReplaceAll(strings.TrimSpace(s), "|", `\|`)
+		s = strings.ReplaceAll(s, "\n", "<br>")
+		return s
+	}
+	writeRow := func(r []string) {
+		b.WriteString("|")
+		for i := 0; i < width; i++ {
+			v := ""
+			if i < len(r) {
+				v = cell(r[i])
+			}
+			b.WriteString(" " + v + " |")
+		}
+		b.WriteString("\n")
+	}
+	writeRow(blk.rows[0])
+	b.WriteString("|" + strings.Repeat("---|", width) + "\n")
+	for _, r := range blk.rows[1:] {
+		writeRow(r)
+	}
+	renderRef(b, blk.ref, lk, "")
+}
+
+// renderFigureBlock は図を出す。
+//
+// 図そのものは figures/ に置いたファイル (Web なら SVG のまま) へのリンクで示し、
+// 図中のラベルを囲みに並べる。ラベルは節を探し当てる手がかりで、矢印や包含は
+// ファイルを開かないと分からない。PDF 側の囲みと同じ読み方ができる。
+func renderFigureBlock(b *strings.Builder, blk block, lk links) {
+	if len(blk.lines) > 0 {
+		b.WriteString("```text\n")
+		for _, ln := range blk.lines {
+			if strings.HasPrefix(strings.TrimSpace(ln), "```") {
+				ln = " " + ln
+			}
+			b.WriteString(ln + "\n")
+		}
+		b.WriteString("```\n")
+	}
+	extra := ""
+	if blk.figure != "" {
+		extra = fmt.Sprintf("[図](%s)", mdLinkDest(lk.base+"/"+blk.figure))
+	}
+	renderRef(b, blk.ref, lk, extra)
 }
 
 func trimBlankEdges(lines []string) []string {
@@ -600,11 +702,11 @@ func writeSectionIndex(outDir, docTitle string, chapters map[int]string, order [
 	// コマンド辞書ではないので、キーは節番号と見出し語になる。skill は
 	// 節番号で引くか、見出し語を部分一致で探すか、本文を全文検索する。
 	var t strings.Builder
-	fmt.Fprintln(&t, "section\ttitle\tfile\tline\tpdfpage")
+	fmt.Fprintln(&t, "section\ttitle\tfile\tline\tsource")
 	for i := range heads {
 		h := &heads[i]
 		file := filepath.ToSlash(relPath[sectionKey{h.chapter, h.section}])
-		fmt.Fprintf(&t, "%s\t%s\t%s\t%d\t%d\n", h.number, h.title, file, h.line, h.pdfPage)
+		fmt.Fprintf(&t, "%s\t%s\t%s\t%d\t%s\n", h.number, h.title, file, h.line, h.ref.String())
 	}
 	if err := os.WriteFile(filepath.Join(outDir, "sections.tsv"), []byte(t.String()), 0o644); err != nil {
 		return err
@@ -613,7 +715,7 @@ func writeSectionIndex(outDir, docTitle string, chapters map[int]string, order [
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s — 目次\n\n", docTitle)
 	fmt.Fprintf(&b, "全 %d 見出し / %d 節。節番号や見出し語から引くには `sections.tsv` "+
-		"(`section` / `title` / `file` / `line` / `pdfpage` のタブ区切り) を検索する。\n",
+		"(`section` / `title` / `file` / `line` / `source` のタブ区切り) を検索する。\n",
 		len(heads), len(order))
 	lastCh := -1
 	for _, k := range order {
@@ -626,28 +728,40 @@ func writeSectionIndex(outDir, docTitle string, chapters map[int]string, order [
 	return os.WriteFile(filepath.Join(outDir, "index.md"), []byte(b.String()), 0o644)
 }
 
-func writeSectionReadme(outDir, docTitle, source, pdf string, p *Profile,
+func writeSectionReadme(outDir, docTitle string, src source,
 	nHeads, nSections int, figs figureSet,
 ) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s (Markdown 変換版)\n\n", docTitle)
-	fmt.Fprintln(&b, "この配下は PDF から機械変換した生成物であり、著作権は原著作者に帰属する。")
+	fmt.Fprintln(&b, "この配下は元資料から機械変換した生成物であり、著作権は原著作者に帰属する。")
 	fmt.Fprintln(&b, "**再配布しないこと。** リポジトリでは `.gitignore` により除外されている。")
 	fmt.Fprintf(&b, "\n## 生成条件\n\n")
-	fmt.Fprintf(&b, "- 元 PDF: `%s`\n", baseName(pdf))
-	if source != "" {
-		fmt.Fprintf(&b, "- 取得元: %s\n", source)
-	}
-	fmt.Fprintf(&b, "- プロファイル: `%s` (節見出しで割る, 天地マージン %.0f/%.0f pt)\n",
-		p.Name, p.MarginTop, p.MarginBottom)
+	src.writeOrigin(&b)
 	fmt.Fprintf(&b, "- 見出し数: %d / 節数: %d\n", nHeads, nSections)
-	fmt.Fprintln(&b, "- 変換経路: PDF のテキスト層を版面どおりに組み直したもの (OCR・画像解析・モデル不使用)")
+	fmt.Fprintln(&b, "- 変換経路: "+src.route())
 
 	fmt.Fprintf(&b, "\n## 引き方\n\n")
-	fmt.Fprintln(&b, "- `sections.tsv` — `section / title / file / line / pdfpage` のタブ区切り索引。")
+	fmt.Fprintln(&b, "- `sections.tsv` — `section / title / file / line / source` のタブ区切り索引。")
 	fmt.Fprintln(&b, "  `line` は本文ファイル中の見出し行 (1 始まり)。")
+	fmt.Fprintln(&b, "  "+src.sourceColumnNote())
 	fmt.Fprintln(&b, "- `index.md` — 章・節の目次")
 	fmt.Fprintln(&b, "- `chNN-<章名>/<節名>.md` — 本文")
+
+	if src.kind == "web" {
+		fmt.Fprintf(&b, "\n## 表と図\n\n")
+		fmt.Fprintln(&b, "表は Markdown の表になっている。**値は見出し行の列名で引く。** 元の表で")
+		fmt.Fprintln(&b, "セルが結合されていた箇所は、覆う範囲のセル全部に同じ値を繰り返してある。")
+		fmt.Fprintln(&b, "脚注の参照 `[1]` はセルの中にそのまま残り、脚注の本文は表の直後にある。")
+		fmt.Fprintln(&b)
+		fmt.Fprintf(&b, "図は `figures/` に元のファイル (SVG) のまま置いてあり (%d 枚)、本文の\n", len(figs))
+		fmt.Fprintln(&b, "`[図]` から辿れる。図の直前の ```text の囲みは図中のラベルを並べたもので、")
+		fmt.Fprintln(&b, "節を探し当てる手がかりにはなるが、**矢印の向き・包含関係はファイルを開かないと")
+		fmt.Fprintln(&b, "分からない。** SVG は XML なので、箱の座標 (`<rect>`) と矢印 (`<path>`) を")
+		fmt.Fprintln(&b, "読めば「どの箱からどの箱へ」は辿れる。ラベルの囲みから構成を推測しない。")
+		fmt.Fprintln(&b)
+		fmt.Fprintln(&b, "各ブロックの直後の `[出典]` は元の Web ページの該当節への URL。")
+		return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644)
+	}
 
 	fmt.Fprintf(&b, "\n## ```text で囲まれた塊について\n\n")
 	fmt.Fprintln(&b, "表・図・コンソール出力は、版面どおりの固定幅ブロックとして囲ってある。")
@@ -671,20 +785,21 @@ func writeSectionReadme(outDir, docTitle, source, pdf string, p *Profile,
 	} else {
 		fmt.Fprintln(&b, "`figures/` が無いので、囲みには元 PDF へのリンクしか付いていない。")
 		fmt.Fprintln(&b, "ページを焼いて `figures/` に置き、変換し直すと、囲みの直後に")
-		fmt.Fprintln(&b, "`[ページ画像]` が並ぶ。焼くのは `pdfbook figures` で、外部の道具は要らない。")
+		fmt.Fprintln(&b, "`[ページ画像]` が並ぶ。焼くのは `manualbook figures` で、外部の道具は要らない。")
 		fmt.Fprintln(&b)
 		fmt.Fprintln(&b, "このディレクトリで:")
 		fmt.Fprintln(&b)
-		fmt.Fprintf(&b, "    pdfbook figures <%s のあるパス> -out .\n", baseName(pdf))
+		fmt.Fprintf(&b, "    manualbook figures <%s のあるパス> -out .\n", baseName(src.pdf))
 		fmt.Fprintln(&b)
-		fmt.Fprintln(&b, "そのあと `pdfbook md` をもう一度流す (変換は figures/ を消さない)。")
-		fmt.Fprintln(&b, "はじめから `pdfbook md -figures` で流せば 1 回で済む。")
+		fmt.Fprintln(&b, "そのあと `manualbook md` をもう一度流す (変換は figures/ を消さない)。")
+		fmt.Fprintln(&b, "はじめから `manualbook md -figures` で流せば 1 回で済む。")
 	}
 	return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644)
 }
 
 // runSectionMD は md サブコマンドの、節見出しで割る経路。
-func runSectionMD(outDir, docTitle, source, pdf string, p *Profile) {
+func runSectionMD(outDir, docTitle string, src source) {
+	p, pdf := src.profile, src.pdf
 	fmt.Printf("読み込み: %s (プロファイル %s / 節見出しで割る)\n", pdf, p.Name)
 	pages, err := readSectionPages(p, pdf)
 	if err != nil {
@@ -696,7 +811,7 @@ func runSectionMD(outDir, docTitle, source, pdf string, p *Profile) {
 	nLayout := 0
 	for i := range heads {
 		for _, b := range heads[i].blocks {
-			if b.layout {
+			if b.kind != blockProse {
 				nLayout++
 			}
 		}
@@ -709,7 +824,7 @@ func runSectionMD(outDir, docTitle, source, pdf string, p *Profile) {
 		os.Exit(2)
 	}
 
-	if err := writeSections(outDir, docTitle, source, pdf, p, heads, chapters); err != nil {
+	if err := writeSections(outDir, docTitle, src, heads, chapters); err != nil {
 		fatal(err)
 	}
 	fmt.Printf("\n出力しました: %s\n", outDir)

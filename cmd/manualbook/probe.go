@@ -29,7 +29,7 @@ func runProbe(args []string) {
 	pos := parseFlags(fs, args)
 
 	if len(pos) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: pdfbook probe <pdf> [-out profile.json]")
+		fmt.Fprintln(os.Stderr, "Usage: manualbook probe <pdf> [-out profile.json]")
 		os.Exit(1)
 	}
 	pdf := pos[0]
@@ -42,7 +42,7 @@ func runProbe(args []string) {
 	fmt.Printf("テキスト層: 先頭 20 ページで %d 文字\n", glyphs)
 	if glyphs < 200 {
 		fmt.Fprintln(os.Stderr, "\n  ⚠ テキスト層がほとんどありません（紙スキャン由来の画像 PDF の可能性）。")
-		fmt.Fprintln(os.Stderr, "    md サブコマンドは使えません。画像化 → pdfbook scan で分割 → OCR の経路が必要です。")
+		fmt.Fprintln(os.Stderr, "    md サブコマンドは使えません。画像化 → manualbook scan で分割 → OCR の経路が必要です。")
 		os.Exit(2)
 	}
 
@@ -99,7 +99,7 @@ func runProbe(args []string) {
 		fatal(err)
 	}
 	fmt.Printf("\nプロファイルを書き出しました: %s\n", *out)
-	fmt.Printf("次: pdfbook md %s -profile %s -out out/\n", pdf, *out)
+	fmt.Printf("次: manualbook md %s -profile %s -out out/\n", pdf, *out)
 }
 
 // pickSampleRanges は本文の詰まったページから、連続した窓を数か所選ぶ。

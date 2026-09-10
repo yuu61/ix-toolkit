@@ -65,7 +65,7 @@ func runScan(args []string) {
 			*inputDir = pos[0]
 		} else {
 			fmt.Fprintln(os.Stderr, "Error: 入力ディレクトリを指定してください")
-			fmt.Fprintln(os.Stderr, "Usage: pdfbook scan -input <dir> [-output <dir>] [-dry-run]")
+			fmt.Fprintln(os.Stderr, "Usage: manualbook scan -input <dir> [-output <dir>] [-dry-run]")
 			os.Exit(1)
 		}
 	}

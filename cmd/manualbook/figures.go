@@ -29,7 +29,7 @@ func runFigures(args []string) {
 	pos := parseFlags(fs, args)
 
 	if len(pos) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: pdfbook figures <pdf> [-out out/] [-dpi 150] [-pages 1050-1060]")
+		fmt.Fprintln(os.Stderr, "Usage: manualbook figures <pdf> [-out out/] [-dpi 150] [-pages 1050-1060]")
 		os.Exit(1)
 	}
 
@@ -38,7 +38,7 @@ func runFigures(args []string) {
 		fatal(err)
 	}
 	fmt.Printf("%d ページを焼きました: %s\n", n, filepath.Join(*out, "figures"))
-	fmt.Println("囲みの直後に [ページ画像] を付けるには pdfbook md を流し直してください。")
+	fmt.Println("囲みの直後に [ページ画像] を付けるには manualbook md を流し直してください。")
 }
 
 // renderFigures はページを焼いて <outDir>/figures/p<ページ番号>.png に置く。
