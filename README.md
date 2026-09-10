@@ -174,7 +174,7 @@ windows Defender の`Trojan:Win32/Bearfoos.A!ml` の誤検知に引っ掛かる�
 ### 使い方
 
 1. `manifest.json` の `url` を配布ページから転記する。`kind` は `pdf` / `web` を明示する。
-2. `fetch` で取る。PDF は `sha256` で、Web は `version` が索引ページの題に含まれるかで検証する。
+2. `fetch` で取る。Web は `version` が索引ページの題に含まれるかで検証する。
 3. 資料ごとに `md` で変換する。プロファイルは同梱のものを使う。
 4. 両系列を変換したら `diff` で対応表を作る。
 

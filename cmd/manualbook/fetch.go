@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -27,12 +25,12 @@ import (
 //
 // 資料は 2 種類ある。
 //
-//   - kind "pdf": PDF を 1 本取り、sha256 で検証する。
+//   - kind "pdf": PDF を 1 本取る。
 //   - kind "web": Sphinx で組まれた Web マニュアルを、ページごとに取得キャッシュへ
 //     置く。取る対象は探索しない。searchindex.js にページの一覧があるので、
 //     それを 1 本取れば全ページが確定する (リンクを辿って広げる動きは無い)。
 //     版は index の <title> に入っているので、マニフェストの version と突き合わせ、
-//     版が上がっていたら取得せずに止まる。sha256 の代わりがこの検証になる。
+//     版が上がっていたら取得せずに止まる。
 //
 // どちらも、利用者が明示的に叩いたときにだけ動く。定期的に取りに行く仕組みは無い。
 
@@ -46,7 +44,6 @@ type Doc struct {
 	Kind    string `json:"kind"`              // "pdf" か "web"。明示する
 	URL     string `json:"url"`               // 取得元 (web は冊子の index の URL)
 	Version string `json:"version,omitempty"` // 版。web では <title> と突き合わせる
-	SHA256  string `json:"sha256,omitempty"`  // pdf: 既知なら検証、空なら取得後に記録を促す
 	Profile string `json:"profile,omitempty"` // 変換に使うプロファイル JSON
 	Title   string `json:"title,omitempty"`   // 資料タイトル
 }
@@ -113,16 +110,9 @@ func fetchOne(client *http.Client, d Doc, dst string, force bool) error {
 		return errors.New("url が空 (配布ページを見て転記する)")
 	}
 	if !force {
-		if sum, err := sha256File(dst); err == nil {
-			if d.SHA256 == "" {
-				fmt.Printf("  = %s (取得済み, sha256 %s)\n", d.Name, sum[:16])
-				return nil
-			}
-			if strings.EqualFold(sum, d.SHA256) {
-				fmt.Printf("  = %s (取得済み・検証 OK)\n", d.Name)
-				return nil
-			}
-			fmt.Printf("  ! %s: 既存ファイルの sha256 が不一致。取り直します\n", d.Name)
+		if _, err := os.Stat(dst); err == nil {
+			fmt.Printf("  = %s (取得済み)\n", d.Name)
+			return nil
 		}
 	}
 
@@ -142,8 +132,7 @@ func fetchOne(client *http.Client, d Doc, dst string, force bool) error {
 	if err != nil {
 		return err
 	}
-	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(f, h), resp.Body)
+	n, err := io.Copy(f, resp.Body)
 	cerr := f.Close()
 	if err == nil {
 		err = cerr
@@ -153,34 +142,13 @@ func fetchOne(client *http.Client, d Doc, dst string, force bool) error {
 		return err
 	}
 
-	sum := hex.EncodeToString(h.Sum(nil))
-	if d.SHA256 != "" && !strings.EqualFold(sum, d.SHA256) {
-		os.Remove(tmp)
-		return fmt.Errorf("sha256 不一致\n    期待: %s\n    実際: %s", d.SHA256, sum)
-	}
 	if err := os.Rename(tmp, dst); err != nil {
 		os.Remove(tmp)
 		return err
 	}
 
 	fmt.Printf("  ✓ %s (%.1f MB)\n", dst, float64(n)/(1<<20))
-	if d.SHA256 == "" {
-		fmt.Printf("    sha256: %s  ← マニフェストに書いておくと次回から検証されます\n", sum)
-	}
 	return nil
-}
-
-func sha256File(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // --- web ---

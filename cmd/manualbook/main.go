@@ -21,7 +21,7 @@ const usage = `manualbook — NEC IX のマニュアル (PDF / Web) を Markdown
   manualbook <サブコマンド> [オプション]
 
 サブコマンド:
-  fetch   マニフェストに書いた資料をまとめて取得する (PDF は SHA256、Web は版で検証)
+  fetch   マニフェストに書いた資料をまとめて取得する (Web は版で検証)
   probe   PDF を試し読みして段組み・ヘッダ位置を自動較正し、プロファイルを作る
   md      PDF か Web の取得キャッシュを構造つき Markdown に変換する
   diff    無印と IX-R の変換結果から系列間のコマンド対応表 diff.tsv を作る
