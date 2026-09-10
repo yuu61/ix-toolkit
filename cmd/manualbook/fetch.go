@@ -41,11 +41,50 @@ type Manifest struct {
 type Doc struct {
 	Name    string `json:"name"`              // 出力ファイル名 / 取得キャッシュのディレクトリ名
 	Series  string `json:"series,omitempty"`  // 機種の系列 (ix / ix-r)
+	Book    string `json:"book,omitempty"`    // 冊子 (crm / fd)。変換結果の置き場 <系列>/<冊子>/ を決める
 	Kind    string `json:"kind"`              // "pdf" か "web"。明示する
 	URL     string `json:"url"`               // 取得元 (web は冊子の index の URL)
 	Version string `json:"version,omitempty"` // 版。web では <title> と突き合わせる
 	Profile string `json:"profile,omitempty"` // 変換に使うプロファイル JSON
 	Title   string `json:"title,omitempty"`   // 資料タイトル
+}
+
+// readManifest はマニフェストを読む。
+func readManifest(path string) (Manifest, error) {
+	var m Manifest
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return m, fmt.Errorf("マニフェストを読めません: %w", err)
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return m, fmt.Errorf("マニフェストの解析に失敗: %w", err)
+	}
+	if len(m.Docs) == 0 {
+		return m, errors.New("マニフェストに docs がありません")
+	}
+	return m, nil
+}
+
+// cachePath は取得キャッシュの中で資料が置かれる場所。pdf は <name>.pdf、web は <name>/。
+func (d Doc) cachePath(cacheDir string) string {
+	if d.Kind == "pdf" {
+		return filepath.Join(cacheDir, d.Name+".pdf")
+	}
+	return filepath.Join(cacheDir, d.Name)
+}
+
+// fetchDoc は資料 1 件を取得キャッシュへ取る。kind で作法が変わる。
+func fetchDoc(client *http.Client, d Doc, cacheDir string, force bool, delay time.Duration, ua string) error {
+	switch d.Kind {
+	case "pdf":
+		return fetchOne(client, d, d.cachePath(cacheDir), force)
+	case "web":
+		return fetchWeb(client, d, d.cachePath(cacheDir), force, delay, ua)
+	case "":
+		return fmt.Errorf(`kind が無い。"pdf" か "web" を書く (取得と検証の作法が変わるので推測しない)`)
+	default:
+		return fmt.Errorf("kind %q は知らない", d.Kind)
+	}
 }
 
 func runFetch(args []string) {
@@ -59,16 +98,9 @@ func runFetch(args []string) {
 	ua := fs.String("user-agent", defaultUserAgent, "web: User-Agent")
 	parseFlags(fs, args)
 
-	b, err := os.ReadFile(*manifestPath)
+	m, err := readManifest(*manifestPath)
 	if err != nil {
-		fatal(fmt.Errorf("マニフェストを読めません: %w", err))
-	}
-	var m Manifest
-	if err := json.Unmarshal(b, &m); err != nil {
-		fatal(fmt.Errorf("マニフェストの解析に失敗: %w", err))
-	}
-	if len(m.Docs) == 0 {
-		fatal(fmt.Errorf("マニフェストに docs がありません"))
+		fatal(err)
 	}
 	if err := os.MkdirAll(*outDir, 0o755); err != nil {
 		fatal(err)
@@ -81,18 +113,7 @@ func runFetch(args []string) {
 			continue
 		}
 		total++
-		var err error
-		switch d.Kind {
-		case "pdf":
-			err = fetchOne(client, d, filepath.Join(*outDir, d.Name+".pdf"), *force)
-		case "web":
-			err = fetchWeb(client, d, filepath.Join(*outDir, d.Name), *force, *delay, *ua)
-		case "":
-			err = fmt.Errorf(`kind が無い。"pdf" か "web" を書く (取得と検証の作法が変わるので推測しない)`)
-		default:
-			err = fmt.Errorf("kind %q は知らない", d.Kind)
-		}
-		if err != nil {
+		if err := fetchDoc(client, d, *outDir, *force, *delay, *ua); err != nil {
 			fmt.Fprintf(os.Stderr, "  ✗ %s: %s\n", d.Name, err)
 			failed++
 		}
@@ -106,14 +127,15 @@ func runFetch(args []string) {
 // --- pdf ---
 
 func fetchOne(client *http.Client, d Doc, dst string, force bool) error {
-	if d.URL == "" {
-		return errors.New("url が空 (配布ページを見て転記する)")
-	}
+	// url が空でも、別の経路で手に入れた PDF が置いてあれば取得済みとして扱う。
 	if !force {
 		if _, err := os.Stat(dst); err == nil {
 			fmt.Printf("  = %s (取得済み)\n", d.Name)
 			return nil
 		}
+	}
+	if d.URL == "" {
+		return fmt.Errorf("url が空。配布ページを見て転記するか、手元にある PDF を %s に置く", dst)
 	}
 
 	fmt.Printf("  → %s\n", d.URL)
@@ -169,6 +191,18 @@ type etagEntry struct {
 }
 
 var docnamesRe = regexp.MustCompile(`"docnames"\s*:\s*(\[[^\]]*\])`)
+
+// webFetched は取得キャッシュがその版で取り切ってあるか。.manualbook.json は
+// fetchWeb が全ページを置いた最後に書くので、これが版つきで残っていれば完備と
+// みなせる (途中で止まったキャッシュには無い)。
+//
+// fetch 自身はこれを見ない。fetch は ETag で 1 ページずつ確かめる軽い更新の口で、
+// 全ページを 1 秒おきに問い合わせる (数分掛かる)。build は初回に 1 回取れば
+// よいので、完備なら問い合わせず飛ばす。
+func webFetched(dst string, d Doc) bool {
+	meta, err := readWebMeta(dst)
+	return err == nil && meta.Version == d.Version
+}
 
 func fetchWeb(client *http.Client, d Doc, dst string, force bool, delay time.Duration, userAgent string) error {
 	if d.URL == "" {

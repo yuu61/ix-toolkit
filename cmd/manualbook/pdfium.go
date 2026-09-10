@@ -64,22 +64,32 @@ type pdfDoc struct {
 }
 
 var (
-	poolOnce sync.Once
-	pool     pdfium.Pool
-	poolErr  error
+	engineOnce sync.Once
+	engine     pdfium.Pdfium
+	engineErr  error
 
 	docsMu sync.Mutex
 	docs   = map[string]*pdfDoc{}
 )
 
-// enginePool は PDFium を 1 度だけ立ち上げる。
-func enginePool() (pdfium.Pool, error) {
-	poolOnce.Do(func() {
-		pool, poolErr = webassembly.Init(webassembly.Config{
+// engineInstance は PDFium を 1 度だけ立ち上げ、プロセスで 1 つのインスタンスを
+// 使い回す。プールにインスタンスは 1 つしか無いので、冊ごとに取りに行くと
+// 2 冊目 (build で CRM の次に FD を開くとき) が空くのを待ち続けて時間切れになる。
+// 1 つのインスタンスで複数の文書を開けるので、取るのは 1 回でよい。
+func engineInstance() (pdfium.Pdfium, error) {
+	engineOnce.Do(func() {
+		pool, err := webassembly.Init(webassembly.Config{
 			MinIdle: 1, MaxIdle: 1, MaxTotal: 1,
 		})
+		if err != nil {
+			engineErr = fmt.Errorf("PDFium の初期化に失敗: %w", err)
+			return
+		}
+		if engine, err = pool.GetInstance(30 * time.Second); err != nil {
+			engineErr = fmt.Errorf("PDFium の取得に失敗: %w", err)
+		}
 	})
-	return pool, poolErr
+	return engine, engineErr
 }
 
 // openDoc は PDF を開く。同じパスなら開き直さず使い回す。
@@ -90,13 +100,9 @@ func openDoc(path string) (*pdfDoc, error) {
 		return d, nil
 	}
 
-	p, err := enginePool()
+	inst, err := engineInstance()
 	if err != nil {
-		return nil, fmt.Errorf("PDFium の初期化に失敗: %w", err)
-	}
-	inst, err := p.GetInstance(30 * time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("PDFium の取得に失敗: %w", err)
+		return nil, err
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -113,6 +119,19 @@ func openDoc(path string) (*pdfDoc, error) {
 	}
 	docs[path] = d
 	return d, nil
+}
+
+// closeDoc は openDoc で開いた PDF を閉じ、文字の配列と PDFium 側の資源を返す。
+// 1 冊で終わるサブコマンドでは要らないが、build は続けて次の冊を開く。
+func closeDoc(path string) {
+	docsMu.Lock()
+	defer docsMu.Unlock()
+	d, ok := docs[path]
+	if !ok {
+		return
+	}
+	_, _ = d.instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: d.ref})
+	delete(docs, path)
 }
 
 // page は 0 始まりのページ参照を作る。

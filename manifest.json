@@ -1,17 +1,20 @@
 {
   "_comment": [
-    "取得する資料の一覧。url は配布ページを見て人が転記する (版ごとにリンクが変わるため、",
-    "推測して書かないこと)。url が空のエントリは fetch が失敗するので、まず埋める。",
+    "取得する資料の一覧。manualbook build はこれだけを読んで、取得 → 変換 → 差分表まで作る。",
+    "url は配布ページを見て人が転記する (版ごとにリンクが変わるため、推測して書かないこと)。",
+    "pdf は url が空でも、手元にある PDF を pdf/<name>.pdf に置けば取得済みとして変換に進む。",
     "kind は \"pdf\" か \"web\" を明示する (取得と検証の作法が変わるので推測しない)。",
     "web: version が index の <title> に含まれるかで検証する。版が上がっていたら取得せずに",
     "     止まるので、配布ページを確かめて version と url を更新する。",
-    "series は機種の系列 (ix = IX2000/IX3000, ix-r = IX-R/IX-V)。変換結果の README に載る。",
-    "profile / title は md サブコマンドに渡す値 (web は取得キャッシュの .manualbook.json 経由で渡る)。"
+    "series は機種の系列 (ix = IX2000/IX3000, ix-r = IX-R/IX-V)、book は冊子 (crm = コマンド",
+    "リファレンス, fd = 機能説明書)。変換結果は <manuals>/<series>/<book>/ に置かれ、README にも載る。",
+    "profile / title は変換に渡す値。profile の相対パスはこのファイルの場所から解く。"
   ],
   "docs": [
     {
       "name": "CRM-ver10.11-1.1",
       "series": "ix",
+      "book": "crm",
       "kind": "pdf",
       "title": "IX2000/IX3000 コマンドリファレンスマニュアル 10.11",
       "url": "",
@@ -21,6 +24,7 @@
     {
       "name": "FD-ver10.11-1.1",
       "series": "ix",
+      "book": "fd",
       "kind": "pdf",
       "title": "IX2000/IX3000 機能説明書 10.11",
       "url": "",
@@ -30,6 +34,7 @@
     {
       "name": "IX-R-CRM-1.5a",
       "series": "ix-r",
+      "book": "crm",
       "kind": "web",
       "title": "IX-R/IX-V コマンドリファレンス 1.5a",
       "url": "https://www.necplatforms.co.jp/dl/ix-nrv/manual/crm/",
@@ -39,6 +44,7 @@
     {
       "name": "IX-R-FD-1.5a",
       "series": "ix-r",
+      "book": "fd",
       "kind": "web",
       "title": "IX-R/IX-V 機能説明書 1.5a版",
       "url": "https://www.necplatforms.co.jp/dl/ix-nrv/manual/fd/",

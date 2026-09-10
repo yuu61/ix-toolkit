@@ -8,14 +8,18 @@
 |---|---|---|
 | `skills/` | SKILL.md 形式の skill 5 つ | Markdown |
 | `src/ix_ssh/` | skill が呼ぶ `ix-ssh` コマンド | Python (netmiko / paramiko) |
-| `cmd/manualbook/` | PDF / Web マニュアル → Markdown 変換、系列間差分 | Go (PDFium, x/net/html) |
+| `cmd/manualbook/` | PDF / Web マニュアル → Markdown 変換、系列間差分。`build` が manifest から取得 → 変換 → diff まで流す | Go (PDFium, x/net/html) |
 | `profiles/` | manualbook の変換プロファイルと、手で導いた系列間差分 (`ix-r-derived-diff.tsv`) | JSON / TSV |
-| `manifest.json` | 取得する資料の一覧 (系列・種別・版・URL) | JSON |
+| `manifest.json` | 取得する資料の一覧 (系列・冊子・種別・版・URL・プロファイル)。`build` の唯一の入力 | JSON |
 
 ```console
 $ go build -ldflags="-s -w" -o manualbook ./cmd/manualbook   # -s -w は Defender の誤検知回避で必須
+$ ./manualbook build                                          # 変換結果を作り直して確かめる
 $ ruff check src/ && ruff format src/
 ```
+
+manualbook の変換結果の形 (`<manuals>/<系列>/<冊子>/` と索引の列) は `ix-manual` の SKILL.md が
+そのまま読む。片方を変えたらもう片方も直す。
 
 ## skill を書き換えるときの決まり
 

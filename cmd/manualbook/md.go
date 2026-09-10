@@ -54,41 +54,66 @@ type sectionKey struct {
 
 func runMD(args []string) {
 	fs := flag.NewFlagSet("md", flag.ExitOnError)
-	profilePath := fs.String("profile", "", "プロファイル JSON (省略時は NEC IX CRM 用の既定値)")
-	outDir := fs.String("out", "out", "出力ディレクトリ")
-	title := fs.String("title", "", "資料タイトル (省略時は PDF のファイル名)")
-	sourceLabel := fs.String("source", "", "出典表記 (取得元 URL 等。README に記載する)")
-	series := fs.String("series", "", "機種の系列 (ix / ix-r。README に記載する)")
-	version := fs.String("version", "", "資料の版 (README に記載する)")
-	figures := fs.Bool("figures", false, "ページ画像も焼く (figures/ に置き、囲みから辿れるようにする)")
-	figureDPI := fs.Int("figure-dpi", 150, "-figures のときの解像度")
-	figurePages := fs.String("figure-pages", "", "-figures で焼くページ (例 1050-1060)。省略で全ページ")
+	var o mdOptions
+	fs.StringVar(&o.profilePath, "profile", "", "プロファイル JSON (省略時は NEC IX CRM 用の既定値)")
+	fs.StringVar(&o.outDir, "out", "out", "出力ディレクトリ")
+	fs.StringVar(&o.title, "title", "", "資料タイトル (省略時は PDF のファイル名)")
+	fs.StringVar(&o.sourceLabel, "source", "", "出典表記 (取得元 URL 等。README に記載する)")
+	fs.StringVar(&o.series, "series", "", "機種の系列 (ix / ix-r。README に記載する)")
+	fs.StringVar(&o.version, "version", "", "資料の版 (README に記載する)")
+	fs.BoolVar(&o.figures, "figures", false, "ページ画像も焼く (figures/ に置き、囲みから辿れるようにする)")
+	fs.IntVar(&o.figureDPI, "figure-dpi", 150, "-figures のときの解像度")
+	fs.StringVar(&o.figurePages, "figure-pages", "", "-figures で焼くページ (例 1050-1060)。省略で全ページ")
 	pos := parseFlags(fs, args)
 
 	if len(pos) < 1 {
 		fmt.Fprintln(os.Stderr, "Usage: manualbook md <pdf | 取得キャッシュのディレクトリ> [-profile profile.json] [-out out/] [-figures]")
 		os.Exit(1)
 	}
-	// 入力が PDF なら版面を解析する前段、fetch が置いた取得キャッシュの
-	// ディレクトリなら Sphinx の HTML を読む前段 (html.go)。後段は共通。
-	if st, err := os.Stat(pos[0]); err == nil && st.IsDir() {
-		if *figures {
-			fatal(fmt.Errorf("-figures は PDF 専用です。Web から読む資料は図をそのまま figures/ に置きます"))
-		}
-		runWebMD(pos[0], *outDir, *title, *sourceLabel, *series, *version, *profilePath)
-		return
+	o.input = pos[0]
+	if err := convert(o); err != nil {
+		fatal(err)
 	}
-	pdf := pos[0]
+}
+
+// mdOptions は 1 冊分の変換の指定。md サブコマンドはフラグから、build は
+// マニフェストから組み立てる。
+type mdOptions struct {
+	input       string // PDF か、fetch が置いた取得キャッシュのディレクトリ
+	outDir      string
+	profilePath string
+	title       string
+	sourceLabel string
+	series      string
+	version     string
+	figures     bool
+	figureDPI   int
+	figurePages string
+}
+
+// convert は 1 冊を Markdown にする。
+//
+// 入力が PDF なら版面を解析する前段、fetch が置いた取得キャッシュの
+// ディレクトリなら Sphinx の HTML を読む前段 (html.go)。後段は共通。
+func convert(o mdOptions) error {
+	if st, err := os.Stat(o.input); err == nil && st.IsDir() {
+		if o.figures {
+			return fmt.Errorf("-figures は PDF 専用です。Web から読む資料は図をそのまま figures/ に置きます")
+		}
+		return convertWeb(o)
+	}
+	pdf := o.input
+	defer closeDoc(pdf) // build は続けて次の冊を開く
 
 	p := DefaultProfile()
-	if *profilePath != "" {
+	if o.profilePath != "" {
 		var err error
-		if p, err = LoadProfile(*profilePath); err != nil {
-			fatal(err)
+		if p, err = LoadProfile(o.profilePath); err != nil {
+			return err
 		}
 	}
 
-	docTitle := *title
+	docTitle := o.title
 	if docTitle == "" {
 		docTitle = strings.TrimSuffix(baseName(pdf), filepath.Ext(pdf))
 	}
@@ -99,30 +124,29 @@ func runMD(args []string) {
 	// 囲みとページリンクを出すのは節見出し経路 (sections.go) だけなので、
 	// コマンド辞書として読む資料では焼いても誰も参照しない。黙って焼くと
 	// 時間とディスクだけ使うため断る。
-	if *figures {
+	if o.figures {
 		if p.HasCommandEntries() {
-			fatal(fmt.Errorf("-figures はこの資料 (プロファイル %s) では効きません。"+
-				"囲みにページ画像を添えるのは節見出しで割る資料だけです", p.Name))
+			return fmt.Errorf("-figures はこの資料 (プロファイル %s) では効きません。"+
+				"囲みにページ画像を添えるのは節見出しで割る資料だけです", p.Name)
 		}
-		n, err := renderFigures(pdf, *outDir, *figureDPI, *figurePages)
+		n, err := renderFigures(pdf, o.outDir, o.figureDPI, o.figurePages)
 		if err != nil {
-			fatal(err)
+			return err
 		}
 		fmt.Printf("ページ画像: %d 枚を焼きました\n", n)
 	}
 
 	// 項目の記号と見出し語を持たない資料はコマンド辞書として読めないので、
 	// 節見出しで割る経路へ回す (sections.go)。
-	src := source{kind: "pdf", pdf: pdf, label: *sourceLabel, series: *series, version: *version, profile: p}
+	src := source{kind: "pdf", pdf: pdf, label: o.sourceLabel, series: o.series, version: o.version, profile: p}
 	if !p.HasCommandEntries() {
-		runSectionMD(*outDir, docTitle, src)
-		return
+		return convertSections(o.outDir, docTitle, src)
 	}
 
 	fmt.Printf("読み込み: %s (プロファイル %s)\n", pdf, p.Name)
 	pages, stats, err := readPages(p, pdf)
 	if err != nil {
-		fatal(err)
+		return err
 	}
 	fmt.Printf("  ページ数: %d (2段組み %d / 全幅 %d)\n", len(pages), stats.two, stats.one)
 
@@ -131,17 +155,17 @@ func runMD(args []string) {
 	fmt.Printf("  抽出項目: %d 件 / 章: %d\n", len(entries), len(chapters))
 
 	if len(entries) == 0 {
-		fmt.Fprintln(os.Stderr, "\n⚠ 項目を 1 件も抽出できませんでした。")
-		fmt.Fprintf(os.Stderr, "  プロファイルの entryMarker (%q) と fieldLabels が資料に合っているか確認してください。\n", p.EntryMarker)
-		os.Exit(2)
+		return fmt.Errorf("項目を 1 件も抽出できませんでした。"+
+			"プロファイルの entryMarker (%q) と fieldLabels が資料に合っているか確認してください", p.EntryMarker)
 	}
 
-	if err := writeAll(*outDir, docTitle, src, chapters, entries); err != nil {
-		fatal(err)
+	if err := writeAll(o.outDir, docTitle, src, chapters, entries); err != nil {
+		return err
 	}
-	fmt.Printf("\n出力しました: %s\n", *outDir)
-	fmt.Printf("  機械可読索引: %s\n", filepath.Join(*outDir, "commands.tsv"))
-	fmt.Printf("  目次:         %s\n", filepath.Join(*outDir, "index.md"))
+	fmt.Printf("\n出力しました: %s\n", o.outDir)
+	fmt.Printf("  機械可読索引: %s\n", filepath.Join(o.outDir, "commands.tsv"))
+	fmt.Printf("  目次:         %s\n", filepath.Join(o.outDir, "index.md"))
+	return nil
 }
 
 // --- 読み込み ---

@@ -785,25 +785,26 @@ func writeSectionReadme(outDir, docTitle string, src source,
 	} else {
 		fmt.Fprintln(&b, "`figures/` が無いので、囲みには元 PDF へのリンクしか付いていない。")
 		fmt.Fprintln(&b, "ページを焼いて `figures/` に置き、変換し直すと、囲みの直後に")
-		fmt.Fprintln(&b, "`[ページ画像]` が並ぶ。焼くのは `manualbook figures` で、外部の道具は要らない。")
+		fmt.Fprintln(&b, "`[ページ画像]` が並ぶ。焼くのは manualbook で、外部の道具は要らない。")
+		fmt.Fprintln(&b, "ix-toolkit のリポジトリで `manualbook build -figures` を流せば、この冊子の")
+		fmt.Fprintln(&b, "全ページを焼いて変換し直すところまで 1 回で済む (72 秒・404 MB)。")
 		fmt.Fprintln(&b)
-		fmt.Fprintln(&b, "このディレクトリで:")
+		fmt.Fprintln(&b, "一部のページだけ焼くなら、このディレクトリで:")
 		fmt.Fprintln(&b)
-		fmt.Fprintf(&b, "    manualbook figures <%s のあるパス> -out .\n", baseName(src.pdf))
+		fmt.Fprintf(&b, "    manualbook figures <%s のあるパス> -out . -pages 1050-1060\n", baseName(src.pdf))
 		fmt.Fprintln(&b)
 		fmt.Fprintln(&b, "そのあと `manualbook md` をもう一度流す (変換は figures/ を消さない)。")
-		fmt.Fprintln(&b, "はじめから `manualbook md -figures` で流せば 1 回で済む。")
 	}
 	return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644)
 }
 
-// runSectionMD は md サブコマンドの、節見出しで割る経路。
-func runSectionMD(outDir, docTitle string, src source) {
+// convertSections は md の、PDF を節見出しで割る経路。
+func convertSections(outDir, docTitle string, src source) error {
 	p, pdf := src.profile, src.pdf
 	fmt.Printf("読み込み: %s (プロファイル %s / 節見出しで割る)\n", pdf, p.Name)
 	pages, err := readSectionPages(p, pdf)
 	if err != nil {
-		fatal(err)
+		return err
 	}
 	fmt.Printf("  ページ数: %d\n", len(pages))
 
@@ -819,15 +820,15 @@ func runSectionMD(outDir, docTitle string, src source) {
 	fmt.Printf("  見出し: %d 件 / 章: %d / 版面ブロック: %d\n", len(heads), len(chapters), nLayout)
 
 	if len(heads) == 0 {
-		fmt.Fprintln(os.Stderr, "\n⚠ 見出しを 1 件も抽出できませんでした。")
-		fmt.Fprintln(os.Stderr, "  この資料の見出しが階層番号 (2.11.6 の形) で始まっているか確認してください。")
-		os.Exit(2)
+		return fmt.Errorf("見出しを 1 件も抽出できませんでした。" +
+			"この資料の見出しが階層番号 (2.11.6 の形) で始まっているか確認してください")
 	}
 
 	if err := writeSections(outDir, docTitle, src, heads, chapters); err != nil {
-		fatal(err)
+		return err
 	}
 	fmt.Printf("\n出力しました: %s\n", outDir)
 	fmt.Printf("  機械可読索引: %s\n", filepath.Join(outDir, "sections.tsv"))
 	fmt.Printf("  目次:         %s\n", filepath.Join(outDir, "index.md"))
+	return nil
 }

@@ -21,6 +21,7 @@ const usage = `manualbook — NEC IX のマニュアル (PDF / Web) を Markdown
   manualbook <サブコマンド> [オプション]
 
 サブコマンド:
+  build   manifest.json の資料を取得 → 変換 → 差分表まで 1 回で作る (ふつうはこれだけ)
   fetch   マニフェストに書いた資料をまとめて取得する (Web は版で検証)
   probe   PDF を試し読みして段組み・ヘッダ位置を自動較正し、プロファイルを作る
   md      PDF か Web の取得キャッシュを構造つき Markdown に変換する
@@ -29,12 +30,10 @@ const usage = `manualbook — NEC IX のマニュアル (PDF / Web) を Markdown
   scan    見開きスキャン画像 (PNG) を 1 ページずつに分割する (テキスト層が無い場合)
 
 典型的な流れ:
-  manualbook fetch -manifest manifest.json -out pdf/
-  manualbook md    pdf/CRM-ver10.11-1.1.pdf -profile profiles/nec-ix-crm.json -series ix -version 10.11-1.1 -out ~/.ix-toolkit/manuals/ix/crm
-  manualbook md    pdf/IX-R-CRM-1.5a -out ~/.ix-toolkit/manuals/ix-r/crm
-  manualbook diff  ~/.ix-toolkit/manuals/ix ~/.ix-toolkit/manuals/ix-r
+  manualbook build              # pdf/ に取り、~/.ix-toolkit/manuals/<系列>/<冊子>/ に変換し、diff.tsv を作る
+  manualbook build -figures     # PDF の機能説明書のページ画像も焼く
 
-各サブコマンドの詳細は -h を付けて実行してください。
+1 冊ずつ手で流すなら fetch / md / diff を順に使う (各サブコマンドの詳細は -h)。
 `
 
 func main() {
@@ -44,6 +43,8 @@ func main() {
 	}
 
 	switch cmd := os.Args[1]; cmd {
+	case "build":
+		runBuild(os.Args[2:])
 	case "fetch":
 		runFetch(os.Args[2:])
 	case "probe":

@@ -58,34 +58,50 @@ func runDiff(args []string) {
 		fs.Usage()
 		os.Exit(2)
 	}
-	ixDir, ixrDir := pos[0], pos[1]
-	if *out == "" {
-		*out = filepath.Join(ixrDir, "diff.tsv")
+	if err := writeDiff(pos[0], pos[1], *out, *derived); err != nil {
+		fatal(err)
+	}
+}
+
+// diffInputs は writeDiff が読む 3 つの索引。build はこれが揃ったときだけ diff を作る。
+func diffInputs(ixDir, ixrDir string) []string {
+	return []string{
+		filepath.Join(ixDir, "crm", "commands.tsv"),
+		filepath.Join(ixrDir, "crm", "commands.tsv"),
+		filepath.Join(ixrDir, "fd", "sections.tsv"),
+	}
+}
+
+// writeDiff は両系列の変換結果から diff.tsv を書く。out が空なら <ix-r>/diff.tsv、
+// derived が空ならカレント → 実行ファイルの隣の順に探す。
+func writeDiff(ixDir, ixrDir, out, derived string) error {
+	if out == "" {
+		out = filepath.Join(ixrDir, "diff.tsv")
 	}
 
 	ixCmds, err := readCommandIndex(filepath.Join(ixDir, "crm", "commands.tsv"))
 	if err != nil {
-		fatal(err)
+		return err
 	}
 	ixrCmds, err := readCommandIndex(filepath.Join(ixrDir, "crm", "commands.tsv"))
 	if err != nil {
-		fatal(err)
+		return err
 	}
 
 	ch8, err := readCh8(filepath.Join(ixrDir, "fd"), ixCmds)
 	if err != nil {
-		fatal(err)
+		return err
 	}
 	fmt.Printf("ch8:     %d 行 (IX-R 機能説明書「IXシリーズとの差分」)\n", len(ch8))
 
 	var hand []diffRow
-	path := *derived
+	path := derived
 	if path == "" {
 		path = findDerived()
 	}
 	if path != "" {
 		if hand, err = readDerived(path); err != nil {
-			fatal(err)
+			return err
 		}
 		fmt.Printf("derived: %d 行 (%s)\n", len(hand), path)
 	} else {
@@ -107,10 +123,11 @@ func runDiff(args []string) {
 			r.kind, tsvCell(r.ix), tsvCell(r.ixr), r.source, r.refIX, r.refIXR, tsvCell(r.note),
 		}, "\t") + "\n")
 	}
-	if err := os.WriteFile(*out, []byte(b.String()), 0o644); err != nil {
-		fatal(err)
+	if err := os.WriteFile(out, []byte(b.String()), 0o644); err != nil {
+		return err
 	}
-	fmt.Printf("出力しました: %s (%d 行)\n", *out, len(rows))
+	fmt.Printf("出力しました: %s (%d 行)\n", out, len(rows))
+	return nil
 }
 
 // findDerived は手で導いた差分の TSV を、カレント → 実行ファイルの隣の順に探す。
