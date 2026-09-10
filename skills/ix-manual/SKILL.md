@@ -2,10 +2,9 @@
 name: ix-manual
 description: NEC IX のマニュアルを引く。コマンドの入力形式・パラメータ・実行モード・ユーザ権限・デフォルト値をコマンドリファレンスで確認し、機能の仕組み・構成・諸元値・設定例を機能説明書で確認する。コマンド名やコマンドの綴りが不確かなとき、設定を投入する前に仕様を確かめたいとき、機能の動作や上限値を知りたいときに使用する
 argument-hint: "<コマンド名または調べたいこと> (e.g., ngn ip enable / IPsec の SA 有効期限 / IX2215 の VLAN 設定数の上限)"
-allowed-tools:
-  - Grep
-  - Glob
-  - Read
+allowed-tools: Grep Glob Read
+compatibility: pdfbook で Markdown に変換した NEC IX のマニュアルが ~/.ix-toolkit/manuals/ にあること（$IX_MANUALS と ~/.claude/ix-manuals/ でも可。ix-toolkit の README 参照）。機器には接続しない。
+license: MIT
 ---
 
 # NEC IX マニュアル参照
@@ -24,10 +23,16 @@ allowed-tools:
 
 ## マニュアルの置き場所
 
-`~/.claude/ix-manuals/` 配下。1 冊ごとにディレクトリがある。
+次の順に探し、最初に見つかったものを使う。以下ではその場所を `<manuals>` と書く。
+
+1. 環境変数 `$IX_MANUALS`
+2. `~/.ix-toolkit/manuals/`
+3. `~/.claude/ix-manuals/`（この場所に変換した環境向け）
+
+1 冊ごとにディレクトリがある。
 
 ```
-~/.claude/ix-manuals/crm/          ~/.claude/ix-manuals/fd/
+<manuals>/crm/                     <manuals>/fd/
 ├── commands.tsv                   ├── sections.tsv
 ├── index.md                       ├── index.md
 └── ch03-インタフェース編/NGN.md     ├── figures/p-1057.png ← 有る場合とない場合がある
@@ -37,7 +42,7 @@ allowed-tools:
 `fd/figures/` はページを画像にしたもので、**図について答えるときはここを見る**（後述）。
 用意されていないこともある。その場合の答え方も後述。
 
-まず `Glob` で `~/.claude/ix-manuals/*/*.tsv` を探し、必要な冊子が無ければ
+まず `<manuals>/*/*.tsv` を探してどの冊子があるか確かめ、必要な冊子が無ければ
 **その旨をユーザーに伝えて止まる**（記憶からコマンドや諸元値を答えない）。
 
 未変換なら [ix-toolkit](https://github.com/yuu61/ix-toolkit) の `pdfbook` で生成する。
@@ -45,13 +50,16 @@ allowed-tools:
 
 ```
 pdfbook fetch -manifest manifest.json -out pdf/
-pdfbook md pdf/CRM-ver10.11-1.1.pdf -profile profiles/nec-ix-crm.json \
-           -out ~/.claude/ix-manuals/crm
-pdfbook md pdf/FD-ver10.11-1.1.pdf  -profile profiles/nec-ix-fd.json \
-           -out ~/.claude/ix-manuals/fd
+pdfbook md pdf/CRM-ver10.11-1.1.pdf -profile profiles/nec-ix-crm.json -out ~/.ix-toolkit/manuals/crm
+pdfbook md pdf/FD-ver10.11-1.1.pdf -profile profiles/nec-ix-fd.json -out ~/.ix-toolkit/manuals/fd
 ```
 
 ## 引き方（必ずこの順序で）
+
+> 以下の `Grep:` / `Read:` は**やること**の指定であって、ツール名の指定ではない。専用の検索・
+> 読み取りツールを持つエージェントはそれを使い（Claude Code の `Grep` / `Read` など）、無ければ
+> シェルで同じことをする（検索は `rg` / `grep` / `Select-String`、指定行からの部分読みは
+> `sed -n '<line>,+30p' <file>`）。画像は画像として開ける手段（`Read` / `view_image` など）で開く。
 
 ### 1. commands.tsv を引く
 
@@ -59,7 +67,7 @@ pdfbook md pdf/FD-ver10.11-1.1.pdf  -profile profiles/nec-ix-fd.json \
 1 行 1 コマンドで、コマンド名がそのまま先頭列にある。
 
 ```
-Grep: pattern="^ngn ip enable\t" path="~/.claude/ix-manuals/crm/commands.tsv"
+Grep: pattern="^ngn ip enable\t" path="<manuals>/crm/commands.tsv"
 ```
 
 綴りが不確かなときは部分一致で候補を出す（`ngn.*history`, `^ipsec ` など）。
@@ -68,11 +76,11 @@ Grep: pattern="^ngn ip enable\t" path="~/.claude/ix-manuals/crm/commands.tsv"
 ### 2. 本文を読む
 
 `commands.tsv` の `file` 列と `line` 列が該当項目の見出し行を直接指す。
-**`Read` に `offset` と `limit` を必ず渡す。** 節ファイルは最大 60KB あり、
+**その行から 30 行だけ読む（ファイル全体を開かない）。** 節ファイルは最大 60KB あり、
 丸ごと開くと 1 コマンドを引くために 1 冊分の節を読むことになる。
 
 ```
-Read: file_path="~/.claude/ix-manuals/crm/<file>" offset=<line> limit=30
+Read: file_path="<manuals>/crm/<file>" offset=<line> limit=30
 ```
 
 `limit=30` で足りることがほとんどだが、`ノート` の途中で切れていたら
@@ -94,7 +102,7 @@ Read: file_path="~/.claude/ix-manuals/crm/<file>" offset=<line> limit=30
 コマンド名で当たらなければ、本文を日本語で全文検索する。
 
 ```
-Grep: pattern="ヒストリ" path="~/.claude/ix-manuals/crm" glob="*.md" output_mode="content"
+Grep: pattern="ヒストリ" path="<manuals>/crm" glob="*.md" output_mode="content"
 ```
 
 それでも無ければ「このマニュアルには記載が無い」と答える。
@@ -108,15 +116,15 @@ Grep: pattern="ヒストリ" path="~/.claude/ix-manuals/crm" glob="*.md" output_
 `title` は見出し語。**見出し語を部分一致で探すのが基本。**
 
 ```
-Grep: pattern="VLAN" path="~/.claude/ix-manuals/fd/sections.tsv"
+Grep: pattern="VLAN" path="<manuals>/fd/sections.tsv"
 ```
 
 節番号が分かっているなら `^2\.7\.2\t` で直接引く。
 
 ### 2. 本文を読む
 
-`file` と `line` が見出し行を指す。**`Read` に `offset` と `limit` を必ず渡す。**
-解説書の 1 節はコマンド項目より長いので、`limit=60` から始めて足りなければ増やす。
+`file` と `line` が見出し行を指す。**その行から必要な分だけ読む（ファイル全体を開かない）。**
+解説書の 1 節はコマンド項目より長いので、60 行から始めて足りなければ増やす。
 
 ### 3. ```text で囲まれた塊の読み方
 
@@ -124,6 +132,24 @@ Grep: pattern="VLAN" path="~/.claude/ix-manuals/fd/sections.tsv"
 **囲みの中は行と桁の位置に意味がある。** 諸元表なら、見出し行の機種名（`IX2215` 等）と
 値が桁で対応している。列を数え違えると別機種の値を答えることになるので、
 **機種名の桁位置を確かめてから値を読む。**
+
+このマニュアルは IX2000/IX3000 の全機種をまとめたものなので、**どの列を読むかは機種名で決まる。**
+`ch01-機能概要/諸元.md` の諸元表は見出しが
+`分類  項目  IX2106  IX2207  IX2215  IX2235  IX2310  IX3315  default  制限値` の形で、機種ごとに 1 列ある。
+ただし表によって載る機種は違う（`IX2107` は本文には出てくるが、諸元表には列が無い）。
+`ch01-機能概要/ハードウェア仕様.md` は見出しが複数行に折り返しており、`-Z` 付き（`IX2215-Z`）は
+2 行目に置かれて**上の行の機種と同じ列**を使う。機種条件は表の外にも
+`IGMP スヌーピング（IX2215 のみ）` や `※1 IX2215/IX2207/IX2107/IX2106` の形で本文・脚注に出る。
+
+機種名はインベントリ（`~/.ix-toolkit/devices.json`）の任意項目 `model` に書いてあり、
+`ix-show` 等が機器へ接続したときの標準エラー `# target: home (admin@192.0.2.1:22, model IX2215)`
+と `--list` の `model=IX2215` に出る。綴りは見出しと同じ（`IX2215` / `IX3315`）。
+会話の中にこれが出ていればその機種の列を読む。
+
+**機種が分からないとき、また表にその機種の列が無いときは推測しない。** ユーザーに機種を尋ねるか、
+`ix-show` で `show version` を実行して確認してもらう（このスキルは機器に接続しないので、自分では確かめられない）。
+機種が絞れないまま答えるなら、**どの機種の値かを明記する**（「IX2215 では 64、IX3315 では 128」）。
+なお `model` で決まるのは諸元値や機種依存の記述だけで、**インタフェース名は決まらない**（後述）。
 
 囲みが表なのか図なのかは区別していない（テキストからは判別できないため）。
 各ブロックの直後に `<sup>[元 PDF pNNN](...)</sup>` の形で出所が置いてある。
@@ -151,17 +177,17 @@ IX2000/IX3000     ストリーム      PIM ルータ
 <sup>[元 PDF p1057](../../../FD-ver10.11-1.1.pdf#page=1057) / [ページ画像](../figures/p-1057.png)</sup>
 ```
 
-`[ページ画像]` のパスを `Read` で開き、**描かれた図そのものを見て答える。**
-リンクは本文ファイルからの相対パスなので、`../` を `~/.claude/ix-manuals/fd/` に読み替える。
+`[ページ画像]` のパスを**画像として開き**（`Read` / `view_image` など）、**描かれた図そのものを見て答える。**
+リンクは本文ファイルからの相対パスなので、`../` を `<manuals>/fd/` に読み替える。
 
 ```
-Read: file_path="~/.claude/ix-manuals/fd/figures/p-1057.png"
+Read: file_path="<manuals>/fd/figures/p-1057.png"
 ```
 
 **ファイル名はリンクに書かれている綴りをそのまま使う。ページ番号から組み立てない。**
 桁数とハイフンは焼き方で変わり（`p-1057.png` / `p-001057.png` / `p1057.png`）、
 組み立てるとほぼ確実に存在しないパスになる。開けなかったら名前を推測して再試行せず、
-`Glob` で `~/.claude/ix-manuals/fd/figures/*1057*` を確かめる。
+`<manuals>/fd/figures/*1057*` を一覧して実在する綴りを確かめる。
 
 囲みのテキストは捨てない。**画像で向きと包含を取り、囲みで語の綴りを取る。**
 画像は縮小されて渡るので、細かいラベルが読めなければそう言う。読めたふりをしない。
@@ -169,7 +195,7 @@ Read: file_path="~/.claude/ix-manuals/fd/figures/p-1057.png"
 **ページ画像が無い場合** — 出所が `<sup>[元 PDF pNNN](...)</sup>` だけのとき。
 `figures/` が用意されていないか、そのページが焼かれていない。このときは
 **断片から構成を組み立てず**、`元 PDF pNNN` を示して「この図は版面を見ないと向きが
-分からない」と伝える。ページ画像を用意する方法は `~/.claude/ix-manuals/fd/README.md`
+分からない」と伝える。ページ画像を用意する方法は `<manuals>/fd/README.md`
 に書いてある。
 
 ## 報告のしかた
@@ -195,14 +221,14 @@ PDF ビューアで開ける。版面に刷られた番号（`3-29` など）は
 
 ## 他の skill との関係
 
-- `/ix-configure` で設定を投入する前に、このスキルで**入力形式と実行モードを確認する**。
+- `ix-configure` で設定を投入する前に、このスキルで**入力形式と実行モードを確認する**。
   特に `no` 形の綴りと、そのコマンドがどのコンフィグモードに属するかを確かめる。
-- `/ix-show` で出力の読み方が分からないときも、該当コマンドの説明をここで引く。
+- `ix-show` で出力の読み方が分からないときも、該当コマンドの説明をここで引く。
 - ただし**インタフェース名（`GigaEthernet0.0` 等）はマニュアルでは決まらない**。
-  機種・構成で異なるので、必ず `/ix-show` の `show interfaces` で実機を確認すること。
+  機種・構成で異なるので、必ず `ix-show` の `show interfaces` で実機を確認すること。
 
 ## 注意事項
 
 - マニュアルは特定バージョン（例 10.11）のもの。実機のバージョンが違えば差異がありうる。
-  `/ix-show show version` と突き合わせ、食い違う可能性があるときはその旨を添える。
+  `ix-show` の `show version` と突き合わせ、食い違う可能性があるときはその旨を添える。
 - 変換された Markdown は元 PDF の著作物であり、手元での参照用。外部に転記・配布しない。

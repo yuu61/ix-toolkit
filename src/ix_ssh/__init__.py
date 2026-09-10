@@ -1,52 +1,54 @@
-#!/usr/bin/env python3
-# /// script
-# requires-python = ">=3.10"
-# dependencies = ["netmiko>=4.7", "paramiko>=3.0"]
-# ///
 """Run commands on a NEC IX router (IX OS 10.x) over SSH using netmiko's nec_ix driver.
 
 Device-agnostic: no host, credential or model is baked into this file. Targets are
-resolved from an inventory file (default ~/.claude/ix-devices.json) via --device, or
-given inline with --host/--user. The ix-* skills call this as ${CLAUDE_PLUGIN_ROOT}/scripts/ix-ssh.py.
+resolved from an inventory file (default ~/.ix-toolkit/devices.json) via --device, or
+given inline with --host/--user.
+
+Installed as the "ix-ssh" console script (see pyproject.toml), which is how the
+ix-* skills call it. A skill installed on its own carries no copy of this file:
+`gh skill install` copies one skill directory and nothing around it, so the client
+lives outside the skills instead of being duplicated into each one.
 
 Usage:
     # list the configured devices (never prints passwords):
-    uv run --script ix-ssh.py --list
+    ix-ssh --list
 
     # show commands. NEC IX runs running-config and most feature shows only inside
     # "config/enable" mode, so every show is executed there. Paging is auto-off.
-    uv run --script ix-ssh.py --device home-ix3315 "show version"
-    uv run --script ix-ssh.py -d home-ix3315 "show ip route" "show interfaces"
+    ix-ssh --device home-ix3315 "show version"
+    ix-ssh -d home-ix3315 "show ip route" "show interfaces"
 
     # ad-hoc target without an inventory entry:
-    uv run --script ix-ssh.py --host 192.0.2.1 --user admin "show running-config"
+    ix-ssh --host 192.0.2.1 --user admin "show running-config"
 
     # "host" may be a ~/.ssh/config alias; ProxyJump is followed automatically:
-    uv run --script ix-ssh.py --host room1 --user admin "show version"
+    ix-ssh --host room1 --user admin "show version"
 
     # config changes (DESTRUCTIVE - confirm before running). Each --config is one
     # line; multiple are applied in a single config session.
-    uv run --script ix-ssh.py -d home-ix3315 \
+    ix-ssh -d home-ix3315 \
         --config "ip route default GigaEthernet1.0" \
         --config "logging buffered 100" \
         --save
 
     # apply a batch of config lines from a file (one per line; # comments allowed):
-    uv run --script ix-ssh.py -d home-ix3315 --config-file changes.ix --save
+    ix-ssh -d home-ix3315 --config-file changes.ix --save
 
     # persist running-config to startup (write memory):
-    uv run --script ix-ssh.py -d home-ix3315 --save
+    ix-ssh -d home-ix3315 --save
 
     # back up running-config to a file (parent dirs auto-created; default name is
     # backups/<device>-<YYYYMMDD-HHMMSS>.conf):
-    uv run --script ix-ssh.py -d home-ix3315 --backup
-    uv run --script ix-ssh.py -d home-ix3315 --backup backups/before-change.conf
+    ix-ssh -d home-ix3315 --backup
+    ix-ssh -d home-ix3315 --backup backups/before-change.conf
 
     # clean output without "===== cmd =====" headers (for redirection):
-    uv run --script ix-ssh.py -d home-ix3315 --raw "show running-config" > ix.conf
+    ix-ssh -d home-ix3315 --raw "show running-config" > ix.conf
 
-Inventory (JSON, default ~/.claude/ix-devices.json, override with $IX_INVENTORY or
---inventory). Keys starting with "_" are ignored, so they can hold comments:
+Inventory (JSON, default ~/.ix-toolkit/devices.json; ~/.claude/ix-devices.json is
+still read for setups that predate the agent-neutral path. Override with
+$IX_INVENTORY or --inventory). Keys starting with "_" are ignored, so they can
+hold comments:
 
     {
       "devices": {
@@ -55,13 +57,17 @@ Inventory (JSON, default ~/.claude/ix-devices.json, override with $IX_INVENTORY 
           "username": "admin",
           "password_env": "IX_PASS_HOME",
           "port": 22,
+          "model": "IX3315",
           "note": "free-form; shown by --list"
         }
       }
     }
 
     Per-device keys: host (or hostname), username (or user), port,
-    password, password_env, key_file, use_keys, ssh_config_file, note.
+    password, password_env, key_file, use_keys, ssh_config_file, model, note.
+    "model" is the product name (IX2215, IX3315 ...). It changes nothing about the
+    connection: it is a hint carried into --list and the target banner, so that an
+    agent reading the manuals knows which model column of a spec table applies.
     There is deliberately NO default device: --device or --host is always required,
     so a config push can never land on the wrong box by omission.
 
@@ -127,6 +133,10 @@ DEFAULT_SSH_CONFIG = str(Path.home() / ".ssh" / "config")
 
 INVENTORY_ENV = "IX_INVENTORY"
 INVENTORY_CANDIDATES = (
+    # Agent-neutral location first: the skills run under Claude Code, Codex and
+    # anything else that reads SKILL.md, so the inventory cannot live under one
+    # agent's home. The ~/.claude path stays for setups that predate this.
+    Path.home() / ".ix-toolkit" / "devices.json",
     Path.home() / ".claude" / "ix-devices.json",
     Path(__file__).resolve().parent / "ix-devices.json",
 )
@@ -202,10 +212,14 @@ def _quiet_ssh_config(path: str | None):
 def format_inventory(devices: dict, path: Path | None) -> str:
     where = str(path) if path else "(none found)"
     if not devices:
+        # The skills read the location off this output instead of hardcoding a
+        # path, so an empty inventory has to say where the file is looked for.
+        looked_in = "\n".join(f"    {cand}" for cand in INVENTORY_CANDIDATES)
         return (
             f"inventory: {where}\n"
             "  no devices configured.\n"
             "  create the file, or pass --host HOST --user USER explicitly.\n"
+            f"  looked in ($IX_INVENTORY overrides):\n{looked_in}\n"
             '  schema: {"devices": {"NAME": {"host": "...", "username": "...", '
             '"password_env": "IX_PASS_NAME"}}}'
         )
@@ -227,8 +241,12 @@ def format_inventory(devices: dict, path: Path | None) -> str:
             hops = hop_specs(cfg, host)
             if hops:
                 route += " via " + " -> ".join(hops)
+        # model is short and structured, so it rides on the device row; note is
+        # free-form prose and keeps its own line.
+        model = f"  model={entry['model']}" if entry.get("model") else ""
         lines.append(
-            f"  {name:<{width}}  {user}@{host}:{port}{route}  auth={describe_auth(entry)}"
+            f"  {name:<{width}}  {user}@{host}:{port}{route}"
+            f"  auth={describe_auth(entry)}{model}"
         )
         if entry.get("note"):
             lines.append(f"  {'':<{width}}  note: {entry['note']}")
@@ -354,7 +372,8 @@ def open_jump_socket(cfg, hops: list[str], dest_host: str, dest_port: int, clien
 # --------------------------------------------------------------------------- #
 class Target:
     def __init__(self, name, host, username, port, password,
-                 key_file, use_keys, ssh_config_file, ssh_cfg=None, hops=(), alias=None):
+                 key_file, use_keys, ssh_config_file, ssh_cfg=None, hops=(), alias=None,
+                 model=None):
         self.name = name
         self.host = host
         self.username = username
@@ -366,6 +385,7 @@ class Target:
         self.ssh_cfg = ssh_cfg
         self.hops = list(hops)
         self.alias = alias  # the ssh_config alias the host came from, if any
+        self.model = model  # inventory hint (IX2215 ...); unused by the connection
 
     @property
     def label(self) -> str:
@@ -377,6 +397,8 @@ class Target:
             where += f" [{self.alias}]"
         if self.hops:
             where += " via " + " -> ".join(self.hops)
+        if self.model:
+            where += f", model {self.model}"
         return f"# target: {self.label} ({where})"
 
     def slug(self) -> str:
@@ -480,6 +502,7 @@ def resolve_target(args) -> Target:
         ssh_cfg=ssh_cfg,
         hops=hops,
         alias=alias,
+        model=entry.get("model"),
     )
 
 
@@ -715,5 +738,10 @@ def main(argv: list[str]) -> None:
         close_jump_clients()
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """Console-script entry point (see [project.scripts] in pyproject.toml)."""
     main(sys.argv[1:])
+
+
+if __name__ == "__main__":
+    cli()
