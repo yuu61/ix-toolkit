@@ -408,7 +408,8 @@ var figureNameRe = regexp.MustCompile(`^p-?0*(\d+)\.(?:png|jpg|jpeg)$`)
 // loadFigures は出力先に置かれたページ画像を拾う。無ければ空を返す。
 //
 // ここは「置いてあれば張る、無ければ張らない」だけを引き受ける。焼くのは
-// manualbook figures (md なら -figures) だが、外で焼いて置いた画像も同じように拾う。
+// build (手でなら manualbook figures か md -figures) だが、外で焼いて置いた画像も
+// 同じように拾う。
 // 画像の有無が変換の成否に影響しないので、テキストだけ先に作って後から
 // 焼き足してもよい。
 //
@@ -786,7 +787,7 @@ func writeSectionReadme(outDir, docTitle string, src source,
 		fmt.Fprintln(&b, "`figures/` が無いので、囲みには元 PDF へのリンクしか付いていない。")
 		fmt.Fprintln(&b, "ページを焼いて `figures/` に置き、変換し直すと、囲みの直後に")
 		fmt.Fprintln(&b, "`[ページ画像]` が並ぶ。焼くのは manualbook で、外部の道具は要らない。")
-		fmt.Fprintln(&b, "ix-toolkit のリポジトリで `manualbook build -figures` を流せば、この冊子の")
+		fmt.Fprintln(&b, "ix-toolkit のリポジトリで `manualbook build` を流せば、この冊子の")
 		fmt.Fprintln(&b, "全ページを焼いて変換し直すところまで 1 回で済む (72 秒・404 MB)。")
 		fmt.Fprintln(&b)
 		fmt.Fprintln(&b, "一部のページだけ焼くなら、このディレクトリで:")

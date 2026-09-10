@@ -74,12 +74,12 @@ func (d Doc) cachePath(cacheDir string) string {
 }
 
 // fetchDoc は資料 1 件を取得キャッシュへ取る。kind で作法が変わる。
-func fetchDoc(client *http.Client, d Doc, cacheDir string, force bool, delay time.Duration, ua string) error {
+func fetchDoc(w io.Writer, client *http.Client, d Doc, cacheDir string, force bool, delay time.Duration, ua string) error {
 	switch d.Kind {
 	case "pdf":
-		return fetchOne(client, d, d.cachePath(cacheDir), force)
+		return fetchOne(w, client, d, d.cachePath(cacheDir), force)
 	case "web":
-		return fetchWeb(client, d, d.cachePath(cacheDir), force, delay, ua)
+		return fetchWeb(w, client, d, d.cachePath(cacheDir), force, delay, ua)
 	case "":
 		return fmt.Errorf(`kind が無い。"pdf" か "web" を書く (取得と検証の作法が変わるので推測しない)`)
 	default:
@@ -113,7 +113,7 @@ func runFetch(args []string) {
 			continue
 		}
 		total++
-		if err := fetchDoc(client, d, *outDir, *force, *delay, *ua); err != nil {
+		if err := fetchDoc(os.Stdout, client, d, *outDir, *force, *delay, *ua); err != nil {
 			fmt.Fprintf(os.Stderr, "  ✗ %s: %s\n", d.Name, err)
 			failed++
 		}
@@ -126,11 +126,11 @@ func runFetch(args []string) {
 
 // --- pdf ---
 
-func fetchOne(client *http.Client, d Doc, dst string, force bool) error {
+func fetchOne(w io.Writer, client *http.Client, d Doc, dst string, force bool) error {
 	// url が空でも、別の経路で手に入れた PDF が置いてあれば取得済みとして扱う。
 	if !force {
 		if _, err := os.Stat(dst); err == nil {
-			fmt.Printf("  = %s (取得済み)\n", d.Name)
+			fmt.Fprintf(w, "  = %s (取得済み)\n", d.Name)
 			return nil
 		}
 	}
@@ -138,7 +138,7 @@ func fetchOne(client *http.Client, d Doc, dst string, force bool) error {
 		return fmt.Errorf("url が空。配布ページを見て転記するか、手元にある PDF を %s に置く", dst)
 	}
 
-	fmt.Printf("  → %s\n", d.URL)
+	fmt.Fprintf(w, "  → %s\n", d.URL)
 	resp, err := client.Get(d.URL)
 	if err != nil {
 		return err
@@ -169,7 +169,7 @@ func fetchOne(client *http.Client, d Doc, dst string, force bool) error {
 		return err
 	}
 
-	fmt.Printf("  ✓ %s (%.1f MB)\n", dst, float64(n)/(1<<20))
+	fmt.Fprintf(w, "  ✓ %s (%.1f MB)\n", dst, float64(n)/(1<<20))
 	return nil
 }
 
@@ -204,7 +204,7 @@ func webFetched(dst string, d Doc) bool {
 	return err == nil && meta.Version == d.Version
 }
 
-func fetchWeb(client *http.Client, d Doc, dst string, force bool, delay time.Duration, userAgent string) error {
+func fetchWeb(w io.Writer, client *http.Client, d Doc, dst string, force bool, delay time.Duration, userAgent string) error {
 	if d.URL == "" {
 		return errors.New("url が空 (配布ページを見て転記する)")
 	}
@@ -248,7 +248,7 @@ func fetchWeb(client *http.Client, d Doc, dst string, force bool, delay time.Dur
 	}
 
 	// 1. index の <title> で版を確かめる。違えば取らずに止まる。
-	fmt.Printf("  → %s\n", base)
+	fmt.Fprintf(w, "  → %s\n", base)
 	index, err := readAll("")
 	if err != nil {
 		return err
@@ -258,7 +258,7 @@ func fetchWeb(client *http.Client, d Doc, dst string, force bool, delay time.Dur
 		return fmt.Errorf("版が合わない\n    マニフェスト: %s\n    サイトの <title>: %s\n"+
 			"    版が上がっている。配布ページを確かめて manifest の version と url を更新する", d.Version, title)
 	}
-	fmt.Printf("    版 %s: %s\n", d.Version, title)
+	fmt.Fprintf(w, "    版 %s: %s\n", d.Version, title)
 
 	// 2. searchindex.js からページの一覧を取る。これで取る対象が確定する。
 	si, err := readAll("searchindex.js")
@@ -273,7 +273,7 @@ func fetchWeb(client *http.Client, d Doc, dst string, force bool, delay time.Dur
 	if err := json.Unmarshal(m[1], &docnames); err != nil {
 		return fmt.Errorf("docnames: %w", err)
 	}
-	fmt.Printf("    ページ: %d\n", len(docnames))
+	fmt.Fprintf(w, "    ページ: %d\n", len(docnames))
 
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
@@ -336,17 +336,17 @@ func fetchWeb(client *http.Client, d Doc, dst string, force bool, delay time.Dur
 			images[path.Join(path.Dir(rel), src)] = true
 		}
 		if (i+1)%20 == 0 {
-			fmt.Printf("    %d/%d ページ\n", i+1, len(docnames))
+			fmt.Fprintf(w, "    %d/%d ページ\n", i+1, len(docnames))
 		}
 	}
-	fmt.Printf("    ページ: 取得 %d / 変化なし %d\n", fetched, unchanged)
+	fmt.Fprintf(w, "    ページ: 取得 %d / 変化なし %d\n", fetched, unchanged)
 
 	// 4. 画像。_static (CSS/JS) は要らない。
 	imgFetched, imgUnchanged := 0, 0
 	for rel := range images {
 		changed, _, err := fetchFile(rel)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "    ! %s: %s\n", rel, err)
+			fmt.Fprintf(w, "    ! %s: %s\n", rel, err)
 			continue
 		}
 		if changed {
@@ -355,7 +355,7 @@ func fetchWeb(client *http.Client, d Doc, dst string, force bool, delay time.Dur
 			imgUnchanged++
 		}
 	}
-	fmt.Printf("    画像: 取得 %d / 変化なし %d\n", imgFetched, imgUnchanged)
+	fmt.Fprintf(w, "    画像: 取得 %d / 変化なし %d\n", imgFetched, imgUnchanged)
 
 	// 5. 変換が読む覚え書きと、次回の条件付き GET 用の ETag。
 	meta := webMeta{
@@ -370,7 +370,7 @@ func fetchWeb(client *http.Client, d Doc, dst string, force bool, delay time.Dur
 	if b, err := json.MarshalIndent(tags, "", "  "); err == nil {
 		_ = os.WriteFile(filepath.Join(dst, etagFile), append(b, '\n'), 0o644)
 	}
-	fmt.Printf("  ✓ %s\n", dst)
+	fmt.Fprintf(w, "  ✓ %s\n", dst)
 	return nil
 }
 

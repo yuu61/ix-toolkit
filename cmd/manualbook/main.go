@@ -30,8 +30,7 @@ const usage = `manualbook — NEC IX のマニュアル (PDF / Web) を Markdown
   scan    見開きスキャン画像 (PNG) を 1 ページずつに分割する (テキスト層が無い場合)
 
 典型的な流れ:
-  manualbook build              # pdf/ に取り、~/.ix-toolkit/manuals/<系列>/<冊子>/ に変換し、diff.tsv を作る
-  manualbook build -figures     # PDF の機能説明書のページ画像も焼く
+  manualbook build   # pdf/ に取り、~/.ix-toolkit/manuals/<系列>/<冊子>/ に変換し、diff.tsv を作る
 
 1 冊ずつ手で流すなら fetch / md / diff を順に使う (各サブコマンドの詳細は -h)。
 `
