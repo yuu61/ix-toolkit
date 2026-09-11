@@ -61,12 +61,14 @@ func readSectionPages(p *domain.Profile, pdf string) ([]Page, error) {
 	}
 
 	pages := make([]Page, 0, len(body))
+	bodySize := pdfBodyFontSize(d.pages, bodyCrop(p))
 	var previousTables []pdfTable
 	for i := range body {
 		pg := Page{num: i + 1}
 		pg.section = at(headers, i)
 		pg.printed = firstToken(at(footers, i))
 		pg.chapter = chapterOf(pg.printed)
+		pg.headings = pdfHeadingLines(d.pages[i], bodyCrop(p), bodySize)
 		pg.lines = collapseTableBlanks(splitLines(body[i]))
 		rules, err := d.readRules(i)
 		if err != nil {
@@ -198,9 +200,9 @@ func classifyLine(s string) lineKind {
 	if t == "" {
 		return lineBlank
 	}
-	// 見出しと箇条書きは、短くても文書の構造であって版面ではない。
-	// これを版面に落とすと、節見出しがコードブロックに飲まれて索引が空になる。
-	if isBullet(t) || headingRe.MatchString(t) {
+	// 見出しは呼び出し側で書式も確認する。番号だけで地の文と決めると、
+	// IP アドレスで始まる図のラベルまで版面から取り出してしまう。
+	if isBullet(t) {
 		return lineProse
 	}
 	// 文末で終わる行は、短くても地の文の締め。
@@ -310,7 +312,7 @@ func parseHeadings(p *domain.Profile, pages []Page) ([]domain.Heading, map[int]s
 			if tocLeaderRe.MatchString(raw) {
 				continue
 			}
-			if m := headingRe.FindStringSubmatch(t); m != nil {
+			if m := headingRe.FindStringSubmatch(t); m != nil && isPageHeading(pg, t, m[2]) {
 				flushLayout()
 				heads = append(heads, domain.Heading{
 					Number:  m[2],

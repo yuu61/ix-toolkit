@@ -86,7 +86,12 @@ func renderPage(pg pdfPage, c crop, grid bool) string {
 	var b strings.Builder
 	for i, ln := range lines {
 		if i > 0 {
-			for n := blankLines(lines[i-1].center-ln.center, spacing); n > 0; n-- {
+			n := blankLines(lines[i-1].center-ln.center, spacing)
+			if grid && bulletParagraphBreak(lines, i, unit) {
+				// FD の collapseTableBlanks を通しても段落の境界を残す。
+				n = max(n, 2)
+			}
+			for ; n > 0; n-- {
 				b.WriteByte('\n')
 			}
 		}
@@ -99,6 +104,35 @@ func renderPage(pg pdfPage, c crop, grid bool) string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// bulletParagraphBreak は箇条書き直後の広い行間を、リスト内の行送りで測る。
+// CRM は項目名の前後に空きが多く、ページ全体の中央値が本文の行送りより
+// 大きい。その中央値だけではリスト後の本文が最後の項目に連結される。
+// 本文が箇条書きの左に戻る場合も区切る。本文の字下げが深くなる場合は
+// 位置だけでは決めず、行間を使う。
+func bulletParagraphBreak(lines []textLine, i int, unit float64) bool {
+	isBulletLine := func(j int) bool {
+		ln := lines[j]
+		return isBullet(renderFlowLine(ln, lineUnit(ln.glyphs, unit)))
+	}
+	if i < 1 || isBulletLine(i) || !isBulletLine(i-1) {
+		return false
+	}
+	if lines[i].glyphs[0].left < lines[i-1].glyphs[0].left-unit*0.5 {
+		return true
+	}
+	start := i - 1
+	for start > 0 && isBulletLine(start-1) {
+		start--
+	}
+	if i-start < 2 {
+		return false
+	}
+	// 行の中心は p/g などの字面で上下する。短いリストの隣接差の中央値では
+	// そのずれが残るため、先頭から末尾までの距離を行数で割って均す。
+	spacing := (lines[start].center - lines[i-1].center) / float64(i-start-1)
+	return blankLines(lines[i-1].center-lines[i].center, spacing) > 0
 }
 
 // snapStarts は行頭の桁を揃える。

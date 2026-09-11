@@ -29,6 +29,7 @@ type Page struct {
 	lines     []string             // 読み順に並べた本文行
 	fullLines []string             // ページ全幅で読んだ行 (段をまたぐ大見出し用)
 	tables    map[int]domain.Block // PDF の表。キーは lines 内の挿入位置
+	headings  map[string]bool      // PDF の書式で確認した見出し行。空白を除いた本文がキー
 	twoColumn bool
 }
 

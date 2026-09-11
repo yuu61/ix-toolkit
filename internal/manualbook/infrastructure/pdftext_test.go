@@ -93,8 +93,19 @@ func TestLocalPDF(t *testing.T) {
 				if stats.Two != 629 || stats.One != 223 {
 					t.Fatalf("column classification changed: %+v", stats)
 				}
-				if n := len(ParseEntries(p, pages)); n != 2039 {
+				entries := ParseEntries(p, pages)
+				if n := len(entries); n != 2039 {
 					t.Fatalf("entries = %d, want 2039", n)
+				}
+				var rendered strings.Builder
+				for i := range entries {
+					renderEntry(&rendered, &entries[i])
+				}
+				if !strings.Contains(rendered.String(), "- set ip/ipv6 default next-hop\n\n上から順に") {
+					t.Error("p635: prose after route-map list joined to last bullet")
+				}
+				if !strings.Contains(rendered.String(), "- IPv4 アドレス\n\nPORT ...") {
+					t.Error("p736: next parameter joined to single bullet")
 				}
 			} else if len(d.pages) != 1208 {
 				t.Fatalf("FD pages = %d, want 1208", len(d.pages))
