@@ -69,7 +69,7 @@ func (s Source) route() string {
 	if s.Profile.HasCommandEntries() {
 		return "PDF のテキスト層を版面どおりに組み直したもの (OCR 不使用)"
 	}
-	return "PDF のテキスト層を版面どおりに組み直したもの (OCR・画像解析・モデル不使用)"
+	return "PDF のテキスト層とページ画像の罫線から本文・表を組み直したもの (OCR・モデル不使用)"
 }
 
 // sourceColumnNote は索引の source 列の読み方。

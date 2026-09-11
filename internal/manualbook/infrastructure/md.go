@@ -22,12 +22,13 @@ import (
 
 // Page は 1 ページ分の本文と、ヘッダ・フッタ帯から得たメタデータ。
 type Page struct {
-	num       int      // PDF 上のページ番号 (1 始まり)
-	printed   string   // 印刷ページ番号 (例 "3-29")
-	chapter   int      // 印刷ページ番号の章部分
-	section   string   // 版面ヘッダ = 節名
-	lines     []string // 読み順に並べた本文行
-	fullLines []string // ページ全幅で読んだ行 (段をまたぐ大見出し用)
+	num       int                  // PDF 上のページ番号 (1 始まり)
+	printed   string               // 印刷ページ番号 (例 "3-29")
+	chapter   int                  // 印刷ページ番号の章部分
+	section   string               // 版面ヘッダ = 節名
+	lines     []string             // 読み順に並べた本文行
+	fullLines []string             // ページ全幅で読んだ行 (段をまたぐ大見出し用)
+	tables    map[int]domain.Block // PDF の表。キーは lines 内の挿入位置
 	twoColumn bool
 }
 

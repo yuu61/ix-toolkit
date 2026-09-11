@@ -14,9 +14,8 @@ type Heading struct {
 
 // BlockKind は本文の一区切りの種類。
 //
-// PDF から読むと prose と layout の 2 つしか出ない。テキストからは表と図を
-// 見分けられないので、どちらも版面どおりに囲う (layout)。Web から読むと
-// 表は <table>、図は <figure> と元から分かれているので、table と figure が増える。
+// PDF は罫線から復元した表を table、残りの図表を layout とする。
+// Web は <table> と <figure> の構造から table と figure を作る。
 type BlockKind int
 
 const (
@@ -28,9 +27,10 @@ const (
 
 // Block は本文の一区切り。
 type Block struct {
-	Kind   BlockKind
-	Ref    Ref        // この塊が現れた元資料上の位置
-	Lines  []string   // prose / layout の本文行。figure では図中のラベル列
-	Rows   [][]string // table の行。先頭行が見出し
-	Figure string     // figure: figures/ に置いたファイル名
+	Kind      BlockKind
+	Ref       Ref        // この塊が現れた元資料上の位置
+	Lines     []string   // prose / layout の本文行。figure では図中のラベル列
+	Rows      [][]string // table の行。先頭行が見出し
+	HeaderRef Ref        // table: 前ページの列見出しを補った場合の出典。それ以外は空
+	Figure    string     // figure: figures/ に置いたファイル名
 }
