@@ -7,7 +7,11 @@
 | ディレクトリ | 中身 | 言語 |
 |---|---|---|
 | `skills/` | SKILL.md 形式の skill 5 つ | Markdown |
-| `src/ix_ssh/` | skill が呼ぶ `ix-ssh` コマンド | Python (netmiko / paramiko) |
+| `src/ix_ssh/domain/` | インベントリの読み方、設定の優先順位、パスワードの探し方、ProxyJump の平坦化、show の判定 | Python |
+| `src/ix_ssh/application/` | 1 回の `ix-ssh` 実行 (一覧 / show → backup → config → save) の手順 | Python |
+| `src/ix_ssh/infrastructure/` | インベントリと ssh_config の読み込み、バックアップの書き出し、netmiko / paramiko のセッション | Python (netmiko / paramiko) |
+| `src/ix_ssh/cli/` | 引数解析、エラーの最終表示と終了コード。`ix-ssh` コマンドの入口 | Python |
+| `tests/` | ix-ssh の unittest。`fakeix.py` は paramiko で立てる偽の IX (踏み台も兼ねる) | Python |
 | `cmd/manualbook/` | manualbook の起動点 | Go |
 | `internal/manualbook/domain/` | 資料・プロファイル・本文・出典の値と、系列間対応の規則 | Go |
 | `internal/manualbook/application/` | manifest から取得 → 変換 → diff まで進める実行手順 | Go |
@@ -20,18 +24,27 @@
 $ go build -ldflags="-s -w" -o manualbook ./cmd/manualbook   # -s -w は Defender の誤検知回避で必須
 $ ./manualbook build                                          # 変換結果を作り直して確かめる
 $ go test ./...                                               # ドメイン規則 (索引のキー・系列間対応・出典) の検証
-$ ruff check src/ && ruff format src/
+$ uv sync --extra dev                                         # ix-ssh の開発用 .venv (netmiko / paramiko / ruff)
+$ uv run python -m unittest                                   # ix-ssh の規則と、偽の IX に対する一連の操作の検証
+$ uv run ruff check src/ tests/ && uv run ruff format src/ tests/
 ```
+
+配布は「クローン + `uv tool install -e <クローン>`」だけ。skill は PATH の `ix-ssh` を呼ぶ。
+`gh skill install` は skill ディレクトリしか複製しない (`src/` が付いてこない) ので README から
+外してある。戻さない。
 
 manualbook の変換結果の形 (`<manuals>/<系列>/<冊子>/` と索引の列) は `ix-manual` の SKILL.md が
 そのまま読む。片方を変えたらもう片方も直す。
 
-機器運用 (`src/ix_ssh/`) とマニュアル整備 (`internal/manualbook/`) は独立した領域として扱う。
-manualbook の `domain` は他の層、HTTP、PDFium、HTML DOM、ファイル入出力に依存させない。
+機器運用 (`src/ix_ssh/`) とマニュアル整備 (`internal/manualbook/`) は独立した領域として扱い、
+層の切り方と依存の向きは両方で同じにする。`domain` は他の層、HTTP、PDFium、HTML DOM、
+netmiko / paramiko、ファイル入出力に依存させない (ix-ssh は `tests/test_layering.py` がこれを検証する)。
 `infrastructure` は `domain` を使い、`application` / `cli` には依存させない。
 `application` は `domain` と `infrastructure` を組み合わせる。`cli` は `application` だけを呼ぶ
-(`infrastructure` を直接呼ばない)。プロセス終了 (`os.Exit`) は `cli` に置き、原因を表示し終えた
-失敗は `application.ReportedError` で終了コードだけ伝える。
+(`infrastructure` を直接呼ばない)。プロセス終了は `cli` に置く。manualbook では原因を表示し終えた
+失敗を `application.ReportedError` で終了コードだけ伝え、ix-ssh ではユーザーが直せる失敗を
+`domain.UsageError` にして `cli` が本文を表示して 1 で終わる。netmiko / paramiko の import は
+セッションを開く関数の中に置き、`--list` / `--help` が両方無くても動くようにしておく。
 
 ## skill を書き換えるときの決まり
 
@@ -47,7 +60,9 @@ skill は Claude Code を主に、Codex など SKILL.md を読む他のエージ
 - frontmatter は `name` と `description` が必須。`argument-hint` / `allowed-tools` /
   `compatibility` / `license` は Claude Code 向けで、読まないエージェントは黙って無視する
   （Codex は `name` / `description` / `metadata.short-description` だけを読む）。
-- パスをエージェントの home に置かない。インベントリは `~/.ix-toolkit/devices.json`（場所は
+- `ix-ssh` は PATH のコマンドとして呼ぶ。スクリプトのパスや `python …` の呼び出しを skill に書かない
+  （クローンの置き場所はエージェントごとに違い、agent 非依存に書く方法が無い）。
+- データのパスはエージェントの home に置かない。インベントリは `~/.ix-toolkit/devices.json`（場所は
   `ix-ssh --list` が表示する）、マニュアルは `$IX_MANUALS` → `~/.ix-toolkit/manuals/` →
   `~/.claude/ix-manuals/` の順に探し、その下が `<系列>/<冊子>/`（`ix/crm`, `ix-r/fd` …）。
   系列間の対応表は `<manuals>/ix-r/diff.tsv`。

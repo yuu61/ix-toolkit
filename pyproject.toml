@@ -8,14 +8,18 @@ license = "MIT"
 authors = [{ name = "yuu61" }]
 dependencies = ["netmiko>=4.7", "paramiko>=3.0"]
 
+[project.optional-dependencies]
+dev = ["ruff"]
+
 [project.urls]
 Homepage = "https://github.com/yuu61/ix-toolkit"
 
-# The skills call this command by name. Keeping it out of the skill directories is
-# deliberate: `gh skill install` copies one skill directory and nothing around it,
-# so a shared script inside skills/ would have to be duplicated into every skill.
+# The skills call this command from PATH; `uv tool install -e <clone>` puts it
+# there (see README). The repository is always cloned whole, so the client can
+# live in src/ as an ordinary package instead of being copied into every skill
+# directory.
 [project.scripts]
-ix-ssh = "ix_ssh:cli"
+ix-ssh = "ix_ssh.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -23,3 +27,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ix_ssh"]
+
+[tool.ruff]
+line-length = 100

@@ -2,8 +2,8 @@
 name: ix-show
 description: NEC IX（IX2000/IX3000 と IX-R/IX-V）の show コマンドを実行して状態を確認する（インターフェース, ルーティング, IPsec, ログ等）。対象機器は --device で指定する。ユーザーが NEC IX の状態確認・表示を求めたときに使用する
 argument-hint: "[機器名] <show コマンド> (e.g., home show ip route)"
-allowed-tools: Bash(ix-ssh:*) Bash(uvx:*) Bash(uv:*)
-compatibility: uv と ix-ssh コマンドが要る（uv tool install git+https://github.com/yuu61/ix-toolkit）。対象の NEC IX へ SSH が通ること、インベントリ ~/.ix-toolkit/devices.json があること（場所は ix-ssh --list が表示する）。
+allowed-tools: Bash(ix-ssh:*)
+compatibility: ix-ssh コマンドが PATH にあること（ix-toolkit をクローンして uv tool install -e <クローン>。手順は README）。対象の NEC IX へ SSH が通ること、インベントリ ~/.ix-toolkit/devices.json があること（場所は ix-ssh --list が表示する）。
 license: MIT
 ---
 
@@ -11,7 +11,7 @@ license: MIT
 
 `ix-ssh`（netmiko `nec_ix_ssh`）経由で NEC IX の show コマンドを実行する。**読み取り専用**。
 
-> `ix-ssh` が PATH に無ければ `uvx --from git+https://github.com/yuu61/ix-toolkit ix-ssh` が同じもの。以降の例の `ix-ssh` をこれに置き換える（初回だけ解決に数秒）。
+> `ix-ssh` が PATH に無ければ、ix-toolkit の README の手順（クローン → `uv tool install -e <クローン>`）をユーザーに案内する。勝手に入れたり、別の方法で呼んだりしない。
 
 ## 接続先の指定
 

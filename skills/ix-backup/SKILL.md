@@ -2,8 +2,8 @@
 name: ix-backup
 description: NEC IX の running-config をファイルに退避する。対象機器は --device で指定する。設定変更前のバックアップや定期保存に使用する
 argument-hint: "[機器名] [保存先パス（省略可）]"
-allowed-tools: Bash(ix-ssh:*) Bash(uvx:*) Bash(uv:*)
-compatibility: uv と ix-ssh コマンドが要る（uv tool install git+https://github.com/yuu61/ix-toolkit）。対象の NEC IX へ SSH が通ること、インベントリ ~/.ix-toolkit/devices.json があること（場所は ix-ssh --list が表示する）。
+allowed-tools: Bash(ix-ssh:*)
+compatibility: ix-ssh コマンドが PATH にあること（ix-toolkit をクローンして uv tool install -e <クローン>。手順は README）。対象の NEC IX へ SSH が通ること、インベントリ ~/.ix-toolkit/devices.json があること（場所は ix-ssh --list が表示する）。
 license: MIT
 ---
 
@@ -11,7 +11,7 @@ license: MIT
 
 `ix-ssh --backup` で running-config を取得してファイルに保存する。**読み取り専用**。スクリプトが親ディレクトリ作成・タイムスタンプ既定名・UTF-8 書き込みまで行うため、`mkdir` やシェルリダイレクトは不要（単一の python コマンドで完結）。
 
-> `ix-ssh` が PATH に無ければ `uvx --from git+https://github.com/yuu61/ix-toolkit ix-ssh` が同じもの。以降の例の `ix-ssh` をこれに置き換える（初回だけ解決に数秒）。
+> `ix-ssh` が PATH に無ければ、ix-toolkit の README の手順（クローン → `uv tool install -e <クローン>`）をユーザーに案内する。勝手に入れたり、別の方法で呼んだりしない。
 
 ## 接続先の指定
 

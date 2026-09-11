@@ -18,40 +18,7 @@ skill は SKILL.md 形式なので、Codexなど同じ形式を読むエージ�
 
 ### インストール (Claude Code)
 
-[uv](https://docs.astral.sh/uv/) が PATH に通っていれば、これだけ。
-
-```console
-$ gh skill install yuu61/ix-toolkit --all --agent claude-code --scope user
-```
-
-skill が呼ぶ SSH クライアント `ix-ssh` は入らないが、PATH に無ければ skill が
-`uvx --from git+https://github.com/yuu61/ix-toolkit ix-ssh` へ切り替えるので、初回に自動で揃う
-(数秒。以降はキャッシュ)。毎回の解決を省くなら一度だけ:
-
-```console
-$ uv tool install git+https://github.com/yuu61/ix-toolkit
-```
-
-<details>
-<summary>細かい話</summary>
-
-- リポジトリは位置引数で、`--agent` はエージェント名を取る。`--agent yuu61/ix-toolkit` とは書けない。
-- `--scope user` は `~/.claude/skills/<skill 名>/`、既定の `--scope project` はカレントリポジトリの
-  `.claude/skills/`。skill が 1 つずつ独立するので名前空間は付かず `/ix-show` で引ける。
-- 1 つだけなら `--all` の代わりに名前を渡す。`ix-manual` は機器に接続しないので単体で足りる。
-- 版は「最新のタグ付きリリース → 既定ブランチの HEAD」の順。固定は `--pin <tag/SHA>`。
-- 更新は skill が `gh skill update`、`ix-ssh` が `uv tool upgrade ix-toolkit`。
-- `uvx` のフォールバックはタグを付けない限り HEAD を取る。設定を投入する `ix-configure` は
-  `uv tool install` で固定したものを使うほうがよい。
-- `uv` を置けない場合は venv に入れて PATH を通す
-  (`pip install git+https://github.com/yuu61/ix-toolkit`)。システムの Python への直接 `pip install`
-  は PEP 668 の `externally-managed-environment` で止まる。
-
-</details>
-
-#### ソースごと入れる場合 (Claude Code)
-
-manualbook でマニュアルを自分で変換する、`ix-ssh` を手元で直す、といった用途はクローンする。
+リポジトリをクローンして、[uv](https://docs.astral.sh/uv/) でその中の `ix-ssh` を PATH に載せる。
 
 ```console
 $ git clone https://github.com/yuu61/ix-toolkit $HOME/.claude/skills/ix-toolkit
@@ -59,10 +26,27 @@ $ uv tool install -e $HOME/.claude/skills/ix-toolkit
 ```
 
 - `.claude-plugin/plugin.json` があるので plugin として読まれ、`/ix-toolkit:ix-show` になる
-  (衝突しなければ `/ix-show` でも引ける)。更新は `git pull`。
-- `-e` は手元のソースを `ix-ssh` に使わせるため。省くと skill は GitHub の HEAD を取りに行き、
-  クローン側の変更が効かない。
-- 上の `gh skill install` と併用しない。同じ skill が二重に並ぶ。
+  (衝突しなければ `/ix-show` でも引ける)。
+- skill が呼ぶ SSH クライアント `ix-ssh` は `uv tool install` が `~/.local/bin/` に置く
+  (PATH に無ければ `uv tool update-shell`)。依存の netmiko / paramiko は uv が専用の環境に入れるので、
+  手元の Python に何も入れない。
+- `-e` はクローンのソースをそのまま使わせるため。更新は `git pull` だけで効き、依存が変わったときだけ
+  `uv tool install -e … --reinstall`。`-e` を省くとクローン側の変更が `ix-ssh` に効かない。
+- **`gh skill install` は使わない。** skill のディレクトリしか複製せず、`src/` と `pyproject.toml` が
+  付いてこないので `ix-ssh` が無い skill になる。
+- 消すときは `uv tool uninstall ix-toolkit` してクローンを消す。
+
+<details>
+<summary>以前の入れ方 (gh skill install) からの移行</summary>
+
+- `~/.claude/skills/ix-show/` のように skill 単位で置いたものと、その隣の `ix-ssh.py` は消す
+  (残すと同じ skill が二重に並ぶ)。Codex 側は `~/.codex/skills/ix-*/` と `~/.agents/skills/ix-*/` も同様。
+- `uv tool install git+https://github.com/yuu61/ix-toolkit` で入れた `ix-ssh` は GitHub の版なので、
+  上の `uv tool install -e` で入れ直す (クローンの版に置き換わる)。
+- インベントリ (`~/.ix-toolkit/devices.json`) と変換済みマニュアル (`~/.ix-toolkit/manuals/`) は
+  そのまま。
+
+</details>
 
 ### インストール (Codex)
 
@@ -75,17 +59,17 @@ $ uv tool install -e $HOME/.codex/skills/ix-toolkit
 
 - Codex は skill ディレクトリを入れ子まで辿るので、クローンしたままの `skills/ix-*/SKILL.md` が
   5 つとも載る。`~/.agents/skills/` に置いても同じように読まれる。
-- Claude Code はこの場所を読まない (`~/.claude/skills/` と plugin だけ)。両方で使うなら両方に置く。
+- Claude Code はこの場所を読まない (`~/.claude/skills/` と plugin だけ)。両方で使うなら両方に
+  クローンし、`uv tool install -e` はどちらか片方に向ける (`git pull` で揃えていれば同じ)。
 - frontmatter の `argument-hint` / `allowed-tools` / `compatibility` / `license` は Claude Code
   向けで、Codex は `name` と `description` だけを読んで残りは無視する。
-- `uv tool install -e` を省くと skill は `uvx --from git+...` に落ちる (手元の `ix-ssh` は使われない)。
 - 更新は `git pull`。
 
 ### インストール (その他のエージェント)
 
-SKILL.md を読むエージェントなら、`skills/ix-*/` をそのエージェントの skill ディレクトリへ
-置けば動く。`ix-ssh` は PATH から呼ぶだけなので、入れ方は上と同じ
-(`uv tool install git+https://github.com/yuu61/ix-toolkit`)。
+SKILL.md を読むエージェントなら、クローンをそのエージェントの skill ディレクトリへ置けば動く
+(skill は `skills/ix-*/` の下)。skill は PATH の `ix-ssh` を呼ぶだけなので、`uv tool install -e` は
+上と同じ。
 
 ### 接続先
 
@@ -117,8 +101,7 @@ SKILL.md を読むエージェントなら、`skills/ix-*/` をそのエージ�
 手で確かめるなら skill を通さず直接叩く。
 
 ```console
-$ ix-ssh --list                                                     # uv tool install 済み
-$ uvx --from git+https://github.com/yuu61/ix-toolkit ix-ssh --list   # 入れていない場合
+$ ix-ssh --list
 ```
 
 ---
@@ -127,14 +110,16 @@ $ uvx --from git+https://github.com/yuu61/ix-toolkit ix-ssh --list   # 入れて
 
 NEC のマニュアルを取得して、`ix-manual` が引く Markdown と索引に変換するツール。
 
-コードは機器運用 (`src/ix_ssh/`) とマニュアル整備 (`internal/manualbook/`) に分かれている。
-manualbook は DDD の責務分離に沿って、資料・本文・出典・系列間対応の規則を `domain` に置く。
-取得と変換の手順は `application`、HTTP・PDFium・HTML とファイルの読み書きは `infrastructure`、
-引数解析と終了コードは `cli` が受け持つ。`cmd/manualbook/main.go` は CLI を起動する。
+コードは機器運用 (`src/ix_ssh/`、Python) とマニュアル整備 (`internal/manualbook/`、Go) に分かれ、
+どちらも同じ 4 層に切ってある。規則は `domain` (manualbook なら資料・本文・出典・系列間対応、
+ix-ssh ならインベントリの読み方・設定の優先順位・パスワードの探し方・ProxyJump の平坦化)、
+手順は `application`、外部との入出力 (HTTP・PDFium・HTML、あるいは ssh_config・netmiko・ファイル) は
+`infrastructure`、引数解析と終了コードは `cli`。`cmd/manualbook/main.go` は CLI を起動する。
 
 `domain` は外部入出力に依存せず、`infrastructure` は `domain`、`application` はその両方を使い、
 `cli` は `application` だけを呼ぶ。`go test ./...` はドメイン規則 (索引のキーの抜き方、系列間の
-対応、出典の書き方) を検証する。ビルド方法、サブコマンド、生成ファイルの形式は以下のとおり。
+対応、出典の書き方) を、`python -m unittest` は ix-ssh の規則と、paramiko で立てた偽の IX に対する
+ProxyJump 込みの一連の操作を検証する。ビルド方法、サブコマンド、生成ファイルの形式は以下のとおり。
 
 ```console
 $ go build -ldflags="-s -w" -o manualbook ./cmd/manualbook

@@ -2,8 +2,8 @@
 name: ix-configure
 description: NEC IX（IX2000/IX3000 と IX-R/IX-V）に設定を投入する。config モードで設定行を適用する。対象機器は --device で指定する。ユーザーが NEC IX の設定変更・投入を求めたときに使用する
 argument-hint: "[機器名] [変更内容の説明] (e.g., home デフォルトルート追加)"
-allowed-tools: Bash(ix-ssh:*) Bash(uvx:*) Bash(uv:*)
-compatibility: uv と ix-ssh コマンドが要る（uv tool install git+https://github.com/yuu61/ix-toolkit）。対象の NEC IX へ SSH が通ること、インベントリ ~/.ix-toolkit/devices.json があること（場所は ix-ssh --list が表示する）。
+allowed-tools: Bash(ix-ssh:*)
+compatibility: ix-ssh コマンドが PATH にあること（ix-toolkit をクローンして uv tool install -e <クローン>。手順は README）。対象の NEC IX へ SSH が通ること、インベントリ ~/.ix-toolkit/devices.json があること（場所は ix-ssh --list が表示する）。
 license: MIT
 ---
 
@@ -13,9 +13,7 @@ license: MIT
 
 **これは破壊的操作である。投入前に必ず「対象機器」と「設定行」をユーザーに提示し、確認を取ること。**
 
-> `ix-ssh` が PATH に無ければ `uvx --from git+https://github.com/yuu61/ix-toolkit ix-ssh` が同じもの。以降の例の `ix-ssh` をこれに置き換える（初回だけ解決に数秒）。
-
-> 設定投入は破壊的なので、`uvx` の都度解決（タグが無ければ HEAD を取る）に頼らず、`uv tool install` で固定した `ix-ssh` を使う。PATH に無ければ先にユーザーへ案内する。
+> `ix-ssh` が PATH に無ければ、ix-toolkit の README の手順（クローン → `uv tool install -e <クローン>`）をユーザーに案内する。勝手に入れたり、別の方法で呼んだりしない。
 
 ## 接続先の指定
 

@@ -1,5 +1,7 @@
 """Allow `python -m ix_ssh` alongside the installed `ix-ssh` command."""
 
-from . import cli
+import sys
 
-cli()
+from .cli import main
+
+sys.exit(main())

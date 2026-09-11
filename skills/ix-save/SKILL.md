@@ -2,8 +2,8 @@
 name: ix-save
 description: NEC IX の running-config を startup-config に保存する（write memory）。対象機器は --device で指定する。設定変更後の永続化に使用する
 argument-hint: "[機器名] (e.g., home)"
-allowed-tools: Bash(ix-ssh:*) Bash(uvx:*) Bash(uv:*)
-compatibility: uv と ix-ssh コマンドが要る（uv tool install git+https://github.com/yuu61/ix-toolkit）。対象の NEC IX へ SSH が通ること、インベントリ ~/.ix-toolkit/devices.json があること（場所は ix-ssh --list が表示する）。
+allowed-tools: Bash(ix-ssh:*)
+compatibility: ix-ssh コマンドが PATH にあること（ix-toolkit をクローンして uv tool install -e <クローン>。手順は README）。対象の NEC IX へ SSH が通ること、インベントリ ~/.ix-toolkit/devices.json があること（場所は ix-ssh --list が表示する）。
 license: MIT
 ---
 
@@ -13,7 +13,7 @@ license: MIT
 
 **save（write memory）を実行しないと、再起動時に設定が失われる。`ix-configure` 実行後に必ず提案すること。**
 
-> `ix-ssh` が PATH に無ければ `uvx --from git+https://github.com/yuu61/ix-toolkit ix-ssh` が同じもの。以降の例の `ix-ssh` をこれに置き換える（初回だけ解決に数秒）。
+> `ix-ssh` が PATH に無ければ、ix-toolkit の README の手順（クローン → `uv tool install -e <クローン>`）をユーザーに案内する。勝手に入れたり、別の方法で呼んだりしない。
 
 ## 接続先の指定
 
