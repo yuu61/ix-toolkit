@@ -46,6 +46,10 @@ func ReadPages(p *domain.Profile, pdf string) ([]Page, PageStats, error) {
 	if err != nil {
 		return nil, PageStats{}, err
 	}
+	d, err := openDoc(pdf)
+	if err != nil {
+		return nil, PageStats{}, err
+	}
 
 	var stats PageStats
 	pages := make([]Page, 0, len(full))
@@ -71,6 +75,8 @@ func ReadPages(p *domain.Profile, pdf string) ([]Page, PageStats, error) {
 			nf := countGlyphs(f)
 			if abs(countGlyphs(l)+countGlyphs(r)-nf) <= columnTolerance(nf) && countGlyphs(r) > 0 {
 				pg.twoColumn = true
+				// 判定で許したずれを欠落のまま出力しない。
+				l, r = renderColumns(d.pages[i], p)
 				// 読み順は左段を読み切ってから右段 (検証済み)
 				pg.lines = append(splitLines(l), splitLines(r)...)
 				stats.Two++

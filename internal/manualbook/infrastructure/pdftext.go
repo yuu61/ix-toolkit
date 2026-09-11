@@ -3,6 +3,7 @@ package infrastructure
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"unicode"
 
@@ -96,6 +97,49 @@ func extractColumns(p *domain.Profile, pdf string) (left, right, full []string, 
 		return nil, nil, nil, err
 	}
 	return left, right, full, nil
+}
+
+// renderColumns は二段組みと判定済みのページを、文字を捨てずに左右へ分ける。
+// 判定用の段間はそのまま残し、描画時だけ同じ行の近い文字が属する段へ補う。
+// 単一の境界で切ると、左段の長い行末と右段の張り出した箇条書きを取り違える。
+func renderColumns(pg pdfPage, p *domain.Profile) (string, string) {
+	body := bodyCrop(p)
+	lc, rc := body, body
+	lc.right, rc.left = p.GutterLeft, p.GutterRight
+	var gs []glyph
+	for _, g := range pg.glyphs {
+		if body.keep(g, pg.width, pg.height) {
+			gs = append(gs, g)
+		}
+	}
+	left, right := pg, pg
+	left.glyphs, right.glyphs = nil, nil
+	middle := (pg.width - p.GutterLeft + p.GutterRight) / 2
+	for _, ln := range groupLines(gs) {
+		for _, g := range ln.glyphs {
+			inLeft, inRight := lc.keep(g, pg.width, pg.height), rc.keep(g, pg.width, pg.height)
+			if inLeft == inRight {
+				inLeft = g.centerX() < middle
+				nearest := math.Inf(1)
+				for _, other := range ln.glyphs {
+					ol, or := lc.keep(other, pg.width, pg.height), rc.keep(other, pg.width, pg.height)
+					if ol == or {
+						continue
+					}
+					distance := math.Max(0, math.Max(other.left-g.right, g.left-other.right))
+					if distance < nearest {
+						nearest, inLeft = distance, ol
+					}
+				}
+			}
+			if inLeft {
+				left.glyphs = append(left.glyphs, g)
+			} else {
+				right.glyphs = append(right.glyphs, g)
+			}
+		}
+	}
+	return renderPage(left, crop{}, true), renderPage(right, crop{}, true)
 }
 
 // ExtractBody は本文を読む。段組みを持たない資料の経路。
