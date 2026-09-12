@@ -1,99 +1,73 @@
 ---
 name: ix-show
-description: NEC IX（IX2000/IX3000 と IX-R/IX-V）の show コマンドを実行して状態を確認する（インターフェース, ルーティング, IPsec, ログ等）。対象機器は --device で指定する。ユーザーが NEC IX の状態確認・表示を求めたときに使用する
+description: NEC IX（IX2000/IX3000、IX-R/IX-V）の show コマンドを実行し、状態や設定を確認する。実機の状態確認・障害調査・表示の依頼に使う。マニュアルだけの調査は ix-manual。
 argument-hint: "[機器名] <show コマンド> (e.g., home show ip route)"
 allowed-tools: Bash(ix-ssh:*)
 compatibility: ix-ssh コマンドが PATH にあること（ix-toolkit をクローンして uv tool install -e <クローン>。手順は README）。対象の NEC IX へ SSH が通ること、インベントリ ~/.ix-toolkit/devices.json があること（場所は ix-ssh --list が表示する）。
 license: MIT
 ---
 
-# NEC IX show コマンド実行
+# NEC IX の状態確認
 
-`ix-ssh`（netmiko `nec_ix_ssh`）経由で NEC IX の show コマンドを実行する。**読み取り専用**。
+`ix-ssh` で show コマンドを実行する。設定変更・永続化は行わない。
 
-> `ix-ssh` が PATH に無ければ、ix-toolkit の README の手順（クローン → `uv tool install -e <クローン>`）をユーザーに案内する。勝手に入れたり、別の方法で呼んだりしない。
+## 接続先と実行条件
 
-## 接続先の指定
+ユーザーの依頼と会話で確定した対象を使う。インベントリの機器は毎回
+`--device <機器名>`（短縮 `-d`）で明示する。
+対象が未確定なら `ix-ssh --list` で候補を示して尋ねる。機器名を推測しない。
+一覧は機器に接続せず、インベントリの実際の場所、接続先、踏み台、`model`、`note` を表示する。
+通常のインベントリは `~/.ix-toolkit/devices.json`。資格情報を含むファイル全体を表示する必要はない。
+インベントリに無い対象が明示されていれば `--host <IP/ホスト名> --user <ユーザー>` も使える。
+SSH のエイリアスと `ProxyJump` は `ix-ssh` が解決する。
 
-通常は `enable-config` で入り、他ユーザーが config モードを使用中ならエラーで終了する。
-ユーザーが対象機器への強制取得（`svintr-config` の使用）を明示した場合だけ、実行する
-`ix-ssh` に `--force-config` を付ける。会話中にその指示があれば改めて確認しない。
-使用中エラーだけを理由に強制取得へ切り替えない。強制取得は IX2000/IX3000、IX-R/IX-V とも
-Administrator 権限が必要で、他ユーザーをオペレーション／EXEC モードへ戻す。
+`ix-ssh` は PATH のコマンドとして呼ぶ。見つからなければ README のインストール手順
+（クローン → `uv tool install -e <クローン>`）を案内する。認証不足ならエラーの不足項目を伝え、
+無人実行で `--ask-password` を付けない。
 
-機器はインベントリ `~/.ix-toolkit/devices.json`（`ix-ssh --list` の 1 行目に実際の場所が出る）に定義し、`--device <名前>`（短縮 `-d`）で選ぶ。**既定機器は無い**。指定を省略するとスクリプトはエラーを返し、機器一覧を表示する（誤った機器への接続を防ぐため）。
+通常は `enable-config` を使う。他ユーザーが config モードを使用中なら停止し、
+ユーザーが対象機器への強制取得を明示した場合だけ `--force-config` を付ける。
+既にある指示を再確認しない。強制取得は `svintr-config` を使い、両系列とも Administrator 権限が必要で、
+他ユーザーをオペレーション／EXEC モードへ戻す。使用中エラーだけを理由に切り替えない。
 
-対象が不明・未確定のときは推測せず、まず一覧を出してユーザーに確認する:
+## コマンドを選ぶ
 
-```bash
-ix-ssh --list
-```
+依頼から対象と調べたい状態、指定された show コマンドを読み取る。
+「home show ip route」は `-d home "show ip route"`。自然文を機器名として機械的に切り出さない。
+目的だけが指定されていれば、関連する show を選ぶ。
 
-インベントリに無い機器はその場で指定できる:
+系列はインベントリの `model` → 会話 → ユーザーへの質問の順で決める。
+`IX2…` / `IX3…` は `ix`（IX2000/IX3000）、`IX-R…` / `IX-V…` は `ix-r`（IX-R/IX-V）。
+`model` はヒントであり、無くても会話から決められる。機種確認が依頼に含まれるなら
+`show version` の結果も使える。系列が不明なまま系列固有の綴りを試さない。
 
-```bash
-ix-ssh --host <IP/ホスト名> --user <ユーザー> "show version"
-```
-
-認証はインベントリに書いた `password`（**平文でそのまま直書きしてよい**）が第一。以降 `password_env`（変数名だけ書く方式）→ `key_file`（鍵認証）→ `$IX_PASS` の順に解決される。機器自身の資格情報がグローバルな `$IX_PASS` より優先されるので、変数の消し忘れが別機器に飛ぶことはない。どこからも取得できなければ即エラー（自動でパスワードを聞きに行かない）。
-
-> `host` は IP でも `~/.ssh/config` のエイリアス名でもよい。エイリアスの場合は `Include` を展開したうえで `HostName` / `Port` / `User` / `ProxyJump` を解決し、**踏み台経由も自動で辿る**（paramiko の direct-tcpip チャネルを使うので Windows でも動く。netmiko 任せの ProxyCommand 方式は Windows で必ず失敗する）。解決結果と踏み台は `--list` に表示される。エイリアス解決を切るなら `--no-ssh-config`。
-
-> IP・ユーザー・機種はこの SKILL.md に書かない。すべてインベントリ側に置く。
-
-## 対象と引数の読み取り
-
-ユーザーの依頼（この skill を名指しで呼んだときに続けて書かれた文字列を含む）から機器名と show コマンドを取り出す。先頭が `show` で始まらなければ、そこまでを**機器名**として `--device` に渡し、残りを show コマンドとして扱う。
-
-- 「home show ip route」 → `-d home "show ip route"`
-- 「show ip route」 → 機器名なし。会話中で対象機器が既に確定していればそれを使う。確定していなければ `--list` を実行して候補を提示し、ユーザーに選ばせる。
-
-show コマンドは `"show ..."` 全体を 1 つの引数として渡す（複数指定可）。
-
-## NEC IX の重要な特性
-
-- **enable モード = config モード**。`show running-config` や `ipsec` / `ike` / `logging` / `ntp` / `vrrp` 等の多くの show も **config モード内のみ**。スクリプトが `enable-config`（`--force-config` 指定時は `svintr-config`）で入り、show を実行する。サブモードからグローバルへ戻すときは `configure` を使う。
-- paging は接続時に `terminal length 0` で自動無効化される。
-- EXEC モードでも使える show（version / clock / uptime / ip / ipv6 / interfaces / arp 等）も、本スクリプトは一律 config モードで実行する（config モードの show は EXEC のスーパーセットのため確実）。
-
-## 実行手順
-
-1. 対象機器を確定する（上記「対象と引数の読み取り」）。
-2. 引数を show コマンド文字列に組み立てる（必ず `show ` で始める）。
-3. 以下を実行する:
-
-   ```bash
-   ix-ssh -d <機器名> "show ip route"
-   # 複数まとめて:
-   ix-ssh -d <機器名> "show interfaces" "show ipv6 route"
-   ```
-
-4. 標準エラーに `# target: <機器名> (<user>@<host>:<port>, ...)` が出るので、**意図した機器に接続したことを確認**してから出力を整形し、状態をわかりやすくレポートする。インベントリに `model` が書いてあれば `..., model IX2215` として同じ行に出る。**機種名は系列（下記）と諸元値の読み取りに要るので、`ix-manual` を引くときはこの値を添える**（無印のマニュアルは IX2000/IX3000 の全機種をまとめたもので、諸元表は機種ごとに列が分かれている）。
-
-## 系列で変わるコマンド名
-
-NEC IX は **IX2000/IX3000（無印）と IX-R/IX-V の 2 系列**で、show コマンドの名前が一部違う。系列はインベントリの `model`（`IX-R…` / `IX-V…` なら IX-R/IX-V、`IX2…` / `IX3…` なら無印）か会話から決める。`model` はヒントであってゲートではない。無い・分からなければ `show version` を実行して出力の機種名で決める（この skill は接続するので自分で確かめられる）。
-
-| 無印 | IX-R/IX-V | 用途 |
+| 用途 | IX2000/IX3000 | IX-R/IX-V |
 |---|---|---|
-| `show logging` | `show syslog` | ログバッファ |
-| `show config` | `show startup-config` | 保存済み設定 |
-| `show nm information` | `show nm status` | NetMeister 状態 |
+| ログバッファ | `show logging` | `show syslog` |
+| 保存済み設定 | `show config` | `show startup-config` |
+| NetMeister 状態 | `show nm information` | `show nm status` |
 
-片方の綴りで `% ` エラーが返ったら、もう片方を試す前に `ix-manual` の `diff.tsv` で対応を確かめる。
+基本情報は `show version`、経路は `show ip route` / `show ipv6 route`、
+現在の設定は `show running-config`、IPsec / IKE は `show ipsec sa` / `show ike sa` を使う。
+インターフェース名は機種名から決め打ちせず、`show interfaces` で実在する名前を確かめる。
+綴りや出力の意味が不確かなら、系列と機種を添えて `ix-manual` を引く。
 
-## よく使う show コマンド
+## 実行と報告
 
-- `show version` / `show clock` / `show uptime` — 基本情報
-- `show interfaces` / `show interfaces <IF名>` — インターフェース状態
-- `show ip route` / `show ipv6 route` — ルーティングテーブル
-- `show arp` — ARP テーブル
-- `show running-config` — 現在の設定（config モード内で実行）
-- `show ipsec sa` / `show ike sa` — IPsec / IKE 状態
-- `show logging`（無印）/ `show syslog`（IX-R）— ログバッファ
-- `show environment` — 電圧・温度
-- `show ntp` / `show dns` — 時刻同期 / 名前解決
+show 全体を1つの引数として渡す。複数の show は1回にまとめられる。
+`?` による対話的な補完は使えない。show 以外の操作を `--config` に載せて代行しない。
 
-> インターフェース名（`GigaEthernet0.0` 等）は機種・構成で異なる。決め打ちせず `show interfaces` の出力で確認すること。サブコマンドが不明なときは、まず大分類（例: `show ip route`）を実行して出力から判断する。`?` 補完はスクリプト経由では使えないため、フルコマンドで指定すること。
+```bash
+ix-ssh -d <機器名> "show ip route"
+ix-ssh -d <機器名> "show interfaces" "show ipv6 route"
+```
 
-> コマンドの綴りや出力の読み方が分からないときは `ix-manual` でコマンドリファレンスマニュアルを引く（読み取り専用・機器に接続しない）。系列を添えて引くこと。ただしインターフェース名だけはマニュアルでは決まらないので、必ず実機の `show interfaces` で確認すること。
+`ix-ssh` は show も config モード内で実行し、ページングを自動で無効にする。
+モード移行や端末設定を手動で追加する必要はない。
+
+終了コードと診断本文を確認し、標準エラーの `# target: ...` を対象と照合する。
+この行は接続前の解決結果であり、接続成功の証拠ではない。`%` で始まる行には正常な通知もあるため、
+先頭記号だけで失敗と判定しない。失敗したコマンドは成功した出力と区別して伝える。
+コマンドが拒否されたら、別系列の綴りを試す前に `ix-manual` の対応表と本文で確かめる。
+
+対象機器、確認した状態、根拠となる出力を簡潔に報告する。取得結果と原因の推測を区別する。

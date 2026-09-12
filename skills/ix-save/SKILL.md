@@ -1,65 +1,57 @@
 ---
 name: ix-save
-description: NEC IX の running-config を startup-config に保存する（write memory）。対象機器は --device で指定する。設定変更後の永続化に使用する
+description: NEC IX（IX2000/IX3000、IX-R/IX-V）で write memory を実行し、running-config を startup-config に永続化する。機器内への設定保存の依頼に使う。ファイルへの退避は ix-backup。
 argument-hint: "[機器名] (e.g., home)"
 allowed-tools: Bash(ix-ssh:*)
 compatibility: ix-ssh コマンドが PATH にあること（ix-toolkit をクローンして uv tool install -e <クローン>。手順は README）。対象の NEC IX へ SSH が通ること、インベントリ ~/.ix-toolkit/devices.json があること（場所は ix-ssh --list が表示する）。
 license: MIT
 ---
 
-# NEC IX 設定保存（write memory）
+# NEC IX 設定保存
 
-`ix-ssh --save` 経由で、現在の running-config を startup-config に保存する。
+`ix-ssh --save` で現在の running-config 全体を startup-config に保存する。
+直前の変更以外に未保存の変更があれば、それらも一緒に保存される。
 
-**save（write memory）を実行しないと、再起動時に設定が失われる。`ix-configure` 実行後に必ず提案すること。**
+## 接続先と実行条件
 
-> `ix-ssh` が PATH に無ければ、ix-toolkit の README の手順（クローン → `uv tool install -e <クローン>`）をユーザーに案内する。勝手に入れたり、別の方法で呼んだりしない。
+ユーザーの依頼と会話で確定した対象を使う。インベントリの機器は毎回
+`--device <機器名>`（短縮 `-d`）で明示する。
+対象が未確定なら `ix-ssh --list` で候補を示して尋ねる。機器名を推測しない。
+一覧は機器に接続せず、インベントリの実際の場所、接続先、踏み台、`model`、`note` を表示する。
+通常のインベントリは `~/.ix-toolkit/devices.json`。資格情報を含むファイル全体を表示する必要はない。
+インベントリに無い対象が明示されていれば `--host <IP/ホスト名> --user <ユーザー>` も使える。
+SSH のエイリアスと `ProxyJump` は `ix-ssh` が解決する。
 
-## 接続先の指定
+`ix-ssh` は PATH のコマンドとして呼ぶ。見つからなければ README のインストール手順
+（クローン → `uv tool install -e <クローン>`）を案内する。認証不足ならエラーの不足項目を伝え、
+無人実行で `--ask-password` を付けない。
 
-通常は `enable-config` で入り、他ユーザーが config モードを使用中ならエラーで終了する。
-ユーザーが対象機器への強制取得（`svintr-config` の使用）を明示した場合だけ、実行する
-`ix-ssh` に `--force-config` を付ける。会話中にその指示があれば改めて確認しない。
-使用中エラーだけを理由に強制取得へ切り替えない。強制取得は IX2000/IX3000、IX-R/IX-V とも
-Administrator 権限が必要で、他ユーザーをオペレーション／EXEC モードへ戻す。
+通常は `enable-config` を使う。他ユーザーが config モードを使用中なら停止し、
+ユーザーが対象機器への強制取得を明示した場合だけ `--force-config` を付ける。
+既にある指示を再確認しない。強制取得は `svintr-config` を使い、両系列とも Administrator 権限が必要で、
+他ユーザーをオペレーション／EXEC モードへ戻す。使用中エラーだけを理由に切り替えない。
 
-機器はインベントリ `~/.ix-toolkit/devices.json`（`ix-ssh --list` の 1 行目に実際の場所が出る）に定義し、`--device <名前>`（短縮 `-d`）で選ぶ。**既定機器は無い**。省略するとエラーと機器一覧が返る。
+## 保存の範囲を確かめる
 
-```bash
-ix-ssh --list
-```
+依頼で明示された対象を使う。直前の設定変更を「保存して」と依頼された場合は、
+その変更と同じ対象を引き継ぐ。別の機器が明示されたときに直前の機器で上書きしない。
+「保存」がローカルファイルへの退避を意味するなら `ix-backup` を使う。
 
-インベントリに無い機器は `--host <IP> --user <ユーザー>` でその場指定できる。認証はインベントリに書いた `password`（**平文でそのまま直書きしてよい**）が第一。以降 `password_env`（変数名だけ書く方式）→ `key_file`（鍵認証）→ `$IX_PASS` の順に解決される。機器自身の資格情報がグローバルな `$IX_PASS` より優先されるので、変数の消し忘れが別機器に飛ぶことはない。どこからも取得できなければ即エラー（自動でパスワードを聞きに行かない）。
+対象への `write memory`、または設定変更と永続化が既に依頼・承認されていれば再確認せず進む。
+設定変更だけの依頼から自動的に永続化しない。保存が未承認なら、対象と running-config 全体を
+保存することを示して確認する。内容に疑問があれば、先に `ix-show` で必要な設定を確認する。
 
-> `host` は IP でも `~/.ssh/config` のエイリアス名でもよい。エイリアスの場合は `Include` を展開したうえで `HostName` / `Port` / `User` / `ProxyJump` を解決し、**踏み台経由も自動で辿る**（paramiko の direct-tcpip チャネルを使うので Windows でも動く。netmiko 任せの ProxyCommand 方式は Windows で必ず失敗する）。解決結果と踏み台は `--list` に表示される。エイリアス解決を切るなら `--no-ssh-config`。
-
-> IP・ユーザー・機種はこの SKILL.md に書かない。すべてインベントリ側に置く。
-
-## 対象と引数の読み取り
-
-依頼に現れる機器名を対象にする。直前の `ix-configure` と**同じ機器名**を渡すこと。機器名が無く、会話中でも対象が確定していない場合は `--list` で候補を提示してユーザーに選ばせる（推測しない）。
-
-## 実行手順
-
-### 1. ユーザーへの確認
-
-```
-対象機器: <機器名>（<user>@<host>）
-running-config を startup-config に保存します（write memory）。よろしいですか？
-```
-
-> 注意: `write memory` は**現在の running-config をそのまま startup へ永続化する**。直前の `ix-configure` 以外にも未保存の変更があれば、それらも一緒に保存される。意図しない変更が running に含まれていないか、必要なら先に `ix-backup` や `show running-config` で確認すること。
-
-### 2. 保存実行
+## 実行と報告
 
 ```bash
 ix-ssh -d <機器名> --save
 ```
 
-スクリプトは config モードに入り `write memory` を実行する（netmiko `save_config`）。
+終了コードと保存結果の本文を確認し、標準エラーの `# target: ...` を対象と照合する。
+`# target` は接続前の解決結果で、保存成功を示すものではない。
+正常な保存メッセージも `%` で始まるため、その記号だけでエラー扱いしない。
+接続切断やタイムアウトで結果が不明なら、保存成功と断定したり無条件に再実行したりせず、
+`ix-show` で保存済み設定（無印は `show config`、IX-R/IX-V は `show startup-config`）を確認する。
+確認できない場合は結果不明と報告する。
 
-### 3. 結果確認
-
-標準エラーの `# target: ...` 行で接続先が意図した機器かを確認し、出力から保存の成功/失敗をレポートする。エラー（`% ...`）が出ていないことを確認する。
-
-> バックアップを残したい場合は、保存前に `ix-backup` で running-config をファイルへ退避しておくとよい。
+対象と保存の成否を伝える。再起動は保存とは別の操作なので、この skill から実行しない。
