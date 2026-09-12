@@ -48,5 +48,8 @@ func Scan(inputDir, outputDir string, dryRun bool) error {
 	fmt.Printf("  スキップ: %d件\n", r.Skipped)
 	fmt.Printf("  合計出力ページ数: %d\n", r.Pages)
 	fmt.Printf("  出力先: %s\n", outputDir)
+	if r.Errors > 0 {
+		return ReportedError(1)
+	}
 	return nil
 }

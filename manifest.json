@@ -4,7 +4,7 @@
     "url は配布ページを見て人が転記する (版ごとにリンクが変わるため、推測して書かないこと)。",
     "pdf は url が空でも、手元にある PDF を pdf/<name>.pdf に置けば取得済みとして変換に進む。",
     "kind は \"pdf\" か \"web\" を明示する (取得と検証の作法が変わるので推測しない)。",
-    "web: version が index の <title> に含まれるかで検証する。版が上がっていたら取得せずに",
+    "web: version が index の <title> の版と完全一致するかで検証する。版が上がっていたら取得せずに",
     "     止まるので、配布ページを確かめて version と url を更新する。",
     "series は機種の系列 (ix = IX2000/IX3000, ix-r = IX-R/IX-V)、book は冊子 (crm = コマンド",
     "リファレンス, fd = 機能説明書)。変換結果は <manuals>/<series>/<book>/ に置かれ、README にも載る。",

@@ -64,6 +64,10 @@ func FetchDoc(w io.Writer, client *http.Client, d domain.Doc, cacheDir string, f
 	case "pdf":
 		return fetchOne(w, client, d, CachePath(cacheDir, d), force)
 	case "web":
+		// キャッシュを冊単位で置き換えるので、資料名は単一のディレクトリ名に限る。
+		if !filepath.IsLocal(d.Name) || d.Name == "." || strings.ContainsAny(d.Name, `/\`) {
+			return fmt.Errorf("name は単一のディレクトリ名にしてください: %q", d.Name)
+		}
 		return fetchWeb(w, client, d, CachePath(cacheDir, d), force, delay, ua)
 	case "":
 		return fmt.Errorf(`kind が無い。"pdf" か "web" を書く (取得と検証の作法が変わるので推測しない)`)
@@ -141,15 +145,33 @@ type etagEntry struct {
 var docnamesRe = regexp.MustCompile(`"docnames"\s*:\s*(\[[^\]]*\])`)
 
 // WebFetched は取得キャッシュがその版で取り切ってあるか。.manualbook.json は
-// fetchWeb が全ページを置いた最後に書くので、これが版つきで残っていれば完備と
-// みなせる (途中で止まったキャッシュには無い)。
+// fetchWeb が全ファイルを置いた最後に書く。版に加え、取得一覧にあるファイルの
+// 実体も確認する (途中で止まったキャッシュや、ファイルの欠損は取得し直す)。
 //
 // fetch 自身はこれを見ない。fetch は ETag で 1 ページずつ確かめる軽い更新の口で、
 // 全ページを 1 秒おきに問い合わせる (数分掛かる)。build は初回に 1 回取れば
 // よいので、完備なら問い合わせず飛ばす。
 func WebFetched(dst string, d domain.Doc) bool {
 	meta, err := ReadWebMeta(dst)
-	return err == nil && meta.Version == d.Version
+	if err != nil || meta.Version != d.Version {
+		return false
+	}
+	b, err := os.ReadFile(filepath.Join(dst, etagFile))
+	var tags map[string]etagEntry
+	if err != nil || json.Unmarshal(b, &tags) != nil || tags == nil {
+		return false
+	}
+	tags["index.html"] = etagEntry{}
+	for rel := range tags {
+		if !filepath.IsLocal(filepath.FromSlash(rel)) {
+			return false
+		}
+		st, err := os.Stat(filepath.Join(dst, filepath.FromSlash(rel)))
+		if err != nil || !st.Mode().IsRegular() {
+			return false
+		}
+	}
+	return true
 }
 
 func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force bool, delay time.Duration, userAgent string) error {
@@ -165,6 +187,11 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 	}
 	if !strings.HasSuffix(base.Path, "/") {
 		base.Path += "/"
+	}
+	// 再取得が途中で失敗しても、次の build が取得済みと判断しないようにする。
+	// 本文と ETag は成功するまで以前のものを保つ。
+	if err := os.Remove(filepath.Join(dst, WebMetaName)); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	get := func(rel string, tag etagEntry) (*http.Response, error) {
 		u := base.ResolveReference(&url.URL{Path: rel})
@@ -202,7 +229,7 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 		return err
 	}
 	title := htmlTitle(index)
-	if !strings.Contains(title, d.Version) {
+	if !domain.MatchesWebVersion(title, d.Version) {
 		return fmt.Errorf("版が合わない\n    マニフェスト: %s\n    サイトの <title>: %s\n"+
 			"    版が上がっている。配布ページを確かめて manifest の version と url を更新する", d.Version, title)
 	}
@@ -223,47 +250,81 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 	}
 	fmt.Fprintf(w, "    ページ: %d\n", len(docnames))
 
-	if err := os.MkdirAll(dst, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	work, err := os.MkdirTemp(filepath.Dir(dst), ".manualbook-*")
+	if err != nil {
+		return err
+	}
+	stage, previous := filepath.Join(work, "new"), filepath.Join(work, "previous")
+	defer func() {
+		// 切り替えも復元も失敗した場合は、以前の本文を消さずに残す。
+		if _, err := os.Stat(previous); os.IsNotExist(err) {
+			_ = os.RemoveAll(work)
+		}
+	}()
+	if err := os.Mkdir(stage, 0o755); err != nil {
 		return err
 	}
 	tags := map[string]etagEntry{}
 	if b, err := os.ReadFile(filepath.Join(dst, etagFile)); err == nil {
-		_ = json.Unmarshal(b, &tags)
+		if err := json.Unmarshal(b, &tags); err != nil || tags == nil {
+			tags = map[string]etagEntry{}
+		}
 	}
-	if err := os.WriteFile(filepath.Join(dst, "index.html"), index, 0o644); err != nil {
+	newTags := map[string]etagEntry{"index.html": {}}
+	if err := os.WriteFile(filepath.Join(stage, "index.html"), index, 0o644); err != nil {
 		return err
 	}
 
 	// 3. ページを順に取り、参照している画像を集める。
 	fetched, unchanged := 0, 0
 	images := map[string]bool{}
+	for _, src := range imageSources(index) {
+		images[path.Clean(src)] = true
+	}
 	fetchFile := func(rel string) (changed bool, body []byte, err error) {
+		if !filepath.IsLocal(filepath.FromSlash(rel)) {
+			return false, nil, fmt.Errorf("キャッシュ内の相対パスではありません: %q", rel)
+		}
+		// 304 を受け入れるのは、対応する本文を読めたときだけ。
+		cached, cacheErr := os.ReadFile(filepath.Join(dst, filepath.FromSlash(rel)))
+		tag := tags[rel]
+		if cacheErr != nil {
+			tag = etagEntry{}
+		}
 		time.Sleep(delay)
-		resp, err := get(rel, tags[rel])
+		resp, err := get(rel, tag)
 		if err != nil {
 			return false, nil, err
 		}
 		defer resp.Body.Close()
 		switch resp.StatusCode {
 		case http.StatusNotModified:
-			return false, nil, nil
+			if force || cacheErr != nil || (tag.ETag == "" && tag.LastModified == "") {
+				return false, nil, fmt.Errorf("本文を再利用できないリクエストに HTTP 304 が返りました")
+			}
+			body = cached
 		case http.StatusOK:
+			body, err = io.ReadAll(resp.Body)
+			if err != nil {
+				return false, nil, err
+			}
+			changed = true
+			tag = etagEntry{ETag: resp.Header.Get("ETag"), LastModified: resp.Header.Get("Last-Modified")}
 		default:
 			return false, nil, fmt.Errorf("HTTP %s", resp.Status)
 		}
-		body, err = io.ReadAll(resp.Body)
-		if err != nil {
-			return false, nil, err
-		}
-		local := filepath.Join(dst, filepath.FromSlash(rel))
+		local := filepath.Join(stage, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(local), 0o755); err != nil {
 			return false, nil, err
 		}
 		if err := os.WriteFile(local, body, 0o644); err != nil {
 			return false, nil, err
 		}
-		tags[rel] = etagEntry{ETag: resp.Header.Get("ETag"), LastModified: resp.Header.Get("Last-Modified")}
-		return true, body, nil
+		newTags[rel] = tag
+		return changed, body, nil
 	}
 	for i, name := range docnames {
 		if name == "index" {
@@ -278,7 +339,6 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 			fetched++
 		} else {
 			unchanged++
-			body, _ = os.ReadFile(filepath.Join(dst, filepath.FromSlash(rel)))
 		}
 		for _, src := range imageSources(body) {
 			images[path.Join(path.Dir(rel), src)] = true
@@ -294,8 +354,7 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 	for rel := range images {
 		changed, _, err := fetchFile(rel)
 		if err != nil {
-			fmt.Fprintf(w, "    ! %s: %s\n", rel, err)
-			continue
+			return fmt.Errorf("%s: %w", rel, err)
 		}
 		if changed {
 			imgFetched++
@@ -310,15 +369,47 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 		Name: d.Name, Title: d.Title, URL: base.String(), Version: d.Version,
 		Series: d.Series, Profile: d.Profile, Fetched: time.Now().Format("2006-01-02"),
 	}
-	if b, err := json.MarshalIndent(meta, "", "  "); err == nil {
-		if err := os.WriteFile(filepath.Join(dst, WebMetaName), append(b, '\n'), 0o644); err != nil {
-			return err
-		}
+	b, err := json.MarshalIndent(newTags, "", "  ")
+	if err != nil {
+		return err
 	}
-	if b, err := json.MarshalIndent(tags, "", "  "); err == nil {
-		_ = os.WriteFile(filepath.Join(dst, etagFile), append(b, '\n'), 0o644)
+	if err := os.WriteFile(filepath.Join(stage, etagFile), append(b, '\n'), 0o644); err != nil {
+		return err
+	}
+	b, err = json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(stage, WebMetaName), append(b, '\n'), 0o644); err != nil {
+		return err
+	}
+	if err := publishWebCache(stage, dst, previous); err != nil {
+		return err
 	}
 	fmt.Fprintf(w, "  ✓ %s\n", dst)
+	return nil
+}
+
+// publishWebCache は揃った資料だけを公開する。既存ディレクトリへの Rename は
+// Windows ではできないため、以前の本文を退避してから切り替える。
+func publishWebCache(stage, dst, previous string) error {
+	hadPrevious := false
+	if err := os.Rename(dst, previous); err == nil {
+		hadPrevious = true
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(stage, dst); err != nil {
+		if hadPrevious {
+			if restoreErr := os.Rename(previous, dst); restoreErr != nil {
+				return errors.Join(err, fmt.Errorf("以前のキャッシュは %s に残っています: %w", previous, restoreErr))
+			}
+		}
+		return err
+	}
+	if hadPrevious {
+		return os.RemoveAll(previous)
+	}
 	return nil
 }
 
