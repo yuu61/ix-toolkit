@@ -78,8 +78,7 @@ func convertWeb(o MDOptions) error {
 		return nil
 	}
 
-	figs := infrastructure.NewFigureStore(dir, outDir)
-	heads, chapters := infrastructure.ParseWebHeadings(pages, figs)
+	heads, chapters := infrastructure.ParseWebHeadings(pages)
 	nTable, nFigure, nLayout := 0, 0, 0
 	for i := range heads {
 		for _, b := range heads[i].Blocks {
@@ -97,6 +96,9 @@ func convertWeb(o MDOptions) error {
 		len(heads), len(chapters), nTable, nFigure, nLayout)
 	if len(heads) == 0 {
 		return fmt.Errorf("見出しを 1 件も抽出できませんでした")
+	}
+	if err := infrastructure.WriteWebFigures(dir, outDir, heads); err != nil {
+		return err
 	}
 	if err := infrastructure.WriteSections(outDir, title, src, heads, chapters); err != nil {
 		return err

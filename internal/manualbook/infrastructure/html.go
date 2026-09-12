@@ -358,50 +358,41 @@ func dtLabel(dt *html.Node) string {
 
 // --- 解説書 (heading) ---
 
-// FigureStore は取得キャッシュの画像を figures/ へ写す。同じ図が複数の節から
-// 参照されても 1 度しか写さない。
-type FigureStore struct {
-	srcDir string // 取得キャッシュ
-	dstDir string // <outDir>/figures
-	copied map[string]string
-	labels map[string][]string
-}
-
-func NewFigureStore(cacheDir, outDir string) *FigureStore {
-	return &FigureStore{
-		srcDir: cacheDir,
-		dstDir: filepath.Join(outDir, "figures"),
-		copied: map[string]string{},
-		labels: map[string][]string{},
+// WriteWebFigures は解析済み本文の画像参照を保存し、出力名と図中ラベルを補う。
+// 保存に失敗した場合は呼び出し元に返し、成功した画像だけを重複排除する。
+func WriteWebFigures(cacheDir, outDir string, heads []domain.Heading) error {
+	type savedFigure struct {
+		name   string
+		labels []string
 	}
-}
-
-// add は <img src> の参照 (../_images/1_loop-guard.svg) を figures/ に写し、
-// 置いたファイル名と図中のラベルを返す。写せなければ名前を空で返す。
-func (fs *FigureStore) add(pagePath, src string) (string, []string) {
-	// src はページからの相対パス。冊子の起点からの相対に直す。
-	rel := path.Join(path.Dir(pagePath), src)
-	if name, ok := fs.copied[rel]; ok {
-		return name, fs.labels[rel]
+	saved := map[string]savedFigure{}
+	dir := filepath.Join(outDir, "figures")
+	for i := range heads {
+		for j := range heads[i].Blocks {
+			b := &heads[i].Blocks[j]
+			if b.Kind != domain.BlockFigure {
+				continue
+			}
+			rel := b.FigureSource
+			fig, ok := saved[rel]
+			if !ok {
+				from := filepath.Join(cacheDir, filepath.FromSlash(rel))
+				fig.name = path.Base(rel)
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return fmt.Errorf("図の出力先を作れません: %w", err)
+				}
+				if err := copyFile(from, filepath.Join(dir, fig.name)); err != nil {
+					return fmt.Errorf("図を写せません: %s: %w", rel, err)
+				}
+				if strings.EqualFold(path.Ext(fig.name), ".svg") {
+					fig.labels = svgLabels(from)
+				}
+				saved[rel] = fig
+			}
+			b.Figure, b.Lines = fig.name, fig.labels
+		}
 	}
-	from := filepath.Join(fs.srcDir, filepath.FromSlash(rel))
-	name := path.Base(rel)
-	if err := os.MkdirAll(fs.dstDir, 0o755); err != nil {
-		return "", nil
-	}
-	if err := copyFile(from, filepath.Join(fs.dstDir, name)); err != nil {
-		// 取得キャッシュに無い図。リンクは残す (fetch し直せば揃う)。
-		fmt.Fprintf(os.Stderr, "  ! 図を写せません: %s (%s)\n", rel, err)
-		fs.copied[rel] = name
-		return name, nil
-	}
-	var labels []string
-	if strings.EqualFold(path.Ext(name), ".svg") {
-		labels = svgLabels(from)
-	}
-	fs.copied[rel] = name
-	fs.labels[rel] = labels
-	return name, labels
+	return nil
 }
 
 func copyFile(from, to string) error {
@@ -422,7 +413,7 @@ func copyFile(from, to string) error {
 }
 
 // ParseWebHeadings は機能説明書のページ群から見出しと本文を切り出す。
-func ParseWebHeadings(pages []WebPage, figs *FigureStore) ([]domain.Heading, map[int]string) {
+func ParseWebHeadings(pages []WebPage) ([]domain.Heading, map[int]string) {
 	chapters := map[int]string{}
 	var heads []domain.Heading
 	for _, pg := range pages {
@@ -457,7 +448,7 @@ func ParseWebHeadings(pages []WebPage, figs *FigureStore) ([]domain.Heading, map
 					content = append(content, c)
 				}
 			}
-			hd.Blocks = contentBlocks(content, pg.path, r, figs)
+			hd.Blocks = contentBlocks(content, pg.path, r)
 			heads = append(heads, hd)
 			for _, s := range subs {
 				visit(s)
@@ -469,7 +460,7 @@ func ParseWebHeadings(pages []WebPage, figs *FigureStore) ([]domain.Heading, map
 }
 
 // contentBlocks は節の直下の要素を本文の塊に組み立てる。
-func contentBlocks(nodes []*html.Node, pagePath string, r domain.Ref, figs *FigureStore) []domain.Block {
+func contentBlocks(nodes []*html.Node, pagePath string, r domain.Ref) []domain.Block {
 	var blocks []domain.Block
 	addProse := func(lines []string) {
 		if len(lines) == 0 {
@@ -490,8 +481,8 @@ func contentBlocks(nodes []*html.Node, pagePath string, r domain.Ref, figs *Figu
 		if img == nil {
 			return
 		}
-		name, labels := figs.add(pagePath, attr(img, "src"))
-		blocks = append(blocks, domain.Block{Kind: domain.BlockFigure, Ref: r, Figure: name, Lines: labels})
+		rel := path.Join(path.Dir(pagePath), attr(img, "src"))
+		blocks = append(blocks, domain.Block{Kind: domain.BlockFigure, Ref: r, FigureSource: rel})
 		// figcaption があれば地の文として続ける
 		if cap := findNode(n, func(c *html.Node) bool { return c.Type == html.ElementNode && c.Data == "figcaption" }); cap != nil {
 			addProse([]string{domain.Collapse(nodeText(cap)), ""})

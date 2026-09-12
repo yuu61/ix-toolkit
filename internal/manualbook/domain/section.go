@@ -27,10 +27,11 @@ const (
 
 // Block は本文の一区切り。
 type Block struct {
-	Kind      BlockKind
-	Ref       Ref        // この塊が現れた元資料上の位置
-	Lines     []string   // prose / layout の本文行。figure では図中のラベル列
-	Rows      [][]string // table の行。先頭行が見出し
-	HeaderRef Ref        // table: 前ページの列見出しを補った場合の出典。それ以外は空
-	Figure    string     // figure: figures/ に置いたファイル名
+	Kind         BlockKind
+	Ref          Ref        // この塊が現れた元資料上の位置
+	Lines        []string   // prose / layout の本文行。figure では図中のラベル列
+	Rows         [][]string // table の行。先頭行が見出し
+	HeaderRef    Ref        // table: 前ページの列見出しを補った場合の出典。それ以外は空
+	FigureSource string     // Web: 冊子の起点からの元画像の相対パス
+	Figure       string     // figure: figures/ に置いたファイル名
 }
