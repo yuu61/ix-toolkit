@@ -14,11 +14,11 @@ from ..domain import (
     UsageError,
     default_backup_path,
     find_password,
-    is_show_command,
     missing_password_message,
     resolve_target,
     select_entry,
     ssh_config_path,
+    validate_show_commands,
 )
 from .listing import describe_devices, list_devices
 from .presentation import ConsoleOutput, format_target
@@ -102,10 +102,8 @@ def execute(
 
     output = ConsoleOutput(out, err, req.raw)
 
+    validate_show_commands(req.shows)
     for cmd in req.shows:
-        if not is_show_command(cmd):
-            output.skipped(cmd)
-            continue
         output.header(cmd)
         output.result(session.show(cmd))
 
@@ -142,6 +140,8 @@ def run(
     if req.list:
         print(list_devices(req.inventory, env, req.target), file=out)
         return
+
+    validate_show_commands(req.shows)
 
     # Read the config file before touching the network, so a typo in its path
     # fails here and not after a connection is up.

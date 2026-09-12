@@ -63,7 +63,7 @@ def hop_specs(cfg: SshConfigLookup | None, host: str, _seen: set | None = None) 
         return []
     _seen.add(host)
     proxyjump = cfg.lookup(host).get("proxyjump")
-    if not proxyjump:
+    if not proxyjump or proxyjump.strip().lower() == "none":
         return []
     hops: list[str] = []
     for spec in proxyjump.split(","):

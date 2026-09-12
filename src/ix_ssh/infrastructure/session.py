@@ -5,7 +5,14 @@ import contextlib
 import re
 from collections.abc import Sequence
 
-from ..domain import Hop, Target
+from ..domain import (
+    COMMAND_ERROR_PATTERN,
+    Hop,
+    Target,
+    UsageError,
+    check_command_output,
+    validate_show_commands,
+)
 from .deps import missing_dependency
 
 READ_TIMEOUT = 120
@@ -50,28 +57,38 @@ class NetmikoSession:
     accepts running-config and most feature shows there; `apply` and `save` map
     onto the nec_ix driver's config/save handling."""
 
-    def __init__(self, conn, jump_clients: list):
+    def __init__(self, conn, jump_clients: list, config_error: type[Exception]):
         self._conn = conn
         self._jump_clients = jump_clients
+        self._config_error = config_error
 
     def show(self, cmd: str) -> str:
         """Run a single `show ...` inside config mode. expect_string is pinned to
         the full `<hostname>(config)#` prompt so output that embeds the hostname
         (e.g. the `hostname` line in running-config) cannot end the read early."""
+        validate_show_commands((cmd,))
         conn = self._conn
         conn.config_mode()
         expect = re.escape(conn.find_prompt())  # e.g. '<hostname>(config)#'
         try:
-            return conn.send_command(cmd, expect_string=expect, read_timeout=READ_TIMEOUT)
+            output = conn.send_command(cmd, expect_string=expect, read_timeout=READ_TIMEOUT)
         finally:
             conn.exit_config_mode()
+        return check_command_output(cmd, output)
 
     def apply(self, lines: Sequence[str]) -> str:
         # send_config_set enters config mode, applies the lines, then exits.
-        return self._conn.send_config_set(list(lines), read_timeout=READ_TIMEOUT)
+        try:
+            return self._conn.send_config_set(
+                list(lines), read_timeout=READ_TIMEOUT, error_pattern=COMMAND_ERROR_PATTERN
+            )
+        except self._config_error as exc:
+            raise UsageError(
+                f"ERROR: configuration stopped; earlier lines may already be applied: {exc}"
+            ) from exc
 
     def save(self) -> str:
-        return self._conn.save_config()  # nec_ix: config_mode() + `write memory`
+        return check_command_output("write memory", self._conn.save_config())
 
     def close(self) -> None:
         try:
@@ -88,16 +105,12 @@ def _close_all(clients: list) -> None:
             clients.pop().close()
 
 
-def _connect_handler():
+def open_session(target: Target) -> NetmikoSession:
     try:
         from netmiko import ConnectHandler
+        from netmiko.exceptions import ConfigInvalidException
     except ImportError as e:
         raise missing_dependency("netmiko") from e
-    return ConnectHandler
-
-
-def open_session(target: Target) -> NetmikoSession:
-    ConnectHandler = _connect_handler()
 
     params = {
         "device_type": "nec_ix_ssh",  # このスクリプトは NEC IX 専用
@@ -125,4 +138,4 @@ def open_session(target: Target) -> NetmikoSession:
         # down here, otherwise paramiko threads keep running and bury the real error.
         _close_all(jump_clients)
         raise
-    return NetmikoSession(conn, jump_clients)
+    return NetmikoSession(conn, jump_clients, ConfigInvalidException)

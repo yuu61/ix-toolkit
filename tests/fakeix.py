@@ -11,10 +11,17 @@ be its own ProxyJump host: password auth for the device user, public-key auth
 for the jump user, as ix-ssh does it.
 """
 
+import contextlib
+import logging
 import socket
 import threading
 
 import paramiko
+
+# Server-side teardown diagnostics must not be captured as the CLI's stderr.
+_server_log = logging.getLogger(__name__)
+_server_log.addHandler(logging.NullHandler())
+_server_log.propagate = False
 
 DEVICE_USER = "admin"
 JUMP_USER = "jump"
@@ -78,6 +85,8 @@ class FakeIX:
         self.applied: list[str] = []
         self.saved = 0
         self.sessions = 0
+        # Tests can supply device-side failures without changing the client.
+        self.responses: dict[str, list[str]] = {}
         self._sock = socket.socket()
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind(("127.0.0.1", 0))
@@ -107,10 +116,17 @@ class FakeIX:
 
     def _serve(self, client: socket.socket) -> None:
         transport = paramiko.Transport(client)
+        transport.set_log_channel(__name__)
         self._transports.append(transport)
         transport.add_server_key(self.host_key)
         server = _Server(self.password, self.jump_key)
-        transport.start_server(server=server)
+        try:
+            transport.start_server(server=server)
+        except EOFError:
+            # A client can close a forwarded connection during teardown before
+            # its SSH handshake finishes.
+            transport.close()
+            return
         while transport.is_active():
             chan = transport.accept(30)
             if chan is None:
@@ -120,7 +136,11 @@ class FakeIX:
             threading.Thread(target=target, args=(chan, dest), daemon=True).start()
 
     def _forward(self, chan: paramiko.Channel, dest: tuple[str, int]) -> None:
-        upstream = socket.create_connection(dest)
+        try:
+            upstream = socket.create_connection(dest)
+        except OSError:
+            chan.close()
+            return
 
         def pump(src_recv, dst_send, close):
             try:
@@ -129,10 +149,11 @@ class FakeIX:
                     if not data:
                         break
                     dst_send(data)
-            except OSError:
+            except (OSError, EOFError):
                 pass
             finally:
-                close()
+                with contextlib.suppress(OSError, EOFError):
+                    close()
 
         threading.Thread(
             target=pump, args=(chan.recv, upstream.sendall, upstream.close), daemon=True
@@ -176,6 +197,8 @@ class FakeIX:
                     reply([])
                 elif not config:
                     reply([f"% Command not found: {line}"])
+                elif line in self.responses:
+                    reply(self.responses[line])
                 elif line == "show version":
                     reply(SHOW_VERSION)
                 elif line == "show running-config":

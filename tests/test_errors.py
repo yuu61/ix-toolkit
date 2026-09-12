@@ -35,6 +35,18 @@ class ErrorBoundaryTest(unittest.TestCase):
             self.assert_cli_error(["--config-file", str(path)], f"cannot read config file {path}")
             prepare.assert_not_called()
 
+    def test_invalid_show_fails_before_target_or_connection(self):
+        for command in ("showcase", "ip route x", "show version\nwrite memory", "show\tip route"):
+            with (
+                self.subTest(command=command),
+                patch("ix_ssh.application.run.prepare_target") as prepare,
+            ):
+                self.assert_cli_error(
+                    ["show version", command, "--config", "hostname x", "--save"],
+                    "single show command",
+                )
+                prepare.assert_not_called()
+
     def test_invalid_utf8_config_is_a_cli_error(self):
         path = self.root / "invalid.conf"
         path.write_bytes(b"\xff")

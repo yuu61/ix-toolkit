@@ -7,7 +7,14 @@ opens a file, a socket or imports netmiko / paramiko; infrastructure does that a
 hands the results in as plain values.
 """
 
-from .commands import default_backup_path, is_show_command, parse_config_lines
+from .commands import (
+    COMMAND_ERROR_PATTERN,
+    check_command_output,
+    default_backup_path,
+    is_show_command,
+    parse_config_lines,
+    validate_show_commands,
+)
 from .credentials import find_password, missing_password_message, resolve_password
 from .errors import UsageError
 from .inventory import (
@@ -28,6 +35,7 @@ from .proxyjump import (
 from .target import Target, TargetRequest, resolve_target, select_entry, ssh_config_path
 
 __all__ = [
+    "COMMAND_ERROR_PATTERN",
     "DEFAULT_PORT",
     "Hop",
     "Route",
@@ -35,6 +43,7 @@ __all__ = [
     "Target",
     "TargetRequest",
     "UsageError",
+    "check_command_output",
     "default_backup_path",
     "entry_host",
     "entry_user",
@@ -51,4 +60,5 @@ __all__ = [
     "select_entry",
     "split_hop",
     "ssh_config_path",
+    "validate_show_commands",
 ]

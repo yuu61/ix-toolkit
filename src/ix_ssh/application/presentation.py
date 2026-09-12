@@ -80,9 +80,6 @@ class ConsoleOutput:
         if not self.raw:
             print(file=self.out)
 
-    def skipped(self, command: str) -> None:
-        print(f"[SKIP] refusing non-show command in show mode: {command!r}", file=self.err)
-
     def backup_saved(self, label: str, path: Path, line_count: int) -> None:
         print(
             f"[OK] running-config of {label} saved to {path} ({line_count} lines)",

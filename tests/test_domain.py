@@ -9,6 +9,7 @@ from ix_ssh.domain import (
     Route,
     TargetRequest,
     UsageError,
+    check_command_output,
     default_backup_path,
     find_password,
     hop_specs,
@@ -76,6 +77,13 @@ class ProxyJumpTest(unittest.TestCase):
         cfg = FakeSshConfig({"d": {"proxyjump": "a, b"}})
         self.assertEqual(hop_specs(cfg, "d"), ["a", "b"])
         self.assertEqual(hop_specs(None, "d"), [])
+
+    def test_proxyjump_none_disables_jumps_including_nested_routes(self):
+        for value in ("none", " NONE "):
+            with self.subTest(value=value):
+                cfg = FakeSshConfig({"d": {"proxyjump": "a"}, "a": {"proxyjump": value}})
+                self.assertEqual(hop_specs(cfg, "a"), [])
+                self.assertEqual(hop_specs(cfg, "d"), ["a"])
 
     def test_cycle_terminates(self):
         # a misconfigured loop (d -> a -> d) must not recurse forever
@@ -246,6 +254,44 @@ class CommandsTest(unittest.TestCase):
     def test_is_show_command(self):
         self.assertTrue(is_show_command("  SHOW ip route"))
         self.assertFalse(is_show_command("ip route default"))
+
+    def test_show_requires_a_complete_word_and_no_terminal_controls(self):
+        for command in ("", " ", "showcase", "show-version", "sh version"):
+            with self.subTest(command=command):
+                self.assertFalse(is_show_command(command))
+        for control in [*(chr(n) for n in range(32)), "\x7f", "\x85", "\u2028", "\u2029"]:
+            for command in (f"show version{control}", f"show version{control}write memory"):
+                with self.subTest(command=command):
+                    self.assertFalse(is_show_command(command))
+        self.assertTrue(is_show_command(" show  version "))
+
+    def test_command_errors_are_distinct_from_percent_status_messages(self):
+        for diagnostic in (
+            "% halp  -- Invalid command.",
+            "% Invalid input",
+            "% Incomplete command.",
+            "% Ambiguous command.",
+            "% Permission denied.",
+            "% Error writing configuration.",
+            "% Saving configuration failed.",
+            "% Command not found: unknown",
+        ):
+            with (
+                self.subTest(diagnostic=diagnostic),
+                self.assertRaisesRegex(UsageError, "failed"),
+            ):
+                check_command_output("command", f"command\n{diagnostic}\nrouter(config)#")
+        for output in (
+            "% Saving configuration... done.",
+            (
+                "Building configuration...\n"
+                "% Warning: do NOT enter CNTL/Z while saving to avoid config corruption."
+            ),
+            "description Invalid input\n! error counter: 0",
+            "% Non-volatile configuration memory is not present",
+        ):
+            with self.subTest(output=output):
+                self.assertEqual(check_command_output("command", output), output)
 
     def test_parse_config_lines(self):
         text = "# comment\n\nip route default GigaEthernet1.0  \n  logging buffered 100\n"

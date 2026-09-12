@@ -61,7 +61,7 @@ class ExecuteTest(unittest.TestCase):
     def test_order_is_shows_backup_config_save(self):
         session, out, err = FakeSession(), io.StringIO(), io.StringIO()
         req = Request(
-            shows=("show version", "ip route x"),
+            shows=("show version",),
             backup=BACKUP_AUTO,
             config_lines=("logging buffered 100",),
             save=True,
@@ -83,7 +83,7 @@ class ExecuteTest(unittest.TestCase):
                 ("save",),
             ],
         )
-        self.assertIn("[SKIP] refusing non-show command in show mode: 'ip route x'", err.getvalue())
+        self.assertEqual(err.getvalue(), "")
         text = out.getvalue()
         self.assertIn("===== show version =====\n<show version>\n\n", text)
         self.assertIn("===== config =====\napplied\n\n", text)
@@ -100,6 +100,19 @@ class ExecuteTest(unittest.TestCase):
         self.assertEqual(out.getvalue().splitlines()[0], "<show version>")
         self.assertNotIn("=====", out.getvalue())
         self.assertEqual(Path("x/y.conf").read_text(encoding="utf-8"), "<show running-config>\n")
+
+    def test_invalid_show_prevents_every_operation(self):
+        session = FakeSession()
+        req = Request(
+            shows=("show version", "show version\nwrite memory"),
+            backup=BACKUP_AUTO,
+            config_lines=("hostname x",),
+            save=True,
+        )
+        with self.assertRaisesRegex(UsageError, "single show command"):
+            execute(req, target(), session, io.StringIO(), io.StringIO())
+        self.assertEqual(session.calls, [])
+        self.assertFalse(Path("backups").exists())
 
 
 class RunTest(unittest.TestCase):
@@ -134,7 +147,8 @@ class RunTest(unittest.TestCase):
         self.assertIn("home   admin@10.0.0.1:22  auth=inventory-password", text)
         self.assertIn("keyed  admin@10.0.0.2:22  auth=ssh-key", text)
         self.assertIn("bare   admin@10.0.0.3:22  auth=prompt/$IX_PASS", text)
-        self.assertNotIn("pw", text)
+        # Temporary directory names can happen to contain the short password.
+        self.assertNotIn("pw", "\n".join(text.splitlines()[1:]))
 
     def test_nothing_to_do(self):
         with self.assertRaises(UsageError) as cm:

@@ -10,6 +10,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 try:
     import netmiko  # noqa: F401
@@ -36,9 +37,9 @@ class IntegrationTest(unittest.TestCase):
         # aliases live in an Include'd file: paramiko alone would not see them
         (root / "conf.d" / "lab.conf").write_text(
             f"Host fakejump\n  HostName 127.0.0.1\n  Port {cls.device.port}\n"
-            f"  User jump\n  IdentityFile {key.as_posix()}\n"
+            f"  User jump\n  IdentityFile {key.as_posix()}\n  ProxyJump none\n"
             f"Host fakeix\n  HostName 127.0.0.1\n  Port {cls.device.port}\n  ProxyJump fakejump\n"
-            f"Host direct\n  HostName 127.0.0.1\n  Port {cls.device.port}\n",
+            f"Host direct\n  HostName 127.0.0.1\n  Port {cls.device.port}\n  ProxyJump none\n",
             encoding="utf-8",
         )
         cls.ssh_config = root / "config"
@@ -137,6 +138,64 @@ class IntegrationTest(unittest.TestCase):
         self.assertEqual(out, "\n".join(RUNNING_CONFIG) + "\n")
         self.assertEqual(err, "")  # --raw: no banner either
         self.assertIn(f"hostname {HOSTNAME}", out)
+
+    def test_config_error_stops_remaining_lines_and_save(self):
+        before = (list(self.device.applied), self.device.saved)
+        with patch.dict(
+            self.device.responses, {"bad-command": ["% bad-command -- Invalid command."]}
+        ):
+            code, out, err = self.ix_ssh(
+                "-d",
+                "viajump",
+                "--config",
+                "logging buffered 200",
+                "--config",
+                "bad-command",
+                "--config",
+                "logging buffered 300",
+                "--save",
+            )
+        self.assertEqual(code, 1, err)
+        self.assertIn("configuration stopped", err)
+        self.assertIn("bad-command", err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(self.device.applied, [*before[0], "logging buffered 200"])
+        self.assertEqual(self.device.saved, before[1])
+        self.assertNotIn("===== write memory", out)
+
+    def test_show_error_stops_following_operations(self):
+        before = (list(self.device.applied), self.device.saved)
+        code, _, err = self.ix_ssh(
+            "-d", "viajump", "show invalid-command", "--config", "hostname x", "--save"
+        )
+        self.assertEqual(code, 1, err)
+        self.assertIn("Invalid input", err)
+        self.assertEqual((self.device.applied, self.device.saved), before)
+
+    def test_backup_command_error_preserves_file_and_stops_config(self):
+        dest = Path(self.tmp.name) / "preserved.conf"
+        dest.write_text("previous backup\n", encoding="utf-8")
+        before = (list(self.device.applied), self.device.saved)
+        with patch.dict(self.device.responses, {"show running-config": ["% Permission denied."]}):
+            code, out, err = self.ix_ssh(
+                "-d", "viajump", "--backup", str(dest), "--config", "hostname x", "--save"
+            )
+        self.assertEqual(code, 1, err)
+        self.assertIn("Permission denied", err)
+        self.assertNotIn("[OK]", out)
+        self.assertEqual(dest.read_text(encoding="utf-8"), "previous backup\n")
+        self.assertEqual((self.device.applied, self.device.saved), before)
+
+    def test_save_error_is_reported_to_cli(self):
+        before = self.device.saved
+        with patch.dict(
+            self.device.responses, {"write memory": ["% Error writing configuration."]}
+        ):
+            code, _, err = self.ix_ssh("-d", "viajump", "--save")
+        self.assertEqual(code, 1, err)
+        self.assertIn("Error writing configuration", err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(self.device.saved, before)
 
     def test_wrong_password_fails_cleanly(self):
         code, _, err = self.ix_ssh(
