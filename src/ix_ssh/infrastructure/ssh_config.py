@@ -5,6 +5,7 @@ import io
 import os
 from pathlib import Path
 
+from ..domain import UsageError
 from .deps import missing_dependency
 
 DEFAULT_SSH_CONFIG = str(Path.home() / ".ssh" / "config")
@@ -39,10 +40,13 @@ def load_ssh_config(path: str | Path):
         raise missing_dependency("paramiko") from e
 
     cfg = paramiko.SSHConfig()
-    text = _read_ssh_config_text(Path(path).expanduser())
-    if not text:
-        return None
-    cfg.parse(io.StringIO(text))
+    try:
+        text = _read_ssh_config_text(Path(path).expanduser())
+        if not text:
+            return None
+        cfg.parse(io.StringIO(text))
+    except (OSError, UnicodeError, paramiko.SSHException) as exc:
+        raise UsageError(f"ERROR: cannot read ssh_config {path}: {exc}") from exc
     return cfg
 
 

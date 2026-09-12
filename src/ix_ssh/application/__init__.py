@@ -4,7 +4,8 @@ save on it in that order. Combines domain rules with infrastructure; knows
 nothing about argparse or exit codes."""
 
 from ..infrastructure import DEFAULT_SSH_CONFIG, INVENTORY_ENV
-from .run import BACKUP_AUTO, Request, Session, execute, list_devices, prepare_target, run
+from .listing import list_devices
+from .run import BACKUP_AUTO, Request, Session, execute, prepare_target, run
 
 __all__ = [
     "BACKUP_AUTO",

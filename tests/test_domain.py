@@ -10,16 +10,14 @@ from ix_ssh.domain import (
     TargetRequest,
     UsageError,
     default_backup_path,
-    describe_auth,
-    describe_route,
     find_password,
-    format_inventory,
     hop_specs,
     is_show_command,
     missing_password_message,
     parse_config_lines,
     parse_inventory,
     resolve_hop,
+    resolve_route,
     resolve_target,
     select_entry,
     split_hop,
@@ -56,46 +54,6 @@ class ParseInventoryTest(unittest.TestCase):
     def test_top_level_must_be_an_object(self):
         with self.assertRaises(UsageError):
             parse_inventory(["a"], "inv")
-
-
-class DescribeAuthTest(unittest.TestCase):
-    def test_order(self):
-        self.assertEqual(describe_auth({"password_env": "P", "password": "x"}), "env:$P")
-        self.assertEqual(describe_auth({"password": "x", "key_file": "k"}), "inventory-password")
-        self.assertEqual(describe_auth({"use_keys": True}), "ssh-key")
-        self.assertEqual(describe_auth({}), "prompt/$IX_PASS")
-
-
-class FormatInventoryTest(unittest.TestCase):
-    def test_empty_inventory_says_where_it_looked(self):
-        text = format_inventory({}, None, ["/a/devices.json", "/b/devices.json"])
-        self.assertIn("inventory: (none found)", text)
-        self.assertIn("    /a/devices.json\n    /b/devices.json", text)
-        self.assertIn("$IX_INVENTORY overrides", text)
-
-    def test_rows_show_route_model_and_note(self):
-        devices = {
-            "home": {"host": "room1", "password": "x", "model": "IX2215", "note": "core"},
-            "lab": {"host": "192.0.2.9", "username": "ops"},
-        }
-        routes = {
-            "home": Route(hostname="10.0.0.1", port=2222, user="admin", hops=("bastion",)),
-            "lab": Route(hostname="192.0.2.9", port=None, user=None, hops=()),
-        }
-        text = format_inventory(devices, "/inv.json", [], routes)
-        self.assertIn("inventory: /inv.json", text)
-        self.assertIn(
-            "  home  admin@room1:22 -> 10.0.0.1:2222 via bastion  auth=inventory-password"
-            "  model=IX2215",
-            text,
-        )
-        self.assertIn("        note: core", text)
-        self.assertIn("  lab   ops@192.0.2.9:22  auth=prompt/$IX_PASS", text)
-
-    def test_inventory_port_beats_ssh_config_port(self):
-        devices = {"a": {"host": "alias", "port": 2200, "username": "u"}}
-        routes = {"a": Route(hostname="10.0.0.1", port=22, user=None, hops=())}
-        self.assertIn("u@alias:2200 -> 10.0.0.1:2200", format_inventory(devices, "i", [], routes))
 
 
 class ProxyJumpTest(unittest.TestCase):
@@ -145,12 +103,12 @@ class ProxyJumpTest(unittest.TestCase):
         # a single IdentityFile string is accepted too; no config -> bare spec
         self.assertEqual(resolve_hop(None, "x").keys, ())
 
-    def test_describe_route(self):
+    def test_resolve_route(self):
         cfg = FakeSshConfig({"r": {"hostname": "10.0.0.2", "port": "22", "proxyjump": "b"}})
         self.assertEqual(
-            describe_route(cfg, "r"), Route(hostname="10.0.0.2", port=22, user=None, hops=("b",))
+            resolve_route(cfg, "r"), Route(hostname="10.0.0.2", port=22, user=None, hops=("b",))
         )
-        self.assertIsNone(describe_route(None, "r"))
+        self.assertEqual(resolve_route(None, "r"), Route("r", 22, None, ()))
 
 
 class SelectEntryTest(unittest.TestCase):
@@ -158,28 +116,28 @@ class SelectEntryTest(unittest.TestCase):
 
     def test_device_flag_then_env(self):
         self.assertEqual(
-            select_entry(TargetRequest(device="home"), self.devices, {}, lambda: ""),
+            select_entry(TargetRequest(device="home"), self.devices, {}),
             ("home", {"host": "h"}),
         )
         self.assertEqual(
-            select_entry(TargetRequest(), self.devices, {"IX_DEVICE": "home"}, lambda: "")[0],
+            select_entry(TargetRequest(), self.devices, {"IX_DEVICE": "home"})[0],
             "home",
         )
 
-    def test_unknown_device_lists_inventory(self):
+    def test_unknown_device_reports_selection_failure(self):
         with self.assertRaises(UsageError) as cm:
-            select_entry(TargetRequest(device="nope"), self.devices, {}, lambda: "LISTING")
+            select_entry(TargetRequest(device="nope"), self.devices, {})
         self.assertIn("unknown device 'nope'", str(cm.exception))
-        self.assertIn("LISTING", str(cm.exception))
+        self.assertEqual(str(cm.exception), "ERROR: unknown device 'nope'.")
 
     def test_no_default_device(self):
         with self.assertRaises(UsageError) as cm:
-            select_entry(TargetRequest(), self.devices, {}, lambda: "LISTING")
+            select_entry(TargetRequest(), self.devices, {})
         self.assertIn("no target selected", str(cm.exception))
 
     def test_adhoc_host_has_no_entry(self):
         self.assertEqual(
-            select_entry(TargetRequest(host="192.0.2.1"), self.devices, {}, lambda: ""), (None, {})
+            select_entry(TargetRequest(host="192.0.2.1"), self.devices, {}), (None, {})
         )
 
 
@@ -223,7 +181,6 @@ class ResolveTargetTest(unittest.TestCase):
             (t.host, t.port, t.username, t.alias), ("10.0.0.5", 2222, "cfguser", "room1")
         )
         self.assertEqual([h.host for h in t.hops], ["203.0.113.1"])
-        self.assertEqual(t.banner(), "# target: home (cfguser@10.0.0.5:2222 [room1] via bastion)")
         # inventory user/port still beat ssh_config
         t = resolve_target(
             TargetRequest(), "home", {"host": "room1", "username": "inv", "port": 1}, {}, cfg, None
@@ -252,7 +209,7 @@ class ResolveTargetTest(unittest.TestCase):
         )
         self.assertTrue(t.use_keys)
         self.assertNotIn("~", t.key_file)
-        self.assertIn(", model IX2215)", t.banner())
+        self.assertEqual(t.model, "IX2215")
         t = resolve_target(
             TargetRequest(), "n", {"host": "h", "user": "u", "use_keys": True}, {}, None, None
         )

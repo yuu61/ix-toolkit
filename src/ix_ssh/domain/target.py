@@ -1,13 +1,13 @@
 """Which device a run talks to, and how the settings for it are put together."""
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import UsageError
-from .inventory import DEFAULT_PORT, entry_host, entry_user
-from .proxyjump import Hop, SshConfigLookup, hop_specs, resolve_hop
+from .inventory import entry_host, entry_user
+from .proxyjump import Hop, SshConfigLookup, resolve_hop, resolve_route
 
 
 @dataclass(frozen=True)
@@ -43,16 +43,6 @@ class Target:
     def label(self) -> str:
         return self.name or self.alias or self.host
 
-    def banner(self) -> str:
-        where = f"{self.username}@{self.host}:{self.port}"
-        if self.alias and self.alias != self.host:
-            where += f" [{self.alias}]"
-        if self.hops:
-            where += " via " + " -> ".join(h.spec for h in self.hops)
-        if self.model:
-            where += f", model {self.model}"
-        return f"# target: {self.label} ({where})"
-
     def slug(self) -> str:
         return re.sub(r"[^A-Za-z0-9._-]", "_", self.label)
 
@@ -61,22 +51,19 @@ def select_entry(
     req: TargetRequest,
     devices: Mapping[str, Mapping],
     env: Mapping[str, str],
-    describe: Callable[[], str],
 ) -> tuple[str | None, Mapping]:
     """Pick the inventory entry for the run: (name, entry). An ad-hoc --host run
     has no name and an empty entry. There is deliberately no default device, so
-    a config push can never land on the wrong box by omission; the error carries
-    the device listing (`describe`) so the user can pick one."""
+    a config push can never land on the wrong box by omission."""
     name = req.device or env.get("IX_DEVICE")
     host = req.host or env.get("IX_HOST")
     if name:
         if name not in devices:
-            raise UsageError(f"ERROR: unknown device {name!r}.\n" + describe())
+            raise UsageError(f"ERROR: unknown device {name!r}.")
         return name, devices[name]
     if not host:
         raise UsageError(
-            "ERROR: no target selected. pass --device NAME (or --host HOST --user USER).\n"
-            + describe()
+            "ERROR: no target selected. pass --device NAME (or --host HOST --user USER)."
         )
     return None, {}
 
@@ -117,25 +104,15 @@ def resolve_target(
     # "host" may be an ssh_config alias: resolve hostname/port/user through it and
     # collect the ProxyJump chain, so an entry can be just {"host": "room1"}.
     alias = host
-    hops: tuple[Hop, ...] = ()
-    if cfg is not None:
-        looked_up = cfg.lookup(host)
-        host = looked_up.get("hostname", host)
-        port = port or looked_up.get("port")
-        username = username or looked_up.get("user")
-        hops = tuple(resolve_hop(cfg, spec) for spec in hop_specs(cfg, alias))
-    port = port or DEFAULT_PORT
+    route = resolve_route(cfg, host, username, port)
+    host, username, port = route.hostname, route.user, route.port
+    hops = tuple(resolve_hop(cfg, spec) for spec in route.hops)
 
     if not username:
         raise UsageError(
             f"ERROR: no username for {name or host} "
             '(add "username" to the inventory entry, or pass --user)'
         )
-    try:
-        port = int(port)
-    except (TypeError, ValueError):
-        raise UsageError(f"ERROR: invalid port: {port!r}") from None
-
     return Target(
         name=name,
         host=host,

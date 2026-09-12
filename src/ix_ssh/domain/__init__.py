@@ -8,23 +8,21 @@ hands the results in as plain values.
 """
 
 from .commands import default_backup_path, is_show_command, parse_config_lines
-from .credentials import find_password, missing_password_message
+from .credentials import find_password, missing_password_message, resolve_password
 from .errors import UsageError
 from .inventory import (
     DEFAULT_PORT,
-    describe_auth,
     entry_host,
     entry_user,
-    format_inventory,
     parse_inventory,
 )
 from .proxyjump import (
     Hop,
     Route,
     SshConfigLookup,
-    describe_route,
     hop_specs,
     resolve_hop,
+    resolve_route,
     split_hop,
 )
 from .target import Target, TargetRequest, resolve_target, select_entry, ssh_config_path
@@ -38,18 +36,17 @@ __all__ = [
     "TargetRequest",
     "UsageError",
     "default_backup_path",
-    "describe_auth",
-    "describe_route",
     "entry_host",
     "entry_user",
     "find_password",
-    "format_inventory",
     "hop_specs",
     "is_show_command",
     "missing_password_message",
     "parse_config_lines",
     "parse_inventory",
     "resolve_hop",
+    "resolve_password",
+    "resolve_route",
     "resolve_target",
     "select_entry",
     "split_hop",

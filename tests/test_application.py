@@ -172,7 +172,7 @@ class RunTest(unittest.TestCase):
         self.assertEqual(session.calls, [("apply", ("hostname x", "logging buffered 100"))])
 
         missing = self.request(target=TargetRequest(device="home"), config_file=str(cfg) + ".nope")
-        with self.assertRaises(FileNotFoundError):
+        with self.assertRaisesRegex(UsageError, "cannot read config file"):
             run(missing, env={}, open_session=lambda t: self.fail("must not connect"))
 
     def test_password_sources(self):

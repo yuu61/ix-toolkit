@@ -13,16 +13,15 @@ from ..domain import (
     TargetRequest,
     UsageError,
     default_backup_path,
-    describe_route,
-    entry_host,
     find_password,
-    format_inventory,
     is_show_command,
     missing_password_message,
     resolve_target,
     select_entry,
     ssh_config_path,
 )
+from .listing import describe_devices, list_devices
+from .presentation import ConsoleOutput, format_target
 
 # Sentinel so the CLI can tell "--backup omitted" from "--backup with no path".
 BACKUP_AUTO = "\x00auto"
@@ -55,31 +54,19 @@ class Session(Protocol):
     def close(self) -> None: ...
 
 
-def list_devices(inventory: str | None = None) -> str:
-    """The `--list` text. ssh_config is consulted per device to show the resolved
-    address and jump chain, but quietly: listing must work without paramiko."""
-    devices, path = infrastructure.read_inventory(inventory)
-    routes = {}
-    for name, entry in devices.items():
-        host = entry_host(entry)
-        if not host:
-            continue
-        cfg = infrastructure.quiet_load_ssh_config(
-            entry.get("ssh_config_file") or infrastructure.DEFAULT_SSH_CONFIG
-        )
-        routes[name] = describe_route(cfg, host)
-    looked_in = [str(c) for c in infrastructure.INVENTORY_CANDIDATES]
-    return format_inventory(devices, str(path) if path else None, looked_in, routes)
-
-
 def prepare_target(
     req: Request,
-    env: Mapping[str, str] = os.environ,
+    env: Mapping[str, str] | None = None,
     prompt: Callable[[str], str] = getpass.getpass,
 ) -> Target:
     """Inventory + ssh_config + flags -> a Target with its password resolved."""
-    devices, _ = infrastructure.read_inventory(req.inventory)
-    name, entry = select_entry(req.target, devices, env, lambda: list_devices(req.inventory))
+    env = os.environ if env is None else env
+    devices, path = infrastructure.read_inventory(req.inventory, env)
+    try:
+        name, entry = select_entry(req.target, devices, env)
+    except UsageError as exc:
+        listing = describe_devices(devices, path, env, req.target)
+        raise UsageError(f"{exc}\n{listing}") from None
     cfg_path = ssh_config_path(req.target, entry, infrastructure.DEFAULT_SSH_CONFIG)
     cfg = infrastructure.load_ssh_config(cfg_path) if cfg_path else None
     target = resolve_target(req.target, name, entry, env, cfg, cfg_path)
@@ -113,21 +100,14 @@ def execute(
     out = out or sys.stdout
     err = err or sys.stderr
 
-    def header(text: str) -> None:
-        if not req.raw:
-            print(f"===== {text} =====", file=out)
-
-    def trailer() -> None:
-        if not req.raw:
-            print(file=out)
+    output = ConsoleOutput(out, err, req.raw)
 
     for cmd in req.shows:
         if not is_show_command(cmd):
-            print(f"[SKIP] refusing non-show command in show mode: {cmd!r}", file=err)
+            output.skipped(cmd)
             continue
-        header(cmd)
-        print(session.show(cmd), file=out)
-        trailer()
+        output.header(cmd)
+        output.result(session.show(cmd))
 
     if req.backup is not None:
         text = session.show("show running-config")
@@ -136,26 +116,20 @@ def execute(
         else:
             dest = Path(req.backup)
         infrastructure.write_backup(dest, text)
-        print(
-            f"[OK] running-config of {target.label} saved to {dest} "
-            f"({len(text.splitlines())} lines)",
-            file=out,
-        )
+        output.backup_saved(target.label, dest, len(text.splitlines()))
 
     if req.config_lines:
-        header("config")
-        print(session.apply(req.config_lines), file=out)
-        trailer()
+        output.header("config")
+        output.result(session.apply(req.config_lines))
 
     if req.save:
-        header("write memory")
-        print(session.save(), file=out)
-        trailer()
+        output.header("write memory")
+        output.result(session.save())
 
 
 def run(
     req: Request,
-    env: Mapping[str, str] = os.environ,
+    env: Mapping[str, str] | None = None,
     prompt: Callable[[str], str] = getpass.getpass,
     out: TextIO | None = None,
     err: TextIO | None = None,
@@ -164,8 +138,9 @@ def run(
     # stdout/stderr are looked up at call time so redirect_stdout() works on them.
     out = out or sys.stdout
     err = err or sys.stderr
+    env = os.environ if env is None else env
     if req.list:
-        print(list_devices(req.inventory), file=out)
+        print(list_devices(req.inventory, env, req.target), file=out)
         return
 
     # Read the config file before touching the network, so a typo in its path
@@ -180,7 +155,7 @@ def run(
 
     target = prepare_target(req, env, prompt)
     if not req.raw:
-        print(target.banner(), file=err)
+        print(format_target(target), file=err)
 
     session = open_session(target)
     try:

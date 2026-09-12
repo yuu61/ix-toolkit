@@ -2,6 +2,7 @@
 
 import json
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 from ..domain import UsageError, parse_inventory
@@ -16,10 +17,13 @@ INVENTORY_CANDIDATES = (
 )
 
 
-def inventory_path(override: str | None = None) -> Path | None:
+def inventory_path(
+    override: str | None = None, env: Mapping[str, str] | None = None
+) -> Path | None:
     """Path of the inventory to use: --inventory, then $IX_INVENTORY, then the
     first candidate that exists. None when nothing is found."""
-    chosen = override or os.environ.get(INVENTORY_ENV)
+    env = os.environ if env is None else env
+    chosen = override or env.get(INVENTORY_ENV)
     if chosen:
         return Path(chosen).expanduser()
     for cand in INVENTORY_CANDIDATES:
@@ -28,10 +32,12 @@ def inventory_path(override: str | None = None) -> Path | None:
     return None
 
 
-def read_inventory(override: str | None = None) -> tuple[dict[str, dict], Path | None]:
+def read_inventory(
+    override: str | None = None, env: Mapping[str, str] | None = None
+) -> tuple[dict[str, dict], Path | None]:
     """({name: entry}, path). An absent inventory is empty, not an error: ad-hoc
     --host runs and `--list` (which then says where it looked) still work."""
-    path = inventory_path(override)
+    path = inventory_path(override, env)
     if path is None:
         return {}, None
     if not path.is_file():
@@ -40,4 +46,6 @@ def read_inventory(override: str | None = None) -> tuple[dict[str, dict], Path |
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise UsageError(f"ERROR: invalid JSON in {path}: {exc}") from None
+    except (OSError, UnicodeError) as exc:
+        raise UsageError(f"ERROR: cannot read inventory {path}: {exc}") from exc
     return parse_inventory(data, str(path)), path

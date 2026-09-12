@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from .errors import UsageError
+from .inventory import DEFAULT_PORT
+
 
 class SshConfigLookup(Protocol):
     """What we need from a parsed ssh_config: paramiko.SSHConfig satisfies it."""
@@ -29,10 +32,10 @@ class Hop:
 
 @dataclass(frozen=True)
 class Route:
-    """What ssh_config says about a host: the real address and the jump chain."""
+    """Resolved address and jump chain after applying explicit settings and ssh_config."""
 
     hostname: str
-    port: int | None
+    port: int
     user: str | None
     hops: tuple[str, ...]  # ProxyJump specs, outermost first
 
@@ -46,7 +49,7 @@ def split_hop(spec: str) -> tuple[str | None, str, int | None]:
         user, host = host.rsplit("@", 1)
     if host.count(":") == 1:
         host, raw = host.split(":", 1)
-        port = int(raw)
+        port = parse_port(raw)
     return user, host, port
 
 
@@ -80,21 +83,33 @@ def resolve_hop(cfg: SshConfigLookup | None, spec: str) -> Hop:
     return Hop(
         spec=spec.strip(),
         host=entry.get("hostname", host),
-        port=port or int(entry.get("port", 22)),
+        port=parse_port(port or entry.get("port") or DEFAULT_PORT),
         user=user or entry.get("user"),
         keys=tuple(str(Path(k).expanduser()) for k in keys),
     )
 
 
-def describe_route(cfg: SshConfigLookup | None, host: str) -> Route | None:
-    """Resolve an alias for display (`--list`). None when there is no config."""
-    if cfg is None:
-        return None
-    looked_up = cfg.lookup(host)
-    raw_port = looked_up.get("port")
+def parse_port(value: object) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise UsageError(f"ERROR: invalid port: {value!r}") from None
+
+
+def resolve_route(
+    cfg: SshConfigLookup | None,
+    host: str,
+    user: str | None = None,
+    port: str | int | None = None,
+) -> Route:
+    """Apply ssh_config defaults after explicit settings, for both listing and connection.
+
+    A user may be absent in an incomplete inventory; connecting validates it later.
+    """
+    looked_up = cfg.lookup(host) if cfg is not None else {}
     return Route(
         hostname=looked_up.get("hostname", host),
-        port=int(raw_port) if raw_port else None,
-        user=looked_up.get("user"),
+        port=parse_port(port or looked_up.get("port") or DEFAULT_PORT),
+        user=user or looked_up.get("user"),
         hops=tuple(hop_specs(cfg, host)),
     )
