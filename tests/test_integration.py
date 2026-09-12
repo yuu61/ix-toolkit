@@ -97,6 +97,7 @@ class IntegrationTest(unittest.TestCase):
 
     def test_show_backup_config_save_through_proxyjump(self):
         before = (self.device.sessions, self.device.saved, list(self.device.applied))
+        command_start = len(self.device.commands)
         code, out, err = self.ix_ssh(
             "-d",
             "viajump",
@@ -118,6 +119,9 @@ class IntegrationTest(unittest.TestCase):
         self.assertEqual(self.device.sessions, before[0] + 1)
         self.assertEqual(self.device.applied, [*before[2], "logging buffered 100"])
         self.assertEqual(self.device.saved, before[1] + 1)
+        commands = self.device.commands[command_start:]
+        self.assertEqual(commands[0], "enable-config")
+        self.assertNotIn("svintr-config", commands)
         # the backup holds the whole running-config: the `hostname fakeix` line did
         # not end the read early (the prompt is pinned to `fakeix(config)#`)
         backups = sorted(Path("backups").glob("viajump-*.conf"))
@@ -196,6 +200,98 @@ class IntegrationTest(unittest.TestCase):
         self.assertIn("Error writing configuration", err)
         self.assertNotIn("Traceback", err)
         self.assertEqual(self.device.saved, before)
+
+    def test_busy_config_fails_during_connection_without_takeover(self):
+        start = len(self.device.commands)
+        before = (list(self.device.applied), self.device.saved, self.device.forced_takeovers)
+        dest = Path(self.tmp.name) / "busy.conf"
+        with patch.object(self.device, "config_occupied", True):
+            code, _, err = self.ix_ssh(
+                "-d",
+                "viajump",
+                "show version",
+                "--backup",
+                str(dest),
+                "--config",
+                "hostname x",
+                "--save",
+            )
+            self.assertTrue(self.device.config_occupied)
+        self.assertEqual(code, 1, err)
+        self.assertIn("occupied by another user", err)
+        self.assertNotIn("Traceback", err)
+        commands = self.device.commands[start:]
+        self.assertIn("enable-config", commands)
+        self.assertNotIn("svintr-config", commands)
+        self.assertNotIn("terminal length 0", commands)
+        self.assertNotIn("show version", commands)
+        self.assertFalse(dest.exists())
+        self.assertEqual(
+            (self.device.applied, self.device.saved, self.device.forced_takeovers), before
+        )
+
+    def test_force_config_applies_to_initialization_and_all_operations(self):
+        start = len(self.device.commands)
+        saved, takeovers = self.device.saved, self.device.forced_takeovers
+        dest = Path(self.tmp.name) / "forced.conf"
+        with (
+            patch.object(self.device, "config_occupied", True),
+            patch.object(self.device, "occupy_after_exit", True),
+        ):
+            code, _, err = self.ix_ssh(
+                "-d",
+                "viajump",
+                "--force-config",
+                "show version",
+                "--backup",
+                str(dest),
+                "--config",
+                "logging buffered 400",
+                "--save",
+            )
+        self.assertEqual(code, 0, err)
+        self.assertIn("config-entry svintr-config (forced)", err)
+        commands = self.device.commands[start:]
+        self.assertEqual(commands[0], "svintr-config")
+        self.assertNotIn("enable-config", commands)
+        self.assertEqual(commands.count("svintr-config"), 5)
+        self.assertEqual(self.device.forced_takeovers, takeovers + 5)
+        self.assertEqual(self.device.saved, saved + 1)
+        self.assertEqual(dest.read_text(encoding="utf-8"), "\n".join(RUNNING_CONFIG) + "\n")
+
+    def test_busy_on_reentry_does_not_fall_back_to_force(self):
+        start = len(self.device.commands)
+        with (
+            patch.object(self.device, "config_occupied", False),
+            patch.object(self.device, "occupy_after_exit", True),
+        ):
+            code, _, err = self.ix_ssh("-d", "viajump", "show version")
+        self.assertEqual(code, 1, err)
+        self.assertIn("occupied by another user", err)
+        commands = self.device.commands[start:]
+        self.assertIn("terminal length 0", commands)  # initialization succeeded
+        self.assertNotIn("show version", commands)
+        self.assertNotIn("svintr-config", commands)
+
+    def test_login_in_submode_returns_to_global_without_takeover(self):
+        start = len(self.device.commands)
+        with patch.object(self.device, "initial_mode", "config-if"):
+            code, out, err = self.ix_ssh("-d", "viajump", "show version")
+        self.assertEqual(code, 0, err)
+        self.assertIn(SHOW_VERSION[0], out)
+        commands = self.device.commands[start:]
+        self.assertEqual(commands[0], "configure")
+        self.assertNotIn("svintr-config", commands)
+
+    def test_force_config_permission_failure_stops_initialization(self):
+        start = len(self.device.commands)
+        with patch.dict(self.device.responses, {"svintr-config": ["% Permission denied."]}):
+            code, _, err = self.ix_ssh("-d", "viajump", "--force-config", "show version")
+        self.assertEqual(code, 1, err)
+        self.assertIn("Permission denied", err)
+        self.assertNotIn("Traceback", err)
+        self.assertNotIn("terminal length 0", self.device.commands[start:])
+        self.assertNotIn("show version", self.device.commands[start:])
 
     def test_wrong_password_fails_cleanly(self):
         code, _, err = self.ix_ssh(

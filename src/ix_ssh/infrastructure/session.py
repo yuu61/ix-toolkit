@@ -107,10 +107,39 @@ def _close_all(clients: list) -> None:
 
 def open_session(target: Target) -> NetmikoSession:
     try:
-        from netmiko import ConnectHandler
         from netmiko.exceptions import ConfigInvalidException
+        from netmiko.nec.nec_ix import NecIxSSH
     except ImportError as e:
         raise missing_dependency("netmiko") from e
+
+    entry_command = "svintr-config" if target.force_config else "enable-config"
+
+    class IxConnection(NecIxSSH):
+        def config_mode(self, config_command="", pattern="", re_flags=re.IGNORECASE):
+            # Netmiko invokes this during construction as well as show/config/save.
+            # Its default implementation calls enable() with svintr-config.
+            current = self.find_prompt()
+            in_config = current.endswith(")#")
+            hostname = current.rsplit("(", 1)[0] if in_config else current.removesuffix("#")
+            command = "configure" if in_config else entry_command
+            global_prompt = f"{hostname}(config)#"
+            # Refusal returns the original prompt. Read it too, so a busy device
+            # becomes a UsageError immediately rather than a prompt timeout.
+            expect = rf"(?m:^(?:{re.escape(current)}|{re.escape(global_prompt)})[ \t]*$)"
+            output = self.send_command(
+                command,
+                expect_string=expect,
+                read_timeout=READ_TIMEOUT,
+                strip_prompt=False,
+                strip_command=False,
+            )
+            check_command_output(command, output)
+            if not output.rstrip().endswith(global_prompt):
+                raise UsageError(f"ERROR: {command!r} did not enter config mode")
+            # A login in a submode (or a hostname change) invalidates Netmiko's
+            # cached prompt. Later paging/config/save calls must use the hostname.
+            self.base_prompt = hostname
+            return output
 
     params = {
         "device_type": "nec_ix_ssh",  # このスクリプトは NEC IX 専用
@@ -132,7 +161,7 @@ def open_session(target: Target) -> NetmikoSession:
             # is deliberately NOT passed on: netmiko would turn ProxyJump into a
             # paramiko ProxyCommand, which is broken on Windows.
             params["sock"] = open_jump_socket(target.hops, target.host, target.port, jump_clients)
-        conn = ConnectHandler(**params)
+        conn = IxConnection(**params)
     except Exception:
         # a hop or the device itself failed after part of the chain was up: tear it
         # down here, otherwise paramiko threads keep running and bury the real error.

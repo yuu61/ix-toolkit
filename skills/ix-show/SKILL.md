@@ -15,6 +15,12 @@ license: MIT
 
 ## 接続先の指定
 
+通常は `enable-config` で入り、他ユーザーが config モードを使用中ならエラーで終了する。
+ユーザーが対象機器への強制取得（`svintr-config` の使用）を明示した場合だけ、実行する
+`ix-ssh` に `--force-config` を付ける。会話中にその指示があれば改めて確認しない。
+使用中エラーだけを理由に強制取得へ切り替えない。強制取得は IX2000/IX3000、IX-R/IX-V とも
+Administrator 権限が必要で、他ユーザーをオペレーション／EXEC モードへ戻す。
+
 機器はインベントリ `~/.ix-toolkit/devices.json`（`ix-ssh --list` の 1 行目に実際の場所が出る）に定義し、`--device <名前>`（短縮 `-d`）で選ぶ。**既定機器は無い**。指定を省略するとスクリプトはエラーを返し、機器一覧を表示する（誤った機器への接続を防ぐため）。
 
 対象が不明・未確定のときは推測せず、まず一覧を出してユーザーに確認する:
@@ -46,7 +52,7 @@ show コマンドは `"show ..."` 全体を 1 つの引数として渡す（複�
 
 ## NEC IX の重要な特性
 
-- **enable モード = config モード**。`en`（`svintr-config` / `configure`）しないと大半のコマンドが使えない。`show running-config` や `ipsec` / `ike` / `logging` / `ntp` / `vrrp` 等の多くの show も **config モード内のみ**。スクリプトが自動で config モードに入って show を実行するので、ユーザーはモードを意識しなくてよい。
+- **enable モード = config モード**。`show running-config` や `ipsec` / `ike` / `logging` / `ntp` / `vrrp` 等の多くの show も **config モード内のみ**。スクリプトが `enable-config`（`--force-config` 指定時は `svintr-config`）で入り、show を実行する。サブモードからグローバルへ戻すときは `configure` を使う。
 - paging は接続時に `terminal length 0` で自動無効化される。
 - EXEC モードでも使える show（version / clock / uptime / ip / ipv6 / interfaces / arp 等）も、本スクリプトは一律 config モードで実行する（config モードの show は EXEC のスーパーセットのため確実）。
 

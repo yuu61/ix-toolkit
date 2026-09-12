@@ -34,6 +34,8 @@ def validate_show_commands(commands: Sequence[str]) -> None:
 
 def check_command_output(command: str, output: str) -> str:
     """Reject known CLI error diagnostics, returning successful output intact."""
+    if re.search(r"(?im)^%\s*CONFIG process is occupied\.", output):
+        raise UsageError(f"ERROR: {command!r}: config mode is occupied by another user")
     match = re.search(COMMAND_ERROR_PATTERN, output)
     if match:
         raise UsageError(f"ERROR: {command!r} failed: {match.group(0)}")

@@ -160,6 +160,14 @@ class SshConfigPathTest(unittest.TestCase):
 
 
 class ResolveTargetTest(unittest.TestCase):
+    def test_force_config_requires_explicit_request(self):
+        entry = {"host": "h", "user": "u", "force_config": True}
+        env = {"IX_FORCE_CONFIG": "1"}
+        default = resolve_target(TargetRequest(), "n", entry, env, None, None)
+        self.assertFalse(default.force_config)
+        forced = resolve_target(TargetRequest(force_config=True), "n", entry, env, None, None)
+        self.assertTrue(forced.force_config)
+
     def test_flag_beats_env_beats_inventory_beats_default(self):
         entry = {"host": "10.0.0.1", "username": "inv", "port": 3}
         t = resolve_target(

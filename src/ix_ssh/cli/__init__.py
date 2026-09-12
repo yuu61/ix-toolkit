@@ -65,6 +65,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     p.add_argument("--save", action="store_true", help="write memory after config")
     p.add_argument(
+        "--force-config",
+        action="store_true",
+        help="enter with svintr-config, displacing another config user (default: enable-config)",
+    )
+    p.add_argument(
         "--raw",
         action="store_true",
         help="suppress ===== headers (clean output for redirection)",
@@ -84,6 +89,7 @@ def request_from(args: argparse.Namespace) -> Request:
             key_file=args.key_file,
             ssh_config=args.ssh_config,
             no_ssh_config=args.no_ssh_config,
+            force_config=args.force_config,
         ),
         shows=tuple(args.shows),
         config_lines=tuple(args.config),

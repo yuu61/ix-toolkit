@@ -85,6 +85,11 @@ class FakeIX:
         self.applied: list[str] = []
         self.saved = 0
         self.sessions = 0
+        self.commands: list[str] = []
+        self.config_occupied = False  # a different user's config session
+        self.forced_takeovers = 0
+        self.occupy_after_exit = False
+        self.initial_mode: str | None = None
         # Tests can supply device-side failures without changing the client.
         self.responses: dict[str, list[str]] = {}
         self._sock = socket.socket()
@@ -163,10 +168,10 @@ class FakeIX:
     # -- the device itself ------------------------------------------------ #
     def _shell(self, chan: paramiko.Channel, _dest=None) -> None:
         self.sessions += 1
-        config = False
+        config = self.initial_mode
 
         def prompt() -> str:
-            return f"{HOSTNAME}(config)#" if config else f"{HOSTNAME}#"
+            return f"{HOSTNAME}({config})#" if config else f"{HOSTNAME}#"
 
         def reply(lines: list[str]) -> None:
             chan.sendall("".join(f"{line}\r\n" for line in lines) + prompt())
@@ -182,23 +187,38 @@ class FakeIX:
             while b"\n" in buf:
                 raw, buf = buf.split(b"\n", 1)
                 line = raw.decode("utf-8", "replace").strip("\r ")
+                if line:
+                    self.commands.append(line)
                 if line == "":
                     reply([])
+                elif line in self.responses:
+                    reply(self.responses[line])
                 elif line in ("svintr-config", "enable-config", "configure"):
-                    config = True
-                    reply([])
+                    if not config and self.config_occupied and line != "svintr-config":
+                        reply(
+                            [
+                                "% CONFIG process is occupied.",
+                                "% You may use 'svintr-config' command with administrator privilege.",
+                            ]
+                        )
+                    else:
+                        if not config and self.config_occupied:
+                            self.forced_takeovers += 1
+                            self.config_occupied = False
+                        config = "config"
+                        reply([])
                 elif line == "exit":
                     if not config:
                         chan.close()
                         return
-                    config = False
+                    config = None
+                    if self.occupy_after_exit:
+                        self.config_occupied = True
                     reply([])
                 elif line == "terminal length 0":
                     reply([])
                 elif not config:
                     reply([f"% Command not found: {line}"])
-                elif line in self.responses:
-                    reply(self.responses[line])
                 elif line == "show version":
                     reply(SHOW_VERSION)
                 elif line == "show running-config":

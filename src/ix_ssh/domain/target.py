@@ -23,6 +23,7 @@ class TargetRequest:
     key_file: str | None = None
     ssh_config: str | None = None
     no_ssh_config: bool = False
+    force_config: bool = False
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ class Target:
     hops: tuple[Hop, ...] = ()
     alias: str | None = None  # the ssh_config alias the host came from, if any
     model: str | None = None  # inventory hint (IX2215 ...); unused by the connection
+    force_config: bool = False  # explicit per-run opt-in, never read from inventory/environment
 
     @property
     def label(self) -> str:
@@ -125,6 +127,7 @@ def resolve_target(
         hops=hops,
         alias=alias,
         model=entry.get("model"),
+        force_config=req.force_config,
     )
 
 

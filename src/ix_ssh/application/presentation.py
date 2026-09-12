@@ -62,6 +62,8 @@ def format_target(target: Target) -> str:
         where += " via " + " -> ".join(h.spec for h in target.hops)
     if target.model:
         where += f", model {target.model}"
+    if target.force_config:
+        where += ", config-entry svintr-config (forced)"
     return f"# target: {target.label} ({where})"
 
 

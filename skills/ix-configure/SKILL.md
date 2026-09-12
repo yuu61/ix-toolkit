@@ -17,6 +17,12 @@ license: MIT
 
 ## 接続先の指定
 
+通常は `enable-config` で入り、他ユーザーが config モードを使用中ならエラーで終了する。
+ユーザーが対象機器への強制取得（`svintr-config` の使用）を明示した場合だけ、実行する
+`ix-ssh` に `--force-config` を付ける。会話中にその指示があれば改めて確認しない。
+使用中エラーだけを理由に強制取得へ切り替えない。強制取得は IX2000/IX3000、IX-R/IX-V とも
+Administrator 権限が必要で、他ユーザーをオペレーション／EXEC モードへ戻す。
+
 機器はインベントリ `~/.ix-toolkit/devices.json`（`ix-ssh --list` の 1 行目に実際の場所が出る）に定義し、`--device <名前>`（短縮 `-d`）で選ぶ。**既定機器は無い**。省略するとエラーと機器一覧が返る（設定が別の機器に流れ込む事故を防ぐための設計であり、埋め合わせに機器名を推測してはならない）。
 
 ```bash
@@ -35,7 +41,7 @@ ix-ssh --list
 
 ## NEC IX の重要な特性
 
-- **enable モード = config モード**。スクリプトが `svintr-config` / `configure` で自動的に config モードへ入り、設定行を適用して抜ける（netmiko `send_config_set`）。
+- **enable モード = config モード**。スクリプトが `enable-config`（`--force-config` 指定時は `svintr-config`）で自動的に config モードへ入り、設定行を適用して抜ける（netmiko `send_config_set`）。サブモードからグローバルへ戻すときは `configure` を使う。
 - NEC IX は IOS 風で**明示的な commit は不要**。多くの設定は適用時に反映されるが、**一部の変更は反映に再起動が必要**（機器が `% You must restart the router for this configuration to take effect.` と警告する）。
 - 設定は**再起動で消えるため、永続化には `write memory` が必要**（`--save` または `ix-save`）。
 - 設定削除は IOS 風に行頭へ `no ` を付ける。

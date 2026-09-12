@@ -104,6 +104,27 @@ SKILL.md を読むエージェントなら、クローンをそのエージェ�
 $ ix-ssh --list
 ```
 
+### コンフィグモードへの入り方
+
+通常は `enable-config` で入る。他のユーザーがコンフィグモードを使用中なら、理由を表示して
+終了コード 1 で終了する。自動的に強制取得へ切り替えることはない。
+
+強制取得を明示する場合は `--force-config` を付ける。
+
+```console
+$ ix-ssh -d home "show version"
+$ ix-ssh -d home --force-config "show version"
+```
+
+`--force-config` は `svintr-config` を使い、それまでコンフィグモードにいた他ユーザーを
+オペレーション／EXEC モードへ戻す（IX2000/IX3000、IX-R/IX-V とも Administrator 権限が必要）。
+接続初期化と、その実行中の show・backup・config・save の各モード移行に適用される。
+設定済みのサブモードからグローバルへ戻る場合は、どちらでも `configure` を使う。
+この指定は実行ごとの CLI オプションで、インベントリや環境変数では有効にしない。
+
+操作 skill では、ユーザーが対象機器への強制取得を明示したときだけ `--force-config` を付ける。
+単に「接続して」「設定して」という依頼や、使用中エラーだけを理由に付けない。
+
 ---
 
 ## manualbook
