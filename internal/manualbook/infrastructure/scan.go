@@ -6,272 +6,149 @@ import (
 	"image"
 	"image/draw"
 	"image/png"
-	"math"
-	"math/big"
+	"iter"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
-	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 )
 
-// --- 型定義 ---
-
-type fileEntry struct {
-	sortKey *big.Int
-	name    string
-	path    string
-}
-
-type taskInfo struct {
-	img        image.Image
-	action     string
-	filePath   string
-	fileName   string
-	outName    string
-	rightName  string
-	leftName   string
-	cropTop    int
-	newHeight  int
-	halfWidth  int
-	rightWidth int
-	srcWidth   int
-}
-
-type decodeResult struct {
-	img image.Image
-	err error
-}
-
-// ScanReport は SplitSpreads の集計。
-type ScanReport struct {
-	Input   int // 取り上げた入力ファイル数。0 なら何もしていない
-	Split   int // 見開きとして左右に分けた数
-	Copied  int // 1 ページとしてそのまま写した数
-	Errors  int
-	Skipped int
-	Pages   int // 出力したページ数
-}
-
-// SplitSpreads は inputDir の見開き PNG を 1 ページずつ outputDir に置く。
-// dryRun なら何をするかを出すだけで書かない。経過は標準出力に、失敗は標準エラーに出す。
-func SplitSpreads(inputDir, outputDir string, dryRun bool) (ScanReport, error) {
-	var report ScanReport
-
-	// --- 1. ファイル列挙・ソート ---
-	digitRe := regexp.MustCompile(`\d+`)
-	entries, err := os.ReadDir(inputDir)
+// ListPNGFiles は入力ディレクトリの PNG ファイル名を返す。
+func ListPNGFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return report, fmt.Errorf("ディレクトリの読み取りに失敗: %w", err)
+		return nil, err
 	}
-
-	var validFiles []fileEntry
+	var names []string
 	for _, e := range entries {
-		if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".png") {
-			continue
+		if !e.IsDir() && strings.EqualFold(filepath.Ext(e.Name()), ".png") {
+			names = append(names, e.Name())
 		}
-		baseName := strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))
-		matches := digitRe.FindAllString(baseName, -1)
-		if len(matches) != 1 {
-			fmt.Fprintf(os.Stderr, "数字列が1つでないためスキップ: %s (検出数: %d)\n", e.Name(), len(matches))
-			continue
-		}
-		n := new(big.Int)
-		n.SetString(matches[0], 10)
-		validFiles = append(validFiles, fileEntry{
-			name:    e.Name(),
-			path:    filepath.Join(inputDir, e.Name()),
-			sortKey: n,
-		})
 	}
+	return names, nil
+}
 
-	if len(validFiles) == 0 {
-		return report, nil
+// Spread は上下の余白を除き、中央の白帯で分類した画像。ページは左から右の順。
+// 出力先、連番、dry-run、失敗後の続行は呼び出し元が決める。
+type Spread struct{ pages []image.Image }
+
+func (s *Spread) Pages() int { return len(s.pages) }
+
+func readSpread(path string) (*Spread, error) {
+	img, err := loadPNG(path)
+	if err != nil {
+		return nil, err
 	}
-	report.Input = len(validFiles)
-
-	slices.SortFunc(validFiles, func(a, b fileEntry) int {
-		return a.sortKey.Cmp(b.sortKey)
-	})
-
-	// --- 2. 命名パターン抽出 ---
-	firstBase := strings.TrimSuffix(validFiles[0].name, filepath.Ext(validFiles[0].name))
-	ext := filepath.Ext(validFiles[0].name)
-	loc := digitRe.FindStringIndex(firstBase)
-	prefix := firstBase[:loc[0]]
-	suffix := firstBase[loc[1]:]
-	inputDigitWidth := loc[1] - loc[0]
-
-	maxPages := len(validFiles) * 2
-	neededWidth := 1
-	if maxPages > 0 {
-		neededWidth = int(math.Ceil(math.Log10(float64(maxPages + 1))))
-	}
-	digitWidth := max(neededWidth, inputDigitWidth)
-
-	// --- 3. パイプライン: 並列デコード → 順序付き分類 → 並列処理 ---
-	// 上下それぞれ入力画像の高さの7%をクロップ (例: 3037px -> 212px)
+	bounds := img.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
 	const cropPercent = 7
 	const whiteThreshold byte = 250
+	top := height * cropPercent / 100
+	height -= 2 * top
+	if height <= 0 {
+		return nil, fmt.Errorf("高さ不足: %dpx", bounds.Dy())
+	}
+	half := width / 2
+	if !isCenterStripeAllWhite(img, max(0, half-16), min(width, half+16), top, height, whiteThreshold) {
+		return &Spread{pages: []image.Image{cropImage(img, 0, top, width, height)}}, nil
+	}
+	return &Spread{pages: []image.Image{
+		cropImage(img, 0, top, half, height),
+		cropImage(img, half, top, width-half, height),
+	}}, nil
+}
 
-	counter := 0
-	splitCount := 0
-	copyCount := 0
-	errorCount := 0
-	skipCount := 0
-	numWorkers := runtime.GOMAXPROCS(0)
-
-	var (
-		taskCh         chan taskInfo
-		processWg      sync.WaitGroup
-		mu             sync.Mutex
-		parallelErrors atomic.Int64
-		failedPages    atomic.Int64
-	)
-
-	// --- 3a. 処理ワーカープール起動（DryRun以外） ---
-	if !dryRun {
-		taskCh = make(chan taskInfo, numWorkers)
-		for range numWorkers {
-			processWg.Go(func() {
-				for t := range taskCh {
-					if err := processTask(&t, outputDir); err != nil {
-						mu.Lock()
-						fmt.Fprintf(os.Stderr, "処理失敗: %s - %s\n", t.fileName, err)
-						mu.Unlock()
-						parallelErrors.Add(1)
-						pages := int64(1)
-						if t.action == "split" {
-							pages = 2
-						}
-						failedPages.Add(pages)
-					} else {
-						mu.Lock()
-						if t.action == "copy" {
-							fmt.Printf("コピー: %s -> %s\n", t.fileName, t.outName)
-						} else {
-							fmt.Printf("分割: %s -> %s, %s\n", t.fileName, t.leftName, t.rightName)
-						}
-						mu.Unlock()
-					}
+// ReadSpreads は最大 GOMAXPROCS 枚を先読みし、指定された順で解析結果を返す。
+// 途中で反復を止めてもワーカーを終了する。読み込み失敗もその位置で返す。
+func ReadSpreads(paths []string) iter.Seq2[*Spread, error] {
+	return func(yield func(*Spread, error) bool) {
+		n := min(runtime.GOMAXPROCS(0), len(paths))
+		if n == 0 {
+			return
+		}
+		type result struct {
+			spread *Spread
+			err    error
+		}
+		results := make([]chan result, len(paths))
+		for i := range results {
+			results[i] = make(chan result, 1)
+		}
+		jobs := make(chan int, n)
+		var workers sync.WaitGroup
+		for range n {
+			workers.Go(func() {
+				for i := range jobs {
+					spread, err := readSpread(paths[i])
+					results[i] <- result{spread, err}
 				}
 			})
 		}
-	}
-
-	// --- 3b. 先行デコードパイプライン ---
-	// permits がバックプレッシャーを制御:
-	//   メインgoroutineが結果を消費 → permit返却 → 次のデコード開始
-	//   同時にメモリ上に存在するデコード済み画像は最大 numWorkers 枚
-	resultChs := make([]chan decodeResult, len(validFiles))
-	for i := range resultChs {
-		resultChs[i] = make(chan decodeResult, 1)
-	}
-
-	permits := make(chan struct{}, numWorkers)
-	for range numWorkers {
-		permits <- struct{}{}
-	}
-
-	go func() {
-		for i, f := range validFiles {
-			<-permits // permit取得（メインgoroutineが返却するまでブロック）
-			go func() {
-				img, err := loadPNG(f.path)
-				resultChs[i] <- decodeResult{img, err}
-			}()
+		defer func() { close(jobs); workers.Wait() }()
+		for i := range n {
+			jobs <- i
 		}
-	}()
-
-	// --- 3c. 分類ループ（順序保証、シーケンシャル） ---
-	for i, f := range validFiles {
-		result := <-resultChs[i]
-		permits <- struct{}{} // permit返却 → 次のデコードを許可
-		resultChs[i] = nil    // チャネル解放
-
-		if result.err != nil {
-			fmt.Fprintf(os.Stderr, "分類失敗: %s - %s\n", f.name, result.err)
-			errorCount++
-			continue
-		}
-
-		img := result.img
-		bounds := img.Bounds()
-		srcWidth := bounds.Dx()
-		srcHeight := bounds.Dy()
-		cropTop := srcHeight * cropPercent / 100
-		newHeight := srcHeight - 2*cropTop
-
-		if newHeight <= 0 {
-			fmt.Fprintf(os.Stderr, "スキップ(高さ不足): %s (%dpx)\n", f.name, srcHeight)
-			skipCount++
-			continue
-		}
-
-		halfWidth := srcWidth / 2
-		centerStart := max(0, halfWidth-16)
-		centerEnd := min(srcWidth, halfWidth+16)
-		hasCenterContent := !isCenterStripeAllWhite(img, centerStart, centerEnd, cropTop, newHeight, whiteThreshold)
-
-		if hasCenterContent {
-			counter++
-			outName := fmt.Sprintf("%s%0*d%s%s", prefix, digitWidth, counter, suffix, ext)
-			if dryRun {
-				fmt.Printf("[DryRun] コピー: %s -> %s\n", f.name, outName)
-			} else {
-				taskCh <- taskInfo{
-					action:    "copy",
-					filePath:  f.path,
-					fileName:  f.name,
-					outName:   outName,
-					cropTop:   cropTop,
-					newHeight: newHeight,
-					srcWidth:  srcWidth,
-					img:       img,
-				}
+		for i := range paths {
+			r := <-results[i]
+			if !yield(r.spread, r.err) {
+				return
 			}
-			copyCount++
-		} else {
-			counter++
-			rightWidth := srcWidth - halfWidth
-			leftName := fmt.Sprintf("%s%0*d%s%s", prefix, digitWidth, counter, suffix, ext)
-			counter++
-			rightName := fmt.Sprintf("%s%0*d%s%s", prefix, digitWidth, counter, suffix, ext)
-			if dryRun {
-				fmt.Printf("[DryRun] 分割: %s -> %s, %s\n", f.name, leftName, rightName)
-			} else {
-				taskCh <- taskInfo{
-					action:     "split",
-					filePath:   f.path,
-					fileName:   f.name,
-					rightName:  rightName,
-					leftName:   leftName,
-					cropTop:    cropTop,
-					newHeight:  newHeight,
-					halfWidth:  halfWidth,
-					rightWidth: rightWidth,
-					srcWidth:   srcWidth,
-					img:        img,
-				}
+			if i+n < len(paths) {
+				jobs <- i + n
 			}
-			splitCount++
 		}
 	}
+}
 
-	// ワーカー完了待ち
-	if !dryRun {
-		close(taskCh)
-		processWg.Wait()
-		errorCount += int(parallelErrors.Load())
+type spreadWrite struct {
+	spread *Spread
+	paths  []string
+	result chan error
+}
+
+// SpreadWriter は指定されたページを並列保存する。キューにも上限を設ける。
+// Close はすべての保存の完了を待つ。個別の失敗は Submit の戻り値から受け取る。
+type SpreadWriter struct {
+	jobs    chan spreadWrite
+	workers sync.WaitGroup
+}
+
+func NewSpreadWriter() *SpreadWriter {
+	n := runtime.GOMAXPROCS(0)
+	w := &SpreadWriter{jobs: make(chan spreadWrite, n)}
+	for range n {
+		w.workers.Go(func() {
+			for job := range w.jobs {
+				job.result <- job.spread.save(job.paths)
+			}
+		})
 	}
+	return w
+}
 
-	// --- 4. 集計 ---
-	report.Split, report.Copied, report.Errors, report.Skipped = splitCount, copyCount, errorCount, skipCount
-	report.Pages = counter - int(failedPages.Load())
-	return report, nil
+// Submit の後は、呼び出し元は spread を変更しない。
+func (w *SpreadWriter) Submit(spread *Spread, paths []string) <-chan error {
+	result := make(chan error, 1)
+	w.jobs <- spreadWrite{spread, append([]string(nil), paths...), result}
+	return result
+}
+
+func (w *SpreadWriter) Close() { close(w.jobs); w.workers.Wait() }
+
+func (s *Spread) save(paths []string) error {
+	if len(paths) != len(s.pages) {
+		return fmt.Errorf("画像と出力先の数が一致しません")
+	}
+	for i, page := range s.pages {
+		if err := savePNG(paths[i], page); err != nil {
+			for _, path := range paths[:i] {
+				_ = os.Remove(path)
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 // --- PNG読み込み（バッファ付き） ---
@@ -352,33 +229,6 @@ func isCenterStripeAllWhite(img image.Image, centerStart, centerEnd, yOffset, he
 		}
 		return true
 	}
-}
-
-// --- 画像処理タスク実行 ---
-
-func processTask(t *taskInfo, outDir string) error {
-	img := t.img
-	t.img = nil // GCで解放可能にする
-
-	if t.action == "copy" {
-		cropped := cropImage(img, 0, t.cropTop, t.srcWidth, t.newHeight)
-		return savePNG(filepath.Join(outDir, t.outName), cropped)
-	}
-
-	// 左半分（若い番号）
-	leftPath := filepath.Join(outDir, t.leftName)
-	left := cropImage(img, 0, t.cropTop, t.halfWidth, t.newHeight)
-	if err := savePNG(leftPath, left); err != nil {
-		return err
-	}
-
-	// 右半分
-	right := cropImage(img, t.halfWidth, t.cropTop, t.rightWidth, t.newHeight)
-	if err := savePNG(filepath.Join(outDir, t.rightName), right); err != nil {
-		os.Remove(leftPath) // 左半分もクリーンアップ
-		return err
-	}
-	return nil
 }
 
 // --- 画像切り出し ---
