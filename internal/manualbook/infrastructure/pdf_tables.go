@@ -15,6 +15,8 @@ type pdfTable struct {
 	rows                     [][]string
 	columns                  []float64
 	headerPage               int
+	headerRows               int
+	mergedRows               []bool
 }
 
 func (t pdfTable) contains(g glyph) bool {
@@ -291,6 +293,28 @@ func tableFromRules(pg pdfPage, rules []pdfRule) (pdfTable, bool) {
 			table.rows[r][c] = texts[sets.root(r*nc+c)]
 		}
 	}
+	// 上段の結合セルと、その下位の列名を一緒に保持する。
+	// 全幅の結合セルは表題なので、その次のデータ行までは含めない。
+	table.headerRows = 1
+	table.mergedRows = make([]bool, nr)
+	for _, s := range spans {
+		if s.n > 1 {
+			for r := s.r0; r <= s.r1; r++ {
+				table.mergedRows[r] = true
+			}
+		}
+	}
+	for r := 0; r < table.headerRows && r < nr; r++ {
+		for _, s := range spans {
+			if s.r0 != r {
+				continue
+			}
+			table.headerRows = max(table.headerRows, s.r1+1)
+			if s.c1 > s.c0 && s.c1-s.c0+1 < nc {
+				table.headerRows = max(table.headerRows, s.r1+2)
+			}
+		}
+	}
 	return table, true
 }
 
@@ -341,10 +365,11 @@ func sectionTableLines(pg pdfPage, tables []pdfTable, body crop, page int) ([]st
 }
 
 // continuePDFTable は前ページ末から続く、見出しが省かれた表に列名を補う。
-// 同じ節・同じ列境界で、間に本文が無い場合だけ。補った列名の出典も残す。
+// 同じ節・同じ列境界で、間に本文が無く、データの続きだと確認できる場合だけ。
+// 曖昧な表は変更しない。補った列名の全段と出典も残す。
 func continuePDFTable(previous pdfTable, current *pdfTable, prevPage, page pdfPage, body crop, number int) {
 	current.headerPage = number
-	if len(previous.rows) == 0 || len(previous.columns) != len(current.columns) {
+	if len(previous.rows) == 0 || len(current.rows) == 0 || len(previous.columns) != len(current.columns) {
 		return
 	}
 	for i, x := range previous.columns {
@@ -363,16 +388,49 @@ func continuePDFTable(previous pdfTable, current *pdfTable, prevPage, page pdfPa
 			return
 		}
 	}
-	equal := true
-	for i, cell := range previous.rows[0] {
-		if strings.Join(strings.Fields(cell), "") != strings.Join(strings.Fields(current.rows[0][i]), "") {
-			equal = false
-			break
-		}
-	}
-	if equal {
+	if !tableDataContinues(previous, *current) {
 		return
 	}
-	current.rows = append([][]string{append([]string(nil), previous.rows[0]...)}, current.rows...)
+	var headers [][]string
+	for _, row := range previous.rows[:previous.headerRows] {
+		headers = append(headers, append([]string(nil), row...))
+	}
+	current.rows = append(headers, current.rows...)
+	current.headerRows = previous.headerRows
+	current.mergedRows = append(append([]bool(nil), previous.mergedRows[:current.headerRows]...), current.mergedRows...)
 	current.headerPage = previous.headerPage
+}
+
+// tableDataContinues は新しい表題・列名をデータの続きと誤認しないための確認。
+// 先頭に結合セルがあれば独自の見出しの可能性があるので継承しない。
+// また、前表のデータで反復する値が、現表の先頭数行にも同じ列で続き、
+// 列見出しとは異なることを要求する (○/×、RO など)。自由文だけなら推測しない。
+func tableDataContinues(previous, current pdfTable) bool {
+	h := previous.headerRows
+	if h < 1 || h >= len(previous.rows) || len(current.rows) == 0 || len(current.mergedRows) == 0 || current.mergedRows[0] {
+		return false
+	}
+	key := func(s string) string { return strings.Join(strings.Fields(s), "") }
+	for c := range previous.rows[0] {
+		header := map[string]bool{}
+		for _, row := range previous.rows[:h] {
+			header[key(row[c])] = true
+		}
+		values := map[string]int{}
+		for _, row := range previous.rows[h:] {
+			values[key(row[c])]++
+		}
+		matches := true
+		for _, row := range current.rows[:min(3, len(current.rows))] {
+			v := key(row[c])
+			if v == "" || header[v] || values[v] < 2 {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return true
+		}
+	}
+	return false
 }

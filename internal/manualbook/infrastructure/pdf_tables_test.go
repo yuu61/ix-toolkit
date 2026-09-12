@@ -115,6 +115,9 @@ func TestPDFTableStaysBetweenProseAndKeepsSource(t *testing.T) {
 func TestPDFTableContinuation(t *testing.T) {
 	pg, rules := sampleTable()
 	table := findPDFTables(pg, rules)[0]
+	table.rows = [][]string{{"Name", "Type", "Access"}, {"one", "Integer", "RO"}, {"two", "String", "RO"}, {"three", "Integer", "RO"}}
+	table.headerRows = 1
+	table.mergedRows = make([]bool, len(table.rows))
 	table.headerPage = 27
 	current := table
 	current.rows = table.rows[1:]
@@ -140,12 +143,13 @@ func TestPDFTableContinuation(t *testing.T) {
 	if !strings.Contains(output.String(), "[列見出し: 元 PDF p27](manual.pdf#page=27)") || !strings.Contains(output.String(), "[元 PDF p28]") {
 		t.Fatalf("source = %s", output.String())
 	}
-	for _, tc := range []string{"prose before", "prose after", "different columns", "repeated header"} {
+	for _, tc := range []string{"prose before", "prose after", "different columns", "repeated header", "new merged heading", "new flat heading", "unknown data", "no source header"} {
 		t.Run(tc, func(t *testing.T) {
 			prevPage, page := pg, pg
 			current := table
 			current.rows = table.rows[1:]
 			current.columns = append([]float64(nil), table.columns...)
+			previous := table
 			switch tc {
 			case "prose before":
 				page.glyphs = append(append([]glyph(nil), pg.glyphs...), testGlyph('P', 20, 135))
@@ -155,13 +159,50 @@ func TestPDFTableContinuation(t *testing.T) {
 				current.columns[1] += 5
 			case "repeated header":
 				current.rows = table.rows
+			case "new merged heading":
+				current.mergedRows = []bool{true, false, false}
+			case "new flat heading":
+				current.rows = [][]string{{"Other", "Labels", "Permissions"}, {"four", "Integer", "RO"}}
+			case "unknown data":
+				current.rows = [][]string{{"four", "Other", "RW"}}
+			case "no source header":
+				previous.headerRows = 0
 			}
 			want := len(current.rows)
-			continuePDFTable(table, &current, prevPage, page, crop{}, 28)
+			continuePDFTable(previous, &current, prevPage, page, crop{}, 28)
 			if len(current.rows) != want || current.headerPage != 28 {
 				t.Fatal("new table or repeated header was extended")
 			}
 		})
+	}
+}
+
+func TestPDFTableMultirowHeaderContinuation(t *testing.T) {
+	pg, rules := sampleTable()
+	previous := findPDFTables(pg, rules)[0]
+	if previous.headerRows != 2 {
+		t.Fatalf("header rows = %d, want 2", previous.headerRows)
+	}
+	previous.rows = [][]string{{"Item", "Level", "Level"}, {"Item", "warn", "debug"}, {"a", "×", "○"}, {"b", "×", "○"}}
+	previous.headerPage = 27
+	current := previous
+	current.rows = [][]string{{"c", "×", "○"}, {"d", "×", "○"}}
+	current.mergedRows = []bool{false, false}
+	continuePDFTable(previous, &current, pg, pg, crop{}, 28)
+	want := [][]string{{"Item", "Level", "Level"}, {"Item", "warn", "debug"}, {"c", "×", "○"}, {"d", "×", "○"}}
+	if !reflect.DeepEqual(current.rows, want) || current.headerPage != 27 || current.headerRows != 2 {
+		t.Fatalf("multirow continuation = %#v", current)
+	}
+	next := previous
+	next.rows = [][]string{{"e", "×", "○"}}
+	next.mergedRows = []bool{false}
+	continuePDFTable(current, &next, pg, pg, crop{}, 29)
+	if next.headerPage != 27 || !reflect.DeepEqual(next.rows[:2], want[:2]) || len(next.rows) != 3 {
+		t.Fatalf("third page lost header levels or source: %#v", next)
+	}
+	current.rows[0][0] = "changed"
+	if previous.rows[0][0] != "Item" || next.rows[0][0] != "Item" {
+		t.Fatal("inherited header aliases another page")
 	}
 }
 

@@ -3,6 +3,7 @@ package infrastructure
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -77,28 +78,45 @@ func TestLocalPDFTableContinuation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var previous pdfTable
-	for _, n := range []int{1141, 1142} {
-		rules, err := d.readRules(n - 1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		tables := findPDFTables(d.pages[n-1], rules)
-		if len(tables) == 0 {
-			t.Fatalf("p%d no tables", n)
-		}
-		if n == 1141 {
-			previous = tables[len(tables)-1]
-			previous.headerPage = n
-			continue
-		}
-		current := tables[0]
-		continuePDFTable(previous, &current, d.pages[n-2], d.pages[n-1], bodyCrop(p), n)
-		if current.headerPage != 1141 {
-			t.Errorf("header not inherited: prev columns %v, bounds %v/%v; current columns %v, bounds %v/%v", previous.columns, previous.top, previous.bottom, current.columns, current.top, current.bottom)
-		}
-		if current.rows[0][0] != "オブジェクト名" {
-			t.Fatalf("unexpected inherited header: %q", current.rows[0][0])
+	for _, tc := range []struct {
+		previous, current, headerRows int
+	}{{670, 671, 0}, {480, 481, 2}, {1141, 1142, 1}} {
+		var previous pdfTable
+		for _, n := range []int{tc.previous, tc.current} {
+			rules, err := d.readRules(n - 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tables := findPDFTables(d.pages[n-1], rules)
+			if len(tables) == 0 {
+				t.Fatalf("p%d no tables", n)
+			}
+			if n == tc.previous {
+				previous = tables[len(tables)-1]
+				previous.headerPage = n
+				continue
+			}
+			current := tables[0]
+			original := current.rows
+			continuePDFTable(previous, &current, d.pages[n-2], d.pages[n-1], bodyCrop(p), n)
+			if tc.headerRows == 0 {
+				if current.headerPage != n || !reflect.DeepEqual(current.rows, original) || !strings.Contains(current.rows[0][0], "暗号／認証") {
+					t.Fatalf("p%d own heading changed: %#v", n, current)
+				}
+				continue
+			}
+			if current.headerPage != tc.previous {
+				t.Errorf("header not inherited: prev columns %v, bounds %v/%v; current columns %v, bounds %v/%v", previous.columns, previous.top, previous.bottom, current.columns, current.top, current.bottom)
+			}
+			if current.headerRows != tc.headerRows || !reflect.DeepEqual(current.rows[:tc.headerRows], previous.rows[:tc.headerRows]) || !reflect.DeepEqual(current.rows[tc.headerRows:], original) {
+				t.Fatalf("p%d header levels or data changed: %#v", n, current)
+			}
+			if n == 481 && !reflect.DeepEqual(current.rows[1][2:], []string{"error", "warn", "notice", "info", "debug"}) {
+				t.Fatalf("p481 lost log levels: %#v", current.rows[:2])
+			}
+			if n == 1142 && current.rows[0][0] != "オブジェクト名" {
+				t.Fatalf("p1142 unexpected header: %q", current.rows[0][0])
+			}
 		}
 	}
 }
