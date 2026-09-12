@@ -20,8 +20,8 @@ import (
 //  1. 項目の切れ目が記号ではなく階層番号の見出し (■2.11 / 2.11.6 / 2.11.6.1)。
 //     索引は「コマンド名 → 行」ではなく「節番号 → 行」になる。
 //
-//  2. 表が多く、行ごとの空きをそのまま空白にすると列の対応が黙って崩れる。
-//     ページ全体で同じ桁幅の格子に載せて読む (理由は layout.go のコメント)。
+//  2. 表はページ画像の罫線とテキスト層の座標からセルを復元する。
+//     セルを確定できない図表はページ全体で同じ桁幅の格子に載せて読む。
 //
 //  3. 図がある。ただし図は不透明なラスタではない。画像 XObject は作図と網掛けの
 //     レイヤで、ラベルはその上に載った PDF のテキストとして取れる。実測すると
@@ -55,16 +55,41 @@ func readSectionPages(p *domain.Profile, pdf string) ([]Page, error) {
 	if err != nil {
 		return nil, err
 	}
+	d, err := openDoc(pdf)
+	if err != nil {
+		return nil, err
+	}
 
 	pages := make([]Page, 0, len(body))
+	bodySize := pdfBodyFontSize(d.pages, bodyCrop(p))
+	var previousTables []pdfTable
 	for i := range body {
 		pg := Page{num: i + 1}
 		pg.section = at(headers, i)
 		pg.printed = firstToken(at(footers, i))
 		pg.chapter = chapterOf(pg.printed)
+		pg.headings = pdfHeadingLines(d.pages[i], bodyCrop(p), bodySize)
 		pg.lines = collapseTableBlanks(splitLines(body[i]))
+		rules, err := d.readRules(i)
+		if err != nil {
+			return nil, err
+		}
+		tables := findPDFTables(d.pages[i], rules)
+		for j := range tables {
+			tables[j].headerPage = pg.num
+		}
+		if len(tables) > 0 {
+			if i > 0 && pg.section == pages[i-1].section && len(previousTables) > 0 {
+				continuePDFTable(previousTables[len(previousTables)-1], &tables[0], d.pages[i-1], d.pages[i], bodyCrop(p), pg.num)
+			}
+			pg.lines, pg.tables = sectionTableLines(d.pages[i], tables, bodyCrop(p), pg.num)
+		}
+		previousTables = tables
 		pg.fullLines = pg.lines
 		pages = append(pages, pg)
+		if (i+1)%100 == 0 {
+			fmt.Printf("  表の解析: %d / %d ページ\n", i+1, len(body))
+		}
 	}
 
 	// 版面ヘッダは 55 ページで空になる。大きな表が版面いっぱいに広がるページでは
@@ -164,21 +189,20 @@ func interiorGap(s string) int {
 
 // classifyLine は 1 行を地の文か版面かに分ける。
 //
-// 表の行と図のラベルはどちらも版面に落ちる。両者を区別はしない。テキストだけ
+// セルを復元できなかった表の行と図のラベルはどちらも版面に落ちる。テキストだけ
 // からでは諸元表・機能一覧表・コンソール出力例・構成図を見分けられなかった
 // (ラスタ図のあるページを正解にして測ると適合率 0.11。ただし外れの中身を見ると
 // そのほとんどは画像を持たない本物の表で、囲う判断自体は正しかった)。
 //
-// 区別する必要も無い。壊れるのは「地の文に流し込むこと」だけで、版面どおりに
-// 囲えばどれも保たれる。当てにならない "図" / "表" のラベルは付けない。
+// 罫線から表を確定できた部分は、この分類より先に BlockTable として取り出す。
 func classifyLine(s string) lineKind {
 	t := strings.TrimSpace(s)
 	if t == "" {
 		return lineBlank
 	}
-	// 見出しと箇条書きは、短くても文書の構造であって版面ではない。
-	// これを版面に落とすと、節見出しがコードブロックに飲まれて索引が空になる。
-	if isBullet(t) || headingRe.MatchString(t) {
+	// 見出しは呼び出し側で書式も確認する。番号だけで地の文と決めると、
+	// IP アドレスで始まる図のラベルまで版面から取り出してしまう。
+	if isBullet(t) {
 		return lineProse
 	}
 	// 文末で終わる行は、短くても地の文の締め。
@@ -275,13 +299,20 @@ func parseHeadings(p *domain.Profile, pages []Page) ([]domain.Heading, map[int]s
 		if pg.chapter > 0 && chName != "" {
 			chapters[pg.chapter] = chName
 		}
-		for _, raw := range pg.lines {
+		for line, raw := range pg.lines {
+			if table, ok := pg.tables[line]; ok {
+				flushLayout()
+				if cur != nil {
+					cur.Blocks = append(cur.Blocks, table)
+				}
+				continue
+			}
 			t := strings.TrimSpace(raw)
 			// 目次のリーダ罫を含む行は本文ではない。
 			if tocLeaderRe.MatchString(raw) {
 				continue
 			}
-			if m := headingRe.FindStringSubmatch(t); m != nil {
+			if m := headingRe.FindStringSubmatch(t); m != nil && isPageHeading(pg, t, m[2]) {
 				flushLayout()
 				heads = append(heads, domain.Heading{
 					Number:  m[2],
@@ -595,7 +626,7 @@ func renderRef(b *strings.Builder, r domain.Ref, lk links, extra string) {
 
 // renderTableBlock は表を Markdown の表として出す。
 //
-// Web から読んだ表は列の構造を持っているので、版面固定の囲みに落とさない。
+// PDF / Web からセルの構造を取得した表は、版面固定の囲みに落とさない。
 // 引く側は桁位置ではなく見出し行の列名で値を取る。
 func renderTableBlock(b *strings.Builder, blk domain.Block, lk links) {
 	if len(blk.Rows) == 0 {
@@ -605,8 +636,10 @@ func renderTableBlock(b *strings.Builder, blk domain.Block, lk links) {
 	for _, r := range blk.Rows {
 		width = max(width, len(r))
 	}
+	escapes := strings.NewReplacer(`\`, `\\`, "&", "&amp;", "<", "&lt;", ">", "&gt;", "|", `\|`)
 	cell := func(s string) string {
-		s = strings.ReplaceAll(strings.TrimSpace(s), "|", `\|`)
+		// <引数> や & を HTML として消さない。改行の <br> だけを後から加える。
+		s = escapes.Replace(strings.TrimSpace(s))
 		s = strings.ReplaceAll(s, "\n", "<br>")
 		return s
 	}
@@ -626,7 +659,11 @@ func renderTableBlock(b *strings.Builder, blk domain.Block, lk links) {
 	for _, r := range blk.Rows[1:] {
 		writeRow(r)
 	}
-	renderRef(b, blk.Ref, lk, "")
+	extra := ""
+	if blk.HeaderRef.Page > 0 {
+		extra = fmt.Sprintf("[列見出し: 元 PDF p%d](%s)", blk.HeaderRef.Page, mdLinkDest(fmt.Sprintf("%s#page=%d", lk.pdf, blk.HeaderRef.Page)))
+	}
+	renderRef(b, blk.Ref, lk, extra)
 }
 
 // renderFigureBlock は図を出す。
@@ -731,13 +768,17 @@ func writeSectionReadme(outDir, docTitle string, src Source,
 		return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644)
 	}
 
-	fmt.Fprintf(&b, "\n## ```text で囲まれた塊について\n\n")
-	fmt.Fprintln(&b, "表・図・コンソール出力は、版面どおりの固定幅ブロックとして囲ってある。")
+	fmt.Fprintf(&b, "\n## 表と固定幅ブロック\n\n")
+	fmt.Fprintln(&b, "罫線からセルを復元できた表は Markdown の表として出力する。値は見出しの列名で引く。")
+	fmt.Fprintln(&b, "結合セルは覆う行・列へ値を繰り返し、セル内の複数行は `<br>` で区切る。")
+	fmt.Fprintln(&b, "ページをまたぐ表はページごとに分ける。前ページの列見出しを補った場合は、その出典も付ける。")
+	fmt.Fprintln(&b, "文字は PDF のテキスト層から取得する。罫線だけをページ画像から検出し、OCR は使わない。")
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, "セルを確定できない表・図・コンソール出力は、版面どおりの固定幅ブロックとして囲ってある。")
 	fmt.Fprintln(&b, "地の文に流し込むと表の列の対応が崩れ、図のラベルが本文に混ざるためで、")
 	fmt.Fprintln(&b, "**囲みの中は行と桁の位置に意味がある。**")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "囲みが表なのか図なのかは区別していない。テキストからは判別できず、")
-	fmt.Fprintln(&b, "誤ったラベルを付けるより出所を示すほうが確かなので、各ブロックの直後に")
+	fmt.Fprintln(&b, "罫線が無い表や途切れた表などは、囲みの中に残る。各ブロックの直後に")
 	fmt.Fprintln(&b, "元 PDF の該当ページへのリンクを置いてある。")
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "**図の中身はこのテキストだけでは完結しない。** 図のラベル (機器名・")
@@ -777,15 +818,19 @@ func ConvertSections(outDir, docTitle string, src Source) error {
 	fmt.Printf("  ページ数: %d\n", len(pages))
 
 	heads, chapters := parseHeadings(p, pages)
-	nLayout := 0
+	nLayout, nTables := 0, 0
 	for i := range heads {
 		for _, b := range heads[i].Blocks {
+			if b.Kind == domain.BlockTable {
+				nTables++
+			}
 			if b.Kind != domain.BlockProse {
 				nLayout++
 			}
 		}
 	}
 	fmt.Printf("  見出し: %d 件 / 章: %d / 版面ブロック: %d\n", len(heads), len(chapters), nLayout)
+	fmt.Printf("  Markdown の表: %d 件\n", nTables)
 
 	if len(heads) == 0 {
 		return fmt.Errorf("見出しを 1 件も抽出できませんでした。" +

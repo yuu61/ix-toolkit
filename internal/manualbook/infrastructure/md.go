@@ -22,12 +22,14 @@ import (
 
 // Page は 1 ページ分の本文と、ヘッダ・フッタ帯から得たメタデータ。
 type Page struct {
-	num       int      // PDF 上のページ番号 (1 始まり)
-	printed   string   // 印刷ページ番号 (例 "3-29")
-	chapter   int      // 印刷ページ番号の章部分
-	section   string   // 版面ヘッダ = 節名
-	lines     []string // 読み順に並べた本文行
-	fullLines []string // ページ全幅で読んだ行 (段をまたぐ大見出し用)
+	num       int                  // PDF 上のページ番号 (1 始まり)
+	printed   string               // 印刷ページ番号 (例 "3-29")
+	chapter   int                  // 印刷ページ番号の章部分
+	section   string               // 版面ヘッダ = 節名
+	lines     []string             // 読み順に並べた本文行
+	fullLines []string             // ページ全幅で読んだ行 (段をまたぐ大見出し用)
+	tables    map[int]domain.Block // PDF の表。キーは lines 内の挿入位置
+	headings  map[string]bool      // PDF の書式で確認した見出し行。空白を除いた本文がキー
 	twoColumn bool
 }
 
@@ -43,6 +45,10 @@ func ReadPages(p *domain.Profile, pdf string) ([]Page, PageStats, error) {
 		return nil, PageStats{}, err
 	}
 	headers, footers, err := extractBands(p, pdf)
+	if err != nil {
+		return nil, PageStats{}, err
+	}
+	d, err := openDoc(pdf)
 	if err != nil {
 		return nil, PageStats{}, err
 	}
@@ -71,6 +77,8 @@ func ReadPages(p *domain.Profile, pdf string) ([]Page, PageStats, error) {
 			nf := countGlyphs(f)
 			if abs(countGlyphs(l)+countGlyphs(r)-nf) <= columnTolerance(nf) && countGlyphs(r) > 0 {
 				pg.twoColumn = true
+				// 判定で許したずれを欠落のまま出力しない。
+				l, r = renderColumns(d.pages[i], p)
 				// 読み順は左段を読み切ってから右段 (検証済み)
 				pg.lines = append(splitLines(l), splitLines(r)...)
 				stats.Two++

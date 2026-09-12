@@ -3,6 +3,7 @@ package infrastructure
 import (
 	"bufio"
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -205,16 +206,28 @@ func readSectionIndex(path string) ([]indexedSection, error) {
 }
 
 // splitTableRow は GFM の表の 1 行をセルに分ける。renderTableBlock の逆で、
-// `\|` はセル内の縦線、<br> はセル内の改行。
+// バックスラッシュのエスケープを解いて分割し、改行と HTML 実体参照を戻す。
 func splitTableRow(ln string) []string {
 	ln = strings.TrimSuffix(strings.TrimPrefix(ln, "|"), "|")
-	const esc = "\x00"
-	ln = strings.ReplaceAll(ln, `\|`, esc)
-	parts := strings.Split(ln, "|")
+	var parts []string
+	var cell strings.Builder
+	for i := 0; i < len(ln); i++ {
+		switch {
+		case ln[i] == '\\' && i+1 < len(ln) && (ln[i+1] == '\\' || ln[i+1] == '|'):
+			i++
+			cell.WriteByte(ln[i])
+		case ln[i] == '|':
+			parts = append(parts, cell.String())
+			cell.Reset()
+		default:
+			cell.WriteByte(ln[i])
+		}
+	}
+	parts = append(parts, cell.String())
 	for i, p := range parts {
-		p = strings.ReplaceAll(p, esc, "|")
 		p = strings.ReplaceAll(p, "<br>", "\n")
-		parts[i] = strings.TrimSpace(p)
+		// &lt;br&gt; は文字列のまま残すため、改行より後に一度だけ復号する。
+		parts[i] = html.UnescapeString(strings.TrimSpace(p))
 	}
 	return parts
 }

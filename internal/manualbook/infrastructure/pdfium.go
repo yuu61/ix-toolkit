@@ -34,6 +34,7 @@ type glyph struct {
 	r           rune
 	left, right float64
 	top, bottom float64
+	fontSize    float64 // 変換行列を反映したポイント数。見出しと本文の区別に使う。
 
 	// spaceBefore は、この字の前に空白文字が入っていたことを表す。
 	//
@@ -155,8 +156,9 @@ func (d *pdfDoc) readPages() error {
 			return fmt.Errorf("ページ %d の寸法を取得できません: %w", i+1, err)
 		}
 		txt, err := d.instance.GetPageTextStructured(&requests.GetPageTextStructured{
-			Page: d.page(i),
-			Mode: requests.GetPageTextStructuredModeChars,
+			Page:                   d.page(i),
+			Mode:                   requests.GetPageTextStructuredModeChars,
+			CollectFontInformation: true,
 		})
 		if err != nil {
 			return fmt.Errorf("ページ %d の文字を取得できません: %w", i+1, err)
@@ -182,6 +184,13 @@ func (d *pdfDoc) readPages() error {
 				if r < 0x20 {
 					continue
 				}
+				fontSize := 0.0
+				if c.FontInformation != nil {
+					fontSize = c.FontInformation.RenderedSize
+					if fontSize <= 0 {
+						fontSize = c.FontInformation.Size
+					}
+				}
 				pg.glyphs = append(pg.glyphs, glyph{
 					r:           r,
 					left:        c.PointPosition.Left,
@@ -189,6 +198,7 @@ func (d *pdfDoc) readPages() error {
 					top:         c.PointPosition.Top,
 					bottom:      c.PointPosition.Bottom,
 					spaceBefore: space,
+					fontSize:    fontSize,
 				})
 				space = false
 			}
