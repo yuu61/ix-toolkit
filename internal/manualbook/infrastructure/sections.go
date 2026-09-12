@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 )
@@ -62,6 +63,27 @@ func readSectionPages(p *domain.Profile, pdf string) ([]Page, error) {
 
 	pages := make([]Page, 0, len(body))
 	bodySize := pdfBodyFontSize(d.pages, bodyCrop(p))
+	// 描画と表の検出はページごとに独立して行える。前ページからの
+	// ヘッダ継承と本文への組み込みは、全結果が揃ってから元の順で行う。
+	pageTables := make([][]pdfTable, len(body))
+	var progressMu sync.Mutex
+	completed := 0
+	if err := d.forPages(func(worker *pdfDoc, i int) error {
+		rules, err := worker.readRules(i)
+		if err != nil {
+			return err
+		}
+		pageTables[i] = findPDFTables(d.pages[i], rules)
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		completed++
+		if completed%100 == 0 {
+			fmt.Printf("  表の解析: %d / %d ページ\n", completed, len(body))
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
 	var previousTables []pdfTable
 	for i := range body {
 		pg := Page{num: i + 1}
@@ -70,11 +92,7 @@ func readSectionPages(p *domain.Profile, pdf string) ([]Page, error) {
 		pg.chapter = chapterOf(pg.printed)
 		pg.headings = pdfHeadingLines(d.pages[i], bodyCrop(p), bodySize)
 		pg.lines = collapseTableBlanks(splitLines(body[i]))
-		rules, err := d.readRules(i)
-		if err != nil {
-			return nil, err
-		}
-		tables := findPDFTables(d.pages[i], rules)
+		tables := pageTables[i]
 		for j := range tables {
 			tables[j].headerPage = pg.num
 		}
@@ -87,9 +105,6 @@ func readSectionPages(p *domain.Profile, pdf string) ([]Page, error) {
 		previousTables = tables
 		pg.fullLines = pg.lines
 		pages = append(pages, pg)
-		if (i+1)%100 == 0 {
-			fmt.Printf("  表の解析: %d / %d ページ\n", i+1, len(body))
-		}
 	}
 
 	// 版面ヘッダは 55 ページで空になる。大きな表が版面いっぱいに広がるページでは

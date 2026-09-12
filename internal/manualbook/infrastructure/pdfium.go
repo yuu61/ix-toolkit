@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"os"
+	"runtime"
 	"sync"
 	"time"
 
@@ -62,24 +63,27 @@ type pdfPage struct {
 // pdfDoc は開いた PDF 1 冊。文字は初回アクセス時にまとめて読む。
 type pdfDoc struct {
 	path     string
+	data     []byte // 並列処理のインスタンスも同じ原本を開く。
 	instance pdfium.Pdfium
 	ref      references.FPDF_DOCUMENT
 	pages    []pdfPage
 }
 
 var (
-	engineOnce sync.Once
-	engine     pdfium.Pdfium
-	engineErr  error
+	engineOnce  sync.Once
+	engine      pdfium.Pdfium
+	enginePools [maxPDFWorkers]pdfium.Pool
+	engineErr   error
 
 	docsMu sync.Mutex
 	docs   = map[string]*pdfDoc{}
 )
 
-// engineInstance は PDFium を 1 度だけ立ち上げ、プロセスで 1 つのインスタンスを
-// 使い回す。プールにインスタンスは 1 つしか無いので、冊ごとに取りに行くと
-// 2 冊目 (build で CRM の次に FD を開くとき) が空くのを待ち続けて時間切れになる。
-// 1 つのインスタンスで複数の文書を開けるので、取るのは 1 回でよい。
+// 主インスタンスは冊をまたいで使い回す。並列処理用のプールは必要時に作る。
+// wazero v1.12.0 の Emscripten 呼び出しは型情報を遅延初期化するため、
+// 同一 Runtime 内の複数インスタンスでも競合する。Runtime ごと分離する。
+const maxPDFWorkers = 4
+
 func engineInstance() (pdfium.Pdfium, error) {
 	engineOnce.Do(func() {
 		pool, err := webassembly.Init(webassembly.Config{
@@ -89,6 +93,7 @@ func engineInstance() (pdfium.Pdfium, error) {
 			engineErr = fmt.Errorf("PDFium の初期化に失敗: %w", err)
 			return
 		}
+		enginePools[0] = pool
 		if engine, err = pool.GetInstance(30 * time.Second); err != nil {
 			engineErr = fmt.Errorf("PDFium の取得に失敗: %w", err)
 		}
@@ -117,8 +122,9 @@ func openDoc(path string) (*pdfDoc, error) {
 		return nil, fmt.Errorf("PDF を開けません (%s): %w", path, err)
 	}
 
-	d := &pdfDoc{path: path, instance: inst, ref: res.Document}
+	d := &pdfDoc{path: path, data: b, instance: inst, ref: res.Document}
 	if err := d.readPages(); err != nil {
+		_, _ = inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: d.ref})
 		return nil, err
 	}
 	docs[path] = d
@@ -143,20 +149,76 @@ func (d *pdfDoc) page(i int) requests.Page {
 	return requests.Page{ByIndex: &requests.PageByIndex{Document: d.ref, Index: i}}
 }
 
-// readPages は全ページの文字と寸法を読む。1208 ページで 11 秒ほど。
+// forPages は各インスタンスを 1 つの goroutine だけで使う。
+// f は自分のページの結果だけを書き、他ページの結果は全処理の終了後に読む。
+// 呼び出し中は、呼び出し元も d.instance に触れない。
+func (d *pdfDoc) forPages(f func(*pdfDoc, int) error) error {
+	n := min(maxPDFWorkers, runtime.GOMAXPROCS(0), len(d.pages))
+	if n <= 1 {
+		for i := range d.pages {
+			if err := f(d, i); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	workers := []*pdfDoc{d}
+	for len(workers) < n {
+		k := len(workers)
+		if enginePools[k] == nil {
+			pool, err := webassembly.Init(webassembly.Config{MinIdle: 1, MaxIdle: 1, MaxTotal: 1})
+			if err != nil {
+				return fmt.Errorf("並列処理用 PDFium の初期化に失敗: %w", err)
+			}
+			enginePools[k] = pool
+		}
+		inst, err := enginePools[k].GetInstance(30 * time.Second)
+		if err != nil {
+			return fmt.Errorf("並列処理用 PDFium の取得に失敗: %w", err)
+		}
+		defer inst.Close()
+		res, err := inst.OpenDocument(&requests.OpenDocument{File: &d.data})
+		if err != nil {
+			return fmt.Errorf("並列処理用 PDF を開けません (%s): %w", d.path, err)
+		}
+		defer inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: res.Document})
+		workers = append(workers, &pdfDoc{path: d.path, data: d.data, instance: inst, ref: res.Document, pages: d.pages})
+	}
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for k, worker := range workers {
+		wg.Go(func() {
+			for i := k; i < len(d.pages); i += n {
+				if err := f(worker, i); err != nil {
+					errs[k] = err
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// readPages は全ページの文字と寸法を読み、ページ番号の位置に格納する。
 func (d *pdfDoc) readPages() error {
 	cnt, err := d.instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: d.ref})
 	if err != nil {
 		return err
 	}
 	d.pages = make([]pdfPage, cnt.PageCount)
-	for i := 0; i < cnt.PageCount; i++ {
-		size, err := d.instance.GetPageSize(&requests.GetPageSize{Page: d.page(i)})
+	return d.forPages(func(worker *pdfDoc, i int) error {
+		size, err := worker.instance.GetPageSize(&requests.GetPageSize{Page: worker.page(i)})
 		if err != nil {
 			return fmt.Errorf("ページ %d の寸法を取得できません: %w", i+1, err)
 		}
-		txt, err := d.instance.GetPageTextStructured(&requests.GetPageTextStructured{
-			Page:                   d.page(i),
+		txt, err := worker.instance.GetPageTextStructured(&requests.GetPageTextStructured{
+			Page:                   worker.page(i),
 			Mode:                   requests.GetPageTextStructuredModeChars,
 			CollectFontInformation: true,
 		})
@@ -204,8 +266,8 @@ func (d *pdfDoc) readPages() error {
 			}
 		}
 		d.pages[i] = pg
-	}
-	return nil
+		return nil
+	})
 }
 
 // renderPage はページを PNG 用の画像に焼く。呼び出し側が cleanup を呼ぶ。
