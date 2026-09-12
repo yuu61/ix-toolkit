@@ -178,6 +178,9 @@ func convertDoc(d domain.Doc, cacheDir, outDir, profilePath string) error {
 	// ページ画像が要るのは PDF の機能説明書だけ。コマンド辞書として読む資料では
 	// 誰も参照しない (md の側で -figures を断る条件と同じ)。
 	input := infrastructure.CachePath(cacheDir, d)
+	if d.Kind == "pdf" {
+		defer infrastructure.CloseDoc(input)
+	}
 	if d.Kind == "pdf" && !p.HasCommandEntries() {
 		if infrastructure.FiguresDone(outDir, input, buildFigureDPI) {
 			fmt.Printf("ページ画像: 焼いてある (%s)\n", filepath.Join(outDir, "figures"))
@@ -193,10 +196,14 @@ func convertDoc(d domain.Doc, cacheDir, outDir, profilePath string) error {
 		}
 	}
 
-	return Convert(MDOptions{
+	o := MDOptions{
 		Input: input, OutDir: outDir, ProfilePath: profilePath,
 		Title: d.Title, Series: d.Series, Version: d.Version,
-	})
+	}
+	if d.Kind == "pdf" {
+		return convertPDF(o)
+	}
+	return Convert(o)
 }
 
 // prefixWriter は各行の頭に印を付ける。裏で走る Web 取得の進捗が表の出力に

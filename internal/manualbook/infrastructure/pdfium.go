@@ -132,7 +132,7 @@ func openDoc(path string) (*pdfDoc, error) {
 }
 
 // CloseDoc は openDoc で開いた PDF を閉じ、文字の配列と PDFium 側の資源を返す。
-// 1 冊で終わるサブコマンドでは要らないが、build は続けて次の冊を開く。
+// application が PDF を使う一連の処理の終了時に呼ぶ。途中の失敗でも解放する。
 func CloseDoc(path string) {
 	docsMu.Lock()
 	defer docsMu.Unlock()

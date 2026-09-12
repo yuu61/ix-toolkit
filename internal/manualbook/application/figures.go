@@ -20,6 +20,7 @@ import (
 //
 // pages は焼くページの指定 (例 "1050-1060,1100")。空なら全ページ。
 func Figures(pdf, out string, dpi int, pages string) error {
+	defer infrastructure.CloseDoc(pdf)
 	n, err := infrastructure.RenderFigures(pdf, out, dpi, pages)
 	if err != nil {
 		return err

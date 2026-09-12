@@ -36,8 +36,13 @@ func Convert(o MDOptions) error {
 		}
 		return convertWeb(o)
 	}
+	defer infrastructure.CloseDoc(o.Input)
+	return convertPDF(o)
+}
+
+// convertPDF は呼び出し元が寿命を管理する PDF を変換する。
+func convertPDF(o MDOptions) error {
 	pdf := o.Input
-	defer infrastructure.CloseDoc(pdf) // build は続けて次の冊を開く
 
 	p := domain.DefaultProfile()
 	if o.ProfilePath != "" {
