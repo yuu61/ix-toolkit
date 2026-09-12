@@ -79,7 +79,7 @@ func convertPDF(o MDOptions) error {
 	// 節見出しで割る経路へ回す (sections.go)。
 	src := infrastructure.Source{Kind: "pdf", PDF: pdf, Label: o.SourceLabel, Series: o.Series, Version: o.Version, Profile: p}
 	if !p.HasCommandEntries() {
-		return infrastructure.ConvertSections(o.OutDir, docTitle, src)
+		return convertSections(o.OutDir, docTitle, src)
 	}
 
 	fmt.Printf("読み込み: %s (プロファイル %s)\n", pdf, p.Name)

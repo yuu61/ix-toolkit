@@ -42,7 +42,7 @@ func TestPDFHeadingsRequireChapterAndLargerNumber(t *testing.T) {
 	}
 	page := Page{num: 10, chapter: 2, section: "章・設定", lines: texts,
 		headings: pdfHeadingLines(pg, crop{}, 10.56)}
-	heads, _ := parseHeadings(&domain.Profile{ChapterSep: "・"}, []Page{page})
+	heads, _ := ParseHeadings(&domain.Profile{ChapterSep: "・"}, []Page{page})
 	var got []string
 	for _, h := range heads {
 		got = append(got, h.Number)

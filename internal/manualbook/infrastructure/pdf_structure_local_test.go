@@ -19,12 +19,12 @@ func TestLocalPDFHeadings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pages, err := readSectionPages(p, pdf)
+	pages, err := ReadSectionPages(p, pdf, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer CloseDoc(pdf)
-	heads, _ := parseHeadings(p, pages)
+	heads, _ := ParseHeadings(p, pages)
 	if len(heads) != 1295 {
 		t.Fatalf("headings = %d, want 1295", len(heads))
 	}

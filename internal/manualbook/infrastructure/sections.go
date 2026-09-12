@@ -46,8 +46,9 @@ var tocLeaderRe = regexp.MustCompile(`\.{6,}`)
 
 // --- 読み込み ---
 
-// readSectionPages は本文帯とヘッダ・フッタ帯を読み、ページの列に組み立てる。
-func readSectionPages(p *domain.Profile, pdf string) ([]Page, error) {
+// ReadSectionPages は本文帯とヘッダ・フッタ帯を読み、ページの列に組み立てる。
+// progress は表の解析済みページ数を通知する。通知は直列化し、nil なら省略する。
+func ReadSectionPages(p *domain.Profile, pdf string, progress func(completed, total int)) ([]Page, error) {
 	body, err := extractBody(p, pdf)
 	if err != nil {
 		return nil, err
@@ -77,8 +78,8 @@ func readSectionPages(p *domain.Profile, pdf string) ([]Page, error) {
 		progressMu.Lock()
 		defer progressMu.Unlock()
 		completed++
-		if completed%100 == 0 {
-			fmt.Printf("  表の解析: %d / %d ページ\n", completed, len(body))
+		if progress != nil {
+			progress(completed, len(body))
 		}
 		return nil
 	}); err != nil {
@@ -262,7 +263,7 @@ func hasJapanese(s string) bool {
 
 // --- 節の切り出し ---
 
-func parseHeadings(p *domain.Profile, pages []Page) ([]domain.Heading, map[int]string) {
+func ParseHeadings(p *domain.Profile, pages []Page) ([]domain.Heading, map[int]string) {
 	chapters := map[int]string{}
 	var heads []domain.Heading
 	var cur *domain.Heading
@@ -477,9 +478,6 @@ func WriteSections(outDir, docTitle string, src Source,
 		return err
 	}
 	figs := loadFigures(outDir)
-	if len(figs) > 0 {
-		fmt.Printf("  ページ画像: %d 枚 (%s)\n", len(figs), filepath.Join(outDir, "figures"))
-	}
 
 	var order []domain.SectionKey
 	grouped := map[domain.SectionKey][]*domain.Heading{}
@@ -820,43 +818,4 @@ func writeSectionReadme(outDir, docTitle string, src Source,
 		fmt.Fprintln(&b, "そのあと `manualbook md` をもう一度流す (変換は figures/ を消さない)。")
 	}
 	return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644)
-}
-
-// ConvertSections は md の、PDF を節見出しで割る経路。
-func ConvertSections(outDir, docTitle string, src Source) error {
-	p, pdf := src.Profile, src.PDF
-	fmt.Printf("読み込み: %s (プロファイル %s / 節見出しで割る)\n", pdf, p.Name)
-	pages, err := readSectionPages(p, pdf)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("  ページ数: %d\n", len(pages))
-
-	heads, chapters := parseHeadings(p, pages)
-	nLayout, nTables := 0, 0
-	for i := range heads {
-		for _, b := range heads[i].Blocks {
-			if b.Kind == domain.BlockTable {
-				nTables++
-			}
-			if b.Kind != domain.BlockProse {
-				nLayout++
-			}
-		}
-	}
-	fmt.Printf("  見出し: %d 件 / 章: %d / 版面ブロック: %d\n", len(heads), len(chapters), nLayout)
-	fmt.Printf("  Markdown の表: %d 件\n", nTables)
-
-	if len(heads) == 0 {
-		return fmt.Errorf("見出しを 1 件も抽出できませんでした。" +
-			"この資料の見出しが階層番号 (2.11.6 の形) で始まっているか確認してください")
-	}
-
-	if err := WriteSections(outDir, docTitle, src, heads, chapters); err != nil {
-		return err
-	}
-	fmt.Printf("\n出力しました: %s\n", outDir)
-	fmt.Printf("  機械可読索引: %s\n", filepath.Join(outDir, "sections.tsv"))
-	fmt.Printf("  目次:         %s\n", filepath.Join(outDir, "index.md"))
-	return nil
 }

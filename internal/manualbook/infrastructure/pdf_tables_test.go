@@ -99,7 +99,7 @@ func TestPDFTableStaysBetweenProseAndKeepsSource(t *testing.T) {
 	blocks[1] = b
 	lines = append([]string{"1.2 本文"}, lines...)
 	page := Page{num: 27, chapter: 1, section: "章・節", lines: lines, tables: map[int]domain.Block{2: b}}
-	heads, _ := parseHeadings(&domain.Profile{ChapterSep: "・"}, []Page{page})
+	heads, _ := ParseHeadings(&domain.Profile{ChapterSep: "・"}, []Page{page})
 	if len(heads) != 1 {
 		t.Fatalf("headings = %d", len(heads))
 	}
