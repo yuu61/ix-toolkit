@@ -26,7 +26,21 @@ func (d *pdfDoc) readRules(page int) ([]pdfRule, error) {
 func imageRules(img image.Image, width, height float64) []pdfRule {
 	b := img.Bounds()
 	gray := image.NewGray(image.Rect(0, 0, b.Dx(), b.Dy()))
-	draw.Draw(gray, gray.Bounds(), img, b.Min, draw.Src)
+	if rgba, ok := img.(*image.RGBA); ok {
+		// PDFium の RGBA を直接読む。draw.Draw の汎用経路にある画素ごとの
+		// インターフェース呼び出しと座標の範囲確認を省く。
+		// color.GrayModel と同じ係数・丸めで、罫線の判定結果を保つ。
+		for y := 0; y < b.Dy(); y++ {
+			src := rgba.Pix[y*rgba.Stride : y*rgba.Stride+4*b.Dx()]
+			dst := gray.Pix[y*gray.Stride : y*gray.Stride+b.Dx()]
+			for x := range dst {
+				r, g, blue := uint32(src[4*x])*0x101, uint32(src[4*x+1])*0x101, uint32(src[4*x+2])*0x101
+				dst[x] = uint8((19595*r + 38470*g + 7471*blue + 1<<15) >> 24)
+			}
+		}
+	} else {
+		draw.Draw(gray, gray.Bounds(), img, b.Min, draw.Src)
+	}
 	sx, sy := width/float64(b.Dx()), height/float64(b.Dy())
 	var rules []pdfRule
 	// 文字の短い画は除く。罫線候補は後段で閉じたセル群を作れるものだけ採用する。
