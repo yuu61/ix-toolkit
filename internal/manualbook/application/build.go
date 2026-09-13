@@ -31,9 +31,8 @@ import (
 // 進める。PDF の文字抽出と表の解析は infrastructure 内でページごとに並列化する。
 // そこで使う各 PDFium インスタンスは独立させ、同時に共有しない。
 //
-// PDF の機能説明書はページ画像も必ず焼く (図は版面を見ないと向きが分からず、
-// エージェントが開けるのは PNG だけ)。全ページで 72 秒・404 MB だが、初回は
-// Web を待つ時間に収まる。焼いてあれば飛ばすので、2 回目以降は変換だけになる。
+// PDF の機能説明書と設定事例集はページ画像も必ず焼く (図は版面を見ないと
+// 向きが分からない)。焼いてあれば飛ばすので、2 回目以降は変換だけになる。
 
 // buildFigureDPI はページ画像の解像度。この資料の最小文字 (約 7pt) が読める下限
 // が 150dpi (sections.go の実測)。
@@ -161,7 +160,7 @@ func fetchIfNeeded(w io.Writer, client *http.Client, d domain.Doc, cacheDir stri
 }
 
 // convertDoc は取得済みの資料 1 件を <manuals>/<系列>/<冊子>/ に変換する。
-// PDF の機能説明書なら、先にページ画像を焼く (囲みに [ページ画像] を付けるかは
+// PDF の機能説明書・設定事例集なら、先にページ画像を焼く (囲みに [ページ画像] を付けるかは
 // 変換時に figures/ を見て決めるので、この順でないとリンクが付かない)。
 func convertDoc(d domain.Doc, cacheDir, outDir, profilePath string) error {
 	p := domain.DefaultProfile()
@@ -175,7 +174,7 @@ func convertDoc(d domain.Doc, cacheDir, outDir, profilePath string) error {
 		return err
 	}
 
-	// ページ画像が要るのは PDF の機能説明書だけ。コマンド辞書として読む資料では
+	// ページ画像が要るのは PDF の機能説明書・設定事例集。コマンド辞書として読む資料では
 	// 誰も参照しない (md の側で -figures を断る条件と同じ)。
 	input := infrastructure.CachePath(cacheDir, d)
 	if d.Kind == "pdf" {

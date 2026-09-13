@@ -41,7 +41,7 @@ func TestPDFHeadingsRequireChapterAndLargerNumber(t *testing.T) {
 		pg.glyphs = append(pg.glyphs, structureLine(s, 45, float64(700-i*25), size)...)
 	}
 	page := Page{num: 10, chapter: 2, section: "章・設定", lines: texts,
-		headings: pdfHeadingLines(pg, crop{}, 10.56)}
+		headings: pdfHeadingLines(pg, crop{}, 10.56, 0)}
 	heads, _ := ParseHeadings(&domain.Profile{ChapterSep: "・"}, []Page{page})
 	var got []string
 	for _, h := range heads {
@@ -74,6 +74,45 @@ func TestPDFBodyFontSizeUsesBookAndIgnoresMargins(t *testing.T) {
 	tablePage := pdfPage{width: 600, height: 800, glyphs: structureLine("小さい表", 45, 700, 8)}
 	if got := pdfBodyFontSize([]pdfPage{pg, tablePage}, crop{top: 40}); got != 10.56 {
 		t.Fatalf("body font size = %v", got)
+	}
+}
+
+func TestPDFExampleHeadingsAndAlternatingFooters(t *testing.T) {
+	for _, footer := range []string{"IPv4 設定 1-3", "1-4 IPv4 設定"} {
+		section, printed := footerSection(footer)
+		if section != "IPv4 設定" || chapterOf(printed) != 1 {
+			t.Fatalf("footer = %q, %q", section, printed)
+		}
+		texts := []string{"１．１　２つのLANを接続する", "１．2 経路を設定する", "１．３ 目次 · · · · · · · · · 1-5", "２．１ 別章", "192.168.0.1 Router", "Router(config)# ip route default 192.0.2.1", "1.1 項と同じ設定です。", "１．４ 目次の長い題 1-6"}
+		pg := pdfPage{width: 600, height: 800}
+		for i, s := range texts {
+			size := 12.0
+			if i >= 4 {
+				size = 10
+			}
+			pg.glyphs = append(pg.glyphs, structureLine(s, 45, float64(700-i*25), size)...)
+		}
+		// 通常の12pt見出しに加え、長い題を縮めた10.49ptの見出しも残す。
+		texts = append(texts, "１．５ 長い題を縮めた事例")
+		pg.glyphs = append(pg.glyphs, structureLine(texts[len(texts)-1], 45, 480, 10.49)...)
+		page := Page{num: 16, chapter: 1, section: section, lines: texts, headings: pdfHeadingLines(pg, crop{}, 9, 10.3)}
+		heads, chapters := ParseHeadings(&domain.Profile{FooterSection: true}, []Page{page})
+		if len(heads) != 3 {
+			t.Fatalf("headings = %+v", heads)
+		}
+		if heads[0].Number != "1.1" || heads[1].Number != "1.2" || heads[0].Title != "２つのLANを接続する" || heads[0].Ref.Page != 16 || chapters[1] != section {
+			t.Fatalf("headings or chapter lost: %+v, %v", heads, chapters)
+		}
+		var body strings.Builder
+		for _, b := range heads[1].Blocks {
+			body.WriteString(strings.Join(b.Lines, "\n"))
+		}
+		if !strings.Contains(body.String(), texts[5]) {
+			t.Error("configuration text changed")
+		}
+		if !strings.Contains(body.String(), texts[6]) {
+			t.Error("cross-reference lost from body")
+		}
 	}
 }
 

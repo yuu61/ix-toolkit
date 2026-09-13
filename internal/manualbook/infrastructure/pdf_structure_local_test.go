@@ -62,3 +62,49 @@ func TestLocalPDFHeadings(t *testing.T) {
 		}
 	}
 }
+
+// 原本は配布しない。設定事例集のしおりにある全251事例と照合した件数・位置を検証する。
+func TestLocalPDFExampleHeadings(t *testing.T) {
+	root := os.Getenv("IX_MANUALBOOK_PDF_ROOT")
+	if root == "" {
+		t.Skip("set IX_MANUALBOOK_PDF_ROOT to check local PDFs")
+	}
+	pdf := filepath.Join(root, "pdf", "IX1-3K-EX-10.11a.pdf")
+	p, err := LoadProfile(filepath.Join(root, "profiles", "nec-ix-ex.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages, err := ReadSectionPages(p, pdf, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer CloseDoc(pdf)
+	heads, chapters := ParseHeadings(p, pages)
+	if len(heads) != 251 || len(chapters) != 40 {
+		t.Fatalf("headings=%d chapters=%d", len(heads), len(chapters))
+	}
+	seen := map[string]int{}
+	continued := false
+	for _, h := range heads {
+		if _, ok := seen[h.Number]; ok {
+			t.Errorf("duplicate heading %s", h.Number)
+		}
+		seen[h.Number] = h.Ref.Page
+		if h.Chapter == 0 || h.Ref.Page < 16 {
+			t.Errorf("front matter became example: %+v", h)
+		}
+		for _, b := range h.Blocks {
+			if h.Number == "1.5" && b.Ref.Page == 22 && strings.Contains(strings.Join(b.Lines, "\n"), "Router(config)") {
+				continued = true
+			}
+		}
+	}
+	for number, page := range map[string]int{"1.1": 16, "9.1": 143, "18.20": 530, "40.2": 1106} {
+		if seen[number] != page {
+			t.Errorf("%s page=%d, want %d", number, seen[number], page)
+		}
+	}
+	if !continued {
+		t.Error("configuration on continuation page lost")
+	}
+}

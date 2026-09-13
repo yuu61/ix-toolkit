@@ -4,10 +4,10 @@
     "url は配布ページを見て人が転記する (版ごとにリンクが変わるため、推測して書かないこと)。",
     "pdf は url が空でも、手元にある PDF を pdf/<name>.pdf に置けば取得済みとして変換に進む。",
     "kind は \"pdf\" か \"web\" を明示する (取得と検証の作法が変わるので推測しない)。",
-    "web: version が index の <title> の版と完全一致するかで検証する。版が上がっていたら取得せずに",
+    "web: version が index の <title> の版と完全一致するかで検証する。versionSource: edition は本文の「版数」直下を読む。版が上がっていたら取得せずに",
     "     止まるので、配布ページを確かめて version と url を更新する。",
     "series は機種の系列 (ix = IX2000/IX3000, ix-r = IX-R/IX-V)、book は冊子 (crm = コマンド",
-    "リファレンス, fd = 機能説明書)。変換結果は <manuals>/<series>/<book>/ に置かれ、README にも載る。",
+    "リファレンス, fd = 機能説明書, ex = 設定事例集)。変換結果は <manuals>/<series>/<book>/ に置かれ、README にも載る。",
     "profile / title は変換に渡す値。profile の相対パスはこのファイルの場所から解く。"
   ],
   "docs": [
@@ -32,6 +32,16 @@
       "profile": "profiles/nec-ix-fd.json"
     },
     {
+      "name": "IX1-3K-EX-10.11a",
+      "series": "ix",
+      "book": "ex",
+      "kind": "pdf",
+      "title": "IX2000/IX3000 設定事例集 10.11a",
+      "url": "https://www.support.nec.co.jp/DownLoad.aspx?file=IX1-3K-EX-10.11a.pdf&id=3170102600",
+      "version": "10.11a",
+      "profile": "profiles/nec-ix-ex.json"
+    },
+    {
       "name": "IX-R-CRM-1.5a",
       "series": "ix-r",
       "book": "crm",
@@ -50,6 +60,17 @@
       "url": "https://www.necplatforms.co.jp/dl/ix-nrv/manual/fd/",
       "version": "1.5a",
       "profile": "profiles/nec-ix-r-fd.json"
+    },
+    {
+      "name": "IX-R-EX-1.5",
+      "series": "ix-r",
+      "book": "ex",
+      "kind": "web",
+      "title": "IX-R/IX-V 設定事例集 1.5",
+      "url": "https://www.necplatforms.co.jp/dl/ix-nrv/manual/ex/",
+      "version": "1.5",
+      "versionSource": "edition",
+      "profile": "profiles/nec-ix-r-ex.json"
     }
   ]
 }

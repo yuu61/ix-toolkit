@@ -30,3 +30,18 @@ func TestMatchesWebVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckDocBooks(t *testing.T) {
+	for _, series := range []string{"ix", "ix-r"} {
+		for _, book := range []string{"crm", "fd", "ex"} {
+			if err := domain.CheckDoc(domain.Doc{Series: series, Book: book}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, d := range []domain.Doc{{Series: "ix"}, {Series: "ix", Book: "other"}, {Book: "ex"}} {
+		if domain.CheckDoc(d) == nil {
+			t.Errorf("accepted incomplete or unknown book: %+v", d)
+		}
+	}
+}

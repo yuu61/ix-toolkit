@@ -1,0 +1,14 @@
+{
+  "name": "nec-ix-ex",
+  "pageWidth": 595.44,
+  "pageHeight": 842.16,
+  "marginTop": 45,
+  "marginBottom": 70,
+  "columns": 1,
+  "headerBand": 0,
+  "footerBand": 776,
+  "entryMarker": "",
+  "fieldLabels": [],
+  "footerSection": true,
+  "headingMinSize": 10.3
+}

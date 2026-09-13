@@ -11,7 +11,7 @@ skill は SKILL.md 形式なので、Codexなど同じ形式を読むエージ�
 | skill | 用途 | 種別 |
 |---|---|---|
 | `ix-show` | show コマンドで状態確認 | 読み取り専用 |
-| `ix-manual` | コマンドリファレンス・機能説明書を引く | 読み取り専用・機器に接続しない |
+| `ix-manual` | コマンドリファレンス・機能説明書・設定事例集を引く | 読み取り専用・機器に接続しない |
 | `ix-backup` | running-config をファイルに退避 | 読み取り専用 |
 | `ix-configure` | 設定を投入 | **破壊的**・実行前に確認必須 |
 | `ix-save` | `write memory` で永続化 | **破壊的** |
@@ -152,12 +152,12 @@ windows Defender の`Trojan:Win32/Bearfoos.A!ml` の誤検知に引っ掛かる�
 `build` は `manifest.json` を読んで、取得 → 変換 → 系列間の差分表まで 1 回で作る。指定はすべて
 `manifest.json` にあるので、フラグは要らない。
 
-1. 無印 (PDF) の 2 冊は配布ページの URL が版ごとに変わるので `manifest.json` の `url` が空のまま。
-   手元にある PDF を `pdf/<name>.pdf`（`name` は `manifest.json` の値。`pdf/CRM-ver10.11-1.1.pdf`）に
-   置いておく。無ければその 2 冊だけ失敗して、残りは作られる。
-2. `manualbook build`。IX-R/IX-V (Web) はサイトから取る（1 ページ 1 秒の間隔で、2 冊で 8 分ほど）。
-   Web の取得は裏で先に始め、その間に PDF の 2 冊を変換する（機能説明書はページ画像も焼く）ので、
-   PDF の機能説明書では、罫線の検出のため変換時にも全ページを描画する。
+1. 無印の設定事例集は `pdf/IX1-3K-EX-10.11a.pdf` に置いておく（`manifest.json` の `url` は空）。
+   他の PDF も手元にあれば `pdf/<name>.pdf` に置ける。無ければ manifest の URL から取得する。
+   URL と手元の PDF の両方が無い冊子だけ失敗し、残りは作られる。
+2. `manualbook build`。IX-R/IX-V (Web) はページ・画像を1ファイル1秒の間隔でサイトから取る。
+   Web の取得は裏で先に始め、その間に PDF の3冊を変換する。機能説明書と設定事例集は
+   ページ画像も焼き、罫線の検出のため変換時にも全ページを描画する。
 3. `~/.ix-toolkit/manuals/<系列>/<冊子>/` に本文と索引、`~/.ix-toolkit/manuals/ix-r/diff.tsv` に
    系列間のコマンド対応表ができる。
 
@@ -168,21 +168,22 @@ windows Defender の`Trojan:Win32/Bearfoos.A!ml` の誤検知に引っ掛かる�
 - PDF の文字抽出と表の解析は、独立した PDFium インスタンスで最大 4 ページを並列処理する。
   ページ順とページをまたぐ表の結合は維持する。メモリ使用量を抑える場合は環境変数 `GOMAXPROCS=1`
   で逐次処理にできる（PowerShell では `$env:GOMAXPROCS = '1'`）。
-- PDF の機能説明書はページ画像も焼く（404 MB。初回は Web の取得を待つ間に焼くので時間は増えず、
-  焼いてあれば飛ばす）。図の向きや構成をエージェントに見せるのに要る（[後述](#図とページ画像-pdf)）。
+- PDF の機能説明書と設定事例集はページ画像も焼く（焼いてあれば飛ばす）。図の向きや構成を
+  エージェントに見せるのに要る（[後述](#図とページ画像-pdf)）。
 - 定期的に取りに行く仕組みは無い。NEC の更新情報を見て版が上がっていたら、`manifest.json` の
   `version` / `url`（Web は `name` も）を直して `build` を流す（Web は版が違うと取得せずに止まる）。
-  同じ版を取り直すなら `-force`（Web は全ページ落とし直すので初回と同じ 8 分ほど掛かる）。
+  同じ版を取り直すなら `-force`（Web は全ページ・画像を落とし直すので初回と同じ時間が掛かる）。
 - 置き場を変えるなら `-manuals <dir>`（`$IX_MANUALS` があればそれが既定）。1 冊だけなら `-only <name>`。
 
 ### 資料と置き場所
 
 | 系列 | 機種 | 資料 | `manifest.json` の `kind` |
 |---|---|---|---|
-| `ix` | IX2000/IX3000 | PDF（CRM / FD Ver 10.11） | `pdf` |
-| `ix-r` | IX-R/IX-V | Web（Sphinx で組まれた HTML、Ver 1.5a） | `web` |
+| `ix` | IX2000/IX3000 | PDF（CRM / FD 10.11-1.1、EX 10.11a） | `pdf` |
+| `ix-r` | IX-R/IX-V | Web（Sphinx HTML、CRM / FD 1.5a、EX 1.5） | `web` |
 
-冊子は `manifest.json` の `book` で、`crm`（コマンドリファレンス）と `fd`（機能説明書）の 2 種類。
+冊子は `manifest.json` の `book` で、`crm`（コマンドリファレンス）、`fd`（機能説明書）、
+`ex`（設定事例集）の3種類。
 変換結果は `~/.ix-toolkit/manuals/<系列>/<冊子>/` に置く。`ix-manual` は `$IX_MANUALS` →
 `~/.ix-toolkit/manuals/` → `~/.claude/ix-manuals/` の順に探し、その下を `<系列>/<冊子>/` として読む。
 
@@ -190,10 +191,12 @@ windows Defender の`Trojan:Win32/Bearfoos.A!ml` の誤検知に引っ掛かる�
 ~/.ix-toolkit/manuals/
 ├── ix/
 │   ├── crm/            commands.tsv  index.md  README.md  ch03-インタフェース編/NGN.md …
-│   └── fd/             sections.tsv  index.md  README.md  figures/  ch02-ルータの設定/…
+│   ├── fd/             sections.tsv  index.md  README.md  figures/  ch02-ルータの設定/…
+│   └── ex/             sections.tsv  index.md  README.md  figures/  ch01-IPv4 設定/…
 └── ix-r/
     ├── crm/            commands.tsv  …
     ├── fd/             sections.tsv  figures/*.svg  …
+    ├── ex/             sections.tsv  figures/  …
     └── diff.tsv        無印 → IX-R のコマンド対応表
 ```
 
@@ -201,7 +204,8 @@ windows Defender の`Trojan:Win32/Bearfoos.A!ml` の誤検知に引っ掛かる�
 
 - `commands.tsv` は `command / entry / file / line / source`、`sections.tsv` は
   `section / title / file / line / source`。
-- `line` は本文ファイル中の見出し行番号。そこから 30 行読めば 1 項目が収まる。
+- `line` は本文ファイル中の見出し行番号。crm は30行程度、fd / ex は60行程度から読み始め、
+  項目の終わりまで広げる。設定事例は複数ページに続くことがある。
 - `source` は元資料上の位置。PDF 由来なら物理ページ `p1057`（PDF ビューアの `#page=` にそのまま
   渡せる）、Web 由来なら元のページと節のアンカー `cli/interface/cli_ngn.html#ngn-ip-enable`
   （冊子の `README.md` にある URL に続ければ開く）。
@@ -211,9 +215,11 @@ windows Defender の`Trojan:Win32/Bearfoos.A!ml` の誤検知に引っ掛かる�
 
 #### 無印 (PDF)
 
-- 文字はテキスト層から読む（OCR 不使用）。機能説明書の表はページ画像を 144dpi で描画して
+- 文字はテキスト層から読む（OCR 不使用）。機能説明書・設定事例集の表はページ画像を 144dpi で描画して
   水平・垂直の罫線を検出し、文字の座標をセルへ割り当てる。画像として埋め込まれた罫線にも対応する。
 - 出力は無損失ではない。段間に掛かった数文字が落ちるページがある
+- 設定事例集は専用プロファイル `nec-ix-ex.json` を使う。全角の節番号は索引で半角に揃え、
+  左右ページで順序が入れ替わるフッタの章名・ページ番号を読む。目次のリーダ罫は索引に含めない。
 - 罫線から閉じたセル群を復元できた表は、IX-R と同じ Markdown の表になる。結合セルの値は
   覆う行・列へ繰り返し、セル内の複数行は `<br>` で残す。ページをまたぐ表はページごとに出力する。
   前ページと同じ節・列配置で間に本文が無い場合、省略された列見出しを補い、その出典も付ける。
@@ -225,11 +231,13 @@ windows Defender の`Trojan:Win32/Bearfoos.A!ml` の誤検知に引っ掛かる�
 #### IX-R/IX-V (Web)
 
 - 取得は 1 ページずつ間隔を置き、`searchindex.js` にあるページだけを取る（サイトを這わない）。
-  索引ページの題に `version` が含まれるかで版を確かめてから取る。
+  索引ページの題に `version` が独立した値として含まれるかで版を確かめてから取る。
+  設定事例集は題に版数が無いので `versionSource: "edition"` を指定し、本文の「版数」直下の
+  段落と照合する。無指定または `"title"` は従来どおり題を読む。対象箇所の欠落・版違いでは取得しない。
 - サイトはブラウザ以外の User-Agent に 403 を返すので、既定でブラウザの UA を名乗る
   （`fetch -user-agent` で変えられる）。
-- 表は Markdown の表になる（結合セルは覆う範囲に値を繰り返す）。図は SVG のまま `figures/` に
-  置き、本文には図中のラベルを ` ```text ` で並べたうえで `[図]` リンクを付ける。
+- 表は Markdown の表になる（結合セルは覆う範囲に値を繰り返す）。図は SVG / PNG など元の形式で
+  `figures/` に置き、`[図]` リンクを付ける。SVG の文字ラベルは ` ```text ` にも残す。
 - 図の読み込みや保存に失敗した場合は、その冊子の変換をエラーにする。本文と索引の書き出しは
   図の保存がすべて成功してから進める。
 - 各ブロックの直後に `[出典](https://…#…)` が付く。
@@ -250,9 +258,9 @@ windows Defender の`Trojan:Win32/Bearfoos.A!ml` の誤検知に引っ掛かる�
   矢印の向き・包含関係・順序は失われる。構成や流れを答えるにはページそのものを見るしかない。
 - 囲みの直後の PDF リンクを辿れるのは PDF ビューアを開ける人だけ。`ix-manual` を動かすエージェントは
   `#page=1057` を辿れないが、PNG なら `Read` で開ける。
-- `build` が機能説明書の全ページを PNG に焼き、囲みの直後に `[ページ画像]` を付ける。
+- `build` が機能説明書と設定事例集の全ページを PNG に焼き、囲みの直後に `[ページ画像]` を付ける。
   変換と同じ PDFium が描くので、別の道具は要らない。コマンドリファレンスと Web 由来の冊子は
-  焼かない（囲みとページリンクを出すのが機能説明書の側だけ。Web は図が SVG で残る）。
+  焼かない（Web は元の画像形式で図を残す）。
 - 焼いてあれば飛ばす（`figures/.manualbook.json` に残る元 PDF の名前と dpi で判定。版が上がって
   PDF が入れ替われば焼き直す）。焼き直したいときは `figures/` を消して `build` を流す（+72 秒）。
   `-force` は取得の話で、ここには効かない。
@@ -285,6 +293,8 @@ manualbook scan    見開きスキャン画像を 1 ページずつに分割す�
 $ manualbook fetch -manifest manifest.json -out pdf/
 $ manualbook md pdf/CRM-ver10.11-1.1.pdf -profile profiles/nec-ix-crm.json -series ix -version 10.11-1.1 -out ~/.ix-toolkit/manuals/ix/crm
 $ manualbook md pdf/FD-ver10.11-1.1.pdf  -profile profiles/nec-ix-fd.json  -series ix -version 10.11-1.1 -out ~/.ix-toolkit/manuals/ix/fd -figures
+$ manualbook build -only IX1-3K-EX-10.11a
+$ manualbook build -only IX-R-EX-1.5
 $ manualbook md pdf/IX-R-CRM-1.5a -out ~/.ix-toolkit/manuals/ix-r/crm
 $ manualbook md pdf/IX-R-FD-1.5a  -out ~/.ix-toolkit/manuals/ix-r/fd
 $ manualbook diff ~/.ix-toolkit/manuals/ix ~/.ix-toolkit/manuals/ix-r

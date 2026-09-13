@@ -31,7 +31,7 @@ func headingTextKey(s string) string { return strings.Join(strings.Fields(s), ""
 // pdfHeadingLines は番号に見える行から、本文より大きな字で組まれた見出しを選ぶ。
 // 字面の高さやフォントの太さではなく、PDF の変換行列を反映した文字サイズを使う。
 // FD の本文は 10.56pt、下位見出しは 11.04pt。2% の余裕は丸め誤差を除くため。
-func pdfHeadingLines(pg pdfPage, body crop, bodySize float64) map[string]bool {
+func pdfHeadingLines(pg pdfPage, body crop, bodySize, minSize float64) map[string]bool {
 	out := map[string]bool{}
 	var gs []glyph
 	for _, g := range pg.glyphs {
@@ -47,8 +47,8 @@ func pdfHeadingLines(pg pdfPage, body crop, bodySize float64) map[string]bool {
 			continue
 		}
 		for _, g := range ln.glyphs {
-			if g.r >= '0' && g.r <= '9' {
-				if bodySize > 0 && g.fontSize > bodySize*1.02 {
+			if g.r >= '0' && g.r <= '9' || g.r >= '０' && g.r <= '９' {
+				if bodySize > 0 && g.fontSize > bodySize*1.02 && g.fontSize >= minSize {
 					out[headingTextKey(s)] = true
 				}
 				break
@@ -59,7 +59,7 @@ func pdfHeadingLines(pg pdfPage, body crop, bodySize float64) map[string]bool {
 }
 
 func isPageHeading(pg Page, text, number string) bool {
-	chapter, _, _ := strings.Cut(number, ".")
+	chapter, _, _ := strings.Cut(normalizeHeadingNumber(number), ".")
 	n, _ := strconv.Atoi(chapter)
 	if pg.chapter > 0 && n != pg.chapter {
 		return false

@@ -40,9 +40,32 @@ import (
 
 // 見出し行。"■2.11 PPP の設定" と "2.11.6 オンデマンド帯域幅制御（BOD）の設定" の両方。
 // 目次のリーダ罫 (".........") を含む行は本文の見出しではないので呼ぶ側で落とす。
-var headingRe = regexp.MustCompile(`^(■)?\s*(\d+(?:\.\d+)+)\s+(\S.*?)\s*$`)
+var headingRe = regexp.MustCompile(`^(■)?\s*([0-9０-９]+(?:[.．][0-9０-９]+)+)[\s\x{3000}]+(\S.*?)\s*$`)
 
-var tocLeaderRe = regexp.MustCompile(`\.{6,}`)
+var tocLeaderRe = regexp.MustCompile(`(?:[.·．・][\s\x{3000}]*){6,}`)
+
+var printedPageRe = regexp.MustCompile(`\b\d+-\d+\b`)
+
+func footerSection(footer string) (section, printed string) {
+	printed = printedPageRe.FindString(footer)
+	if printed == "" {
+		return "", ""
+	}
+	return domain.Collapse(strings.Replace(footer, printed, "", 1)), printed
+}
+
+// normalizeHeadingNumber は索引の番号だけを半角に揃える。本文やコマンドは変えない。
+func normalizeHeadingNumber(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= '０' && r <= '９' {
+			return r - '０' + '0'
+		}
+		if r == '．' {
+			return '.'
+		}
+		return r
+	}, s)
+}
 
 // --- 読み込み ---
 
@@ -90,8 +113,11 @@ func ReadSectionPages(p *domain.Profile, pdf string, progress func(completed, to
 		pg := Page{num: i + 1}
 		pg.section = at(headers, i)
 		pg.printed = firstToken(at(footers, i))
+		if p.FooterSection {
+			pg.section, pg.printed = footerSection(at(footers, i))
+		}
 		pg.chapter = chapterOf(pg.printed)
-		pg.headings = pdfHeadingLines(d.pages[i], bodyCrop(p), bodySize)
+		pg.headings = pdfHeadingLines(d.pages[i], bodyCrop(p), bodySize, p.HeadingMinSize)
 		pg.lines = collapseTableBlanks(splitLines(body[i]))
 		tables := pageTables[i]
 		for j := range tables {
@@ -312,6 +338,9 @@ func ParseHeadings(p *domain.Profile, pages []Page) ([]domain.Heading, map[int]s
 		flushLayout()
 
 		chName, secName := splitRunningHeader(pg.section, p.ChapterSep)
+		if p.FooterSection {
+			chName = secName
+		}
 		if pg.chapter > 0 && chName != "" {
 			chapters[pg.chapter] = chName
 		}
@@ -331,9 +360,9 @@ func ParseHeadings(p *domain.Profile, pages []Page) ([]domain.Heading, map[int]s
 			if m := headingRe.FindStringSubmatch(t); m != nil && isPageHeading(pg, t, m[2]) {
 				flushLayout()
 				heads = append(heads, domain.Heading{
-					Number:  m[2],
+					Number:  normalizeHeadingNumber(m[2]),
 					Title:   m[3],
-					Depth:   strings.Count(m[2], ".") + 1,
+					Depth:   strings.Count(normalizeHeadingNumber(m[2]), ".") + 1,
 					Chapter: pg.chapter,
 					Section: secName,
 					// 版面に刷られた番号 (2-118) ではなく PDF の物理ページを持つ。

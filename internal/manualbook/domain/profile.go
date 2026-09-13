@@ -41,6 +41,14 @@ type Profile struct {
 	// "ルータの設定・PPP の設定" の形をしている。節名自体が "運用・保守" のように
 	// 区切りを含むことがあるので、最初の 1 つだけで割る。
 	ChapterSep string `json:"chapterSep,omitempty"`
+
+	// FooterSection は章名と章別ページ番号がフッタに並ぶ冊子用。
+	// 左右ページで並び順が変わるため、番号を除いた文字列を章名・節ファイル名に使う。
+	FooterSection bool `json:"footerSection,omitempty"`
+
+	// HeadingMinSize は節番号の最小文字サイズ (pt)。設定例の小さなコマンド文字が
+	// 本文の最頻サイズになる冊子で、地の文中の参照番号を見出しと誤認しないために使う。
+	HeadingMinSize float64 `json:"headingMinSize,omitempty"`
 }
 
 // HasCommandEntries は、この資料をコマンド項目として読めるかを返す。

@@ -226,6 +226,39 @@ func TestFetchWebRejectsDifferentVersion(t *testing.T) {
 	}
 }
 
+func TestFetchWebEditionVersion(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, source string
+		want               bool
+	}{
+		{"edition", `<title>Examples</title><section><h2>版数<a class="headerlink">¶</a></h2><p>第1.5版 2026年4月発行</p></section>`, "edition", true},
+		{"changed", `<h2>版数</h2><p>第1.6版</p><p>旧版 第1.5版</p>`, "edition", false},
+		{"suffix", `<h2>版数</h2><p>第1.5a版</p>`, "edition", false},
+		{"missing", `<title>Examples 1.5</title><p>第1.5版</p>`, "edition", false},
+		{"nested", `<h2>版数</h2><section><p>第1.5版</p></section>`, "edition", false},
+		{"title remains strict", `<title>Examples 1.6</title><h2>版数</h2><p>第1.5版</p>`, "", false},
+		{"unknown source", `<title>Examples 1.5</title>`, "body", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newFetchSite(t)
+			s.set("/", fetchResponse{body: tc.body})
+			d := s.doc()
+			d.Version, d.VersionSource = "1.5", tc.source
+			cache := t.TempDir()
+			err := FetchDoc(io.Discard, s.Client(), d, cache, false, 0, "test")
+			if (err == nil) != tc.want {
+				t.Fatalf("fetch error = %v, want success %v", err, tc.want)
+			}
+			if !tc.want && s.lastRequest("/searchindex.js") != nil {
+				t.Error("download started before edition validation")
+			}
+			if tc.want && !WebFetched(CachePath(cache, d), d) {
+				t.Error("edition cache not reusable")
+			}
+		})
+	}
+}
+
 func TestFetchWebRejectsNamesOutsideDocumentCache(t *testing.T) {
 	s := newFetchSite(t)
 	for _, name := range []string{"", ".", "..", "../other", "nested/manual", `nested\manual`} {

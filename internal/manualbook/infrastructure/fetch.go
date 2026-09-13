@@ -179,7 +179,7 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 		return errors.New("url が空 (配布ページを見て転記する)")
 	}
 	if d.Version == "" {
-		return errors.New("version が空 (web は index の <title> と突き合わせて検証するので必須)")
+		return errors.New("version が空 (web は index の版と突き合わせて検証するので必須)")
 	}
 	base, err := url.Parse(d.URL)
 	if err != nil {
@@ -222,18 +222,21 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 		return io.ReadAll(resp.Body)
 	}
 
-	// 1. index の <title> で版を確かめる。違えば取らずに止まる。
+	// 1. index の指定箇所で版を確かめる。違えば取らずに止まる。
 	fmt.Fprintf(w, "  → %s\n", base)
 	index, err := readAll("")
 	if err != nil {
 		return err
 	}
-	title := htmlTitle(index)
-	if !domain.MatchesWebVersion(title, d.Version) {
-		return fmt.Errorf("版が合わない\n    マニフェスト: %s\n    サイトの <title>: %s\n"+
-			"    版が上がっている。配布ページを確かめて manifest の version と url を更新する", d.Version, title)
+	versionText, err := webVersionText(index, d.VersionSource)
+	if err != nil {
+		return err
 	}
-	fmt.Fprintf(w, "    版 %s: %s\n", d.Version, title)
+	if !domain.MatchesWebVersion(versionText, d.Version) {
+		return fmt.Errorf("版が合わない\n    マニフェスト: %s\n    サイトの版の記載: %s\n"+
+			"    配布ページを確かめて manifest の version と url を更新する", d.Version, versionText)
+	}
+	fmt.Fprintf(w, "    版 %s: %s\n", d.Version, versionText)
 
 	// 2. searchindex.js からページの一覧を取る。これで取る対象が確定する。
 	si, err := readAll("searchindex.js")
@@ -411,6 +414,36 @@ func publishWebCache(stage, dst, previous string) error {
 		return os.RemoveAll(previous)
 	}
 	return nil
+}
+
+// webVersionText は指定した版の記載だけを読む。本文全体から版を探すと、
+// 旧版への言及や設定中の数字を誤って受け入れてしまう。
+func webVersionText(page []byte, source string) (string, error) {
+	if source == "" || source == "title" {
+		return htmlTitle(page), nil
+	}
+	if source != "edition" {
+		return "", fmt.Errorf("versionSource %q は知らない (title / edition)", source)
+	}
+	doc, err := html.Parse(strings.NewReader(string(page)))
+	if err != nil {
+		return "", err
+	}
+	h := findNode(doc, func(n *html.Node) bool {
+		return n.Type == html.ElementNode && n.Data == "h2" && domain.Collapse(nodeText(n)) == "版数"
+	})
+	if h != nil {
+		for n := h.NextSibling; n != nil; n = n.NextSibling {
+			if n.Type != html.ElementNode {
+				continue
+			}
+			if n.Data == "p" {
+				return domain.Collapse(nodeText(n)), nil
+			}
+			break
+		}
+	}
+	return "", errors.New("index に「版数」直下の段落がありません (versionSource: edition)")
 }
 
 // htmlTitle は <title> の中身。
