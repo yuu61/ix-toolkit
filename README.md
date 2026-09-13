@@ -11,7 +11,7 @@ skill は SKILL.md 形式なので、Codexなど同じ形式を読むエージ�
 | skill | 用途 | 種別 |
 |---|---|---|
 | `ix-show` | show コマンドで状態確認 | 読み取り専用 |
-| `ix-manual` | コマンドリファレンス・機能説明書・設定事例集を引く | 読み取り専用・機器に接続しない |
+| `ix-manual` | コマンドリファレンス・機能説明書・設定事例集・syslog リファレンスを引く | 読み取り専用・機器に接続しない |
 | `ix-backup` | running-config をファイルに退避 | 読み取り専用 |
 | `ix-configure` | 設定を投入 | **破壊的**・実行前に確認必須 |
 | `ix-save` | `write memory` で永続化 | **破壊的** |
@@ -180,10 +180,10 @@ windows Defender の`Trojan:Win32/Bearfoos.A!ml` の誤検知に引っ掛かる�
 | 系列 | 機種 | 資料 | `manifest.json` の `kind` |
 |---|---|---|---|
 | `ix` | IX2000/IX3000 | PDF（CRM / FD 10.11-1.1、EX 10.11a） | `pdf` |
-| `ix-r` | IX-R/IX-V | Web（Sphinx HTML、CRM / FD 1.5a、EX 1.5） | `web` |
+| `ix-r` | IX-R/IX-V | Web（Sphinx HTML、CRM / FD 1.5a、EX 1.5、SLOG 1.5.24） | `web` |
 
 冊子は `manifest.json` の `book` で、`crm`（コマンドリファレンス）、`fd`（機能説明書）、
-`ex`（設定事例集）の3種類。
+`ex`（設定事例集）、`slog`（syslog リファレンス）の4種類。`slog` は IX-R/IX-V のみ。
 変換結果は `~/.ix-toolkit/manuals/<系列>/<冊子>/` に置く。`ix-manual` は `$IX_MANUALS` →
 `~/.ix-toolkit/manuals/` → `~/.claude/ix-manuals/` の順に探し、その下を `<系列>/<冊子>/` として読む。
 
@@ -197,6 +197,7 @@ windows Defender の`Trojan:Win32/Bearfoos.A!ml` の誤検知に引っ掛かる�
     ├── crm/            commands.tsv  …
     ├── fd/             sections.tsv  figures/*.svg  …
     ├── ex/             sections.tsv  figures/  …
+    ├── slog/           sections.tsv  index.md  README.md  …
     └── diff.tsv        無印 → IX-R のコマンド対応表
 ```
 
@@ -204,8 +205,10 @@ windows Defender の`Trojan:Win32/Bearfoos.A!ml` の誤検知に引っ掛かる�
 
 - `commands.tsv` は `command / entry / file / line / source`、`sections.tsv` は
   `section / title / file / line / source`。
-- `line` は本文ファイル中の見出し行番号。crm は30行程度、fd / ex は60行程度から読み始め、
+- `line` は本文ファイル中の見出し行番号。crm は30行程度、fd / ex / slog は60行程度から読み始め、
   項目の終わりまで広げる。設定事例は複数ページに続くことがある。
+- slog は見出しに節番号がないため、`section` 列に出典アンカーを入れる。`title` 列の function 名と
+  syslog ID・メッセージで検索する。`chNN` は変換時の整理番号で、原文の章番号ではない。
 - `source` は元資料上の位置。PDF 由来なら物理ページ `p1057`（PDF ビューアの `#page=` にそのまま
   渡せる）、Web 由来なら元のページと節のアンカー `cli/interface/cli_ngn.html#ngn-ip-enable`
   （冊子の `README.md` にある URL に続ければ開く）。
@@ -234,6 +237,10 @@ windows Defender の`Trojan:Win32/Bearfoos.A!ml` の誤検知に引っ掛かる�
   索引ページの題に `version` が独立した値として含まれるかで版を確かめてから取る。
   設定事例集は題に版数が無いので `versionSource: "edition"` を指定し、本文の「版数」直下の
   段落と照合する。無指定または `"title"` は従来どおり題を読む。対象箇所の欠落・版違いでは取得しない。
+- syslog リファレンスはタイトルの対象ソフトウェア版 `1.5.24` で照合する。本文の更新情報には
+  第1.5a版と記載されており、冊子の版と対象ソフトウェア版は異なる。
+  プロファイルの `webUnnumberedHeadings: true` で番号なしの見出しを読み、表紙の書式・function 名・
+  レベルの説明も残す。既存冊子は番号付き見出しを読む従来の設定のまま。
 - サイトはブラウザ以外の User-Agent に 403 を返すので、既定でブラウザの UA を名乗る
   （`fetch -user-agent` で変えられる）。
 - 表は Markdown の表になる（結合セルは覆う範囲に値を繰り返す）。図は SVG / PNG など元の形式で
@@ -295,6 +302,7 @@ $ manualbook md pdf/CRM-ver10.11-1.1.pdf -profile profiles/nec-ix-crm.json -seri
 $ manualbook md pdf/FD-ver10.11-1.1.pdf  -profile profiles/nec-ix-fd.json  -series ix -version 10.11-1.1 -out ~/.ix-toolkit/manuals/ix/fd -figures
 $ manualbook build -only IX1-3K-EX-10.11a
 $ manualbook build -only IX-R-EX-1.5
+$ manualbook build -only IX-R-SLOG-1.5.24
 $ manualbook md pdf/IX-R-CRM-1.5a -out ~/.ix-toolkit/manuals/ix-r/crm
 $ manualbook md pdf/IX-R-FD-1.5a  -out ~/.ix-toolkit/manuals/ix-r/fd
 $ manualbook diff ~/.ix-toolkit/manuals/ix ~/.ix-toolkit/manuals/ix-r

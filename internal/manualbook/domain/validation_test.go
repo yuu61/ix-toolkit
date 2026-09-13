@@ -33,7 +33,7 @@ func TestMatchesWebVersion(t *testing.T) {
 
 func TestCheckDocBooks(t *testing.T) {
 	for _, series := range []string{"ix", "ix-r"} {
-		for _, book := range []string{"crm", "fd", "ex"} {
+		for _, book := range []string{"crm", "fd", "ex", "slog"} {
 			if err := domain.CheckDoc(domain.Doc{Series: series, Book: book}); err != nil {
 				t.Fatal(err)
 			}

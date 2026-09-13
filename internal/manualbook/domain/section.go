@@ -1,8 +1,8 @@
 package domain
 
-// Heading は階層番号を持つ 1 見出しと、その配下の本文。
+// Heading は 1 見出しと、その配下の本文。
 type Heading struct {
-	Number  string // "2.11.6"
+	Number  string // "2.11.6"。番号なしの Web 見出しは空
 	Title   string
 	Depth   int // 番号の階層の深さ (2.11 なら 2)
 	Chapter int

@@ -7,7 +7,7 @@
     "web: version が index の <title> の版と完全一致するかで検証する。versionSource: edition は本文の「版数」直下を読む。版が上がっていたら取得せずに",
     "     止まるので、配布ページを確かめて version と url を更新する。",
     "series は機種の系列 (ix = IX2000/IX3000, ix-r = IX-R/IX-V)、book は冊子 (crm = コマンド",
-    "リファレンス, fd = 機能説明書, ex = 設定事例集)。変換結果は <manuals>/<series>/<book>/ に置かれ、README にも載る。",
+    "リファレンス, fd = 機能説明書, ex = 設定事例集, slog = syslog リファレンス)。変換結果は <manuals>/<series>/<book>/ に置かれ、README にも載る。",
     "profile / title は変換に渡す値。profile の相対パスはこのファイルの場所から解く。"
   ],
   "docs": [
@@ -71,6 +71,16 @@
       "version": "1.5",
       "versionSource": "edition",
       "profile": "profiles/nec-ix-r-ex.json"
+    },
+    {
+      "name": "IX-R-SLOG-1.5.24",
+      "series": "ix-r",
+      "book": "slog",
+      "kind": "web",
+      "title": "IX-R/IX-V syslog リファレンス 1.5.24",
+      "url": "https://www.necplatforms.co.jp/dl/ix-nrv/manual/slog/",
+      "version": "1.5.24",
+      "profile": "profiles/nec-ix-r-slog.json"
     }
   ]
 }

@@ -1,6 +1,6 @@
 ---
 name: ix-manual
-description: NEC IX（IX2000/IX3000、IX-R/IX-V）の変換済みマニュアルから、コマンド構文・実行モード・機能・機種別上限・設定事例・系列間差分を調べる。仕様確認、構成に合う事例の検索や設定案の検証に使う。機器には接続しない。
+description: NEC IX（IX2000/IX3000、IX-R/IX-V）の変換済みマニュアルから、コマンド構文・実行モード・機能・機種別上限・設定事例・syslog の意味・系列間差分を調べる。仕様確認、ログ調査、構成に合う事例の検索や設定案の検証に使う。機器には接続しない。
 argument-hint: "<コマンド名または調べたいこと> (e.g., ngn ip enable / IPsec の SA 有効期限 / IX2215 の VLAN 設定数の上限 / show logging は IX-R で何になるか)"
 allowed-tools: Grep Glob Read
 compatibility: manualbook で Markdown に変換した NEC IX のマニュアルが ~/.ix-toolkit/manuals/<系列>/<冊子>/ にあること（$IX_MANUALS と ~/.claude/ix-manuals/ でも可。ix-toolkit の README 参照）。機器には接続しない。
@@ -32,6 +32,7 @@ license: MIT
 | 綴り、入力形式、引数、デフォルト、実行モード、権限 | `crm`（コマンドリファレンス） | `commands.tsv` |
 | 仕組み、構成、諸元値・上限、設定例 | `fd`（機能説明書） | `sections.tsv` |
 | 目的・接続構成に合う設定手順と具体例 | `ex`（設定事例集） | `sections.tsv` |
+| IX-R/IX-V のログメッセージ・レベル・パラメータの意味 | `ix-r/slog`（syslog リファレンス） | `sections.tsv` |
 | 系列間の改名・廃止・モードや条件の変更 | 両系列と対応表 | `ix-r/diff.tsv` |
 
 必要な冊子から読み、関係する冊子を併用する。
@@ -70,13 +71,14 @@ license: MIT
 rg -n -F "ngn ip enable" "<manuals>/<系列>/crm/commands.tsv"
 rg -n -F "VLAN" "<manuals>/<系列>/fd/sections.tsv"
 rg -n -F "IPsec" "<manuals>/<系列>/ex/sections.tsv"
+rg -n -F "aaa - 004 -" "<manuals>/ix-r/slog/sections.tsv"
 ```
 
 検索結果に付く行番号は索引内の位置。本文を開くときは **TSV の `line` 列**を使う。
 候補が複数あれば、依頼の目的・実行モード・パラメータで絞る。意味の異なる候補が残るときだけ尋ねる。
 
 `file` は冊子ディレクトリからの相対パス、`line` は本文の見出し行番号（1始まり）。
-crm は30行程度、fd / ex は60行程度から読み始め、該当項目の終わりまで必要に応じて広げる。
+crm は30行程度、fd / ex / slog は60行程度から読み始め、該当項目の終わりまで必要に応じて広げる。
 固定の行数でノートや脚注を切り捨てず、無関係な節全体の読み込みは避ける。
 crm では次のコマンドの `##` 見出しが項目の境界になる。
 
@@ -90,6 +92,11 @@ crm の項目では入力形式（`no` 形を含む）、パラメータ、説�
 続くことがあるので、冒頭の設定だけで完結したと扱わない。図は下記の参照手順で確認する。
 アドレス・認証情報・インタフェース名は例の値として扱い、ユーザーの条件に合わせた変更箇所を示す。
 投入案にする場合はコマンドの構文・モード・制約を同系列の crm / fd で照合する。
+
+syslog は function 名（APP-NAME）と syslog ID（MSGID）の組で絞り、メッセージ本文も照合する。
+レベル、内容、対処の記載、パラメータを項目末尾まで読む。ID だけで別機能のログと取り違えない。
+slog の `section` 列は節番号ではなく出典アンカーで、`chNN` は変換時の整理番号。
+書式や function 名の対応は表紙の説明も参照する。IX2000/IX3000 への適用は名称の対応だけでは判断しない。
 
 ## 必要な場合だけ読む詳細
 

@@ -66,13 +66,15 @@ type WebPage struct {
 	title        string     // <h1> の題 (番号を除く)
 	chapterTitle string     // パンくずの章名
 	body         *html.Node // 本文の <section> (h1 を含む)
+	unnumbered   bool       // 番号なし冊子では本文全体を読み、章番号は出力の整理用に付ける
 }
 
 // --- 読み込み ---
 
 // ReadWebPages は取得キャッシュの HTML を全部読み、番号順に並べる。
-// 番号付きの <h1> を持たないページ (表紙・検索・索引) は本文ではないので落とす。
-func ReadWebPages(dir string) ([]WebPage, error) {
+// 通常は番号付きの <h1> を持たないページ (表紙・検索・索引) を落とす。
+// unnumbered が true なら番号なしの本文もパス順に読み、表紙の説明も残す。
+func ReadWebPages(dir string, unnumbered bool) ([]WebPage, error) {
 	var pages []WebPage
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -82,7 +84,7 @@ func ReadWebPages(dir string) ([]WebPage, error) {
 			return nil
 		}
 		rel, _ := filepath.Rel(dir, p)
-		pg, ok, err := readWebPage(p, filepath.ToSlash(rel))
+		pg, ok, err := readWebPage(p, filepath.ToSlash(rel), unnumbered)
 		if err != nil {
 			return fmt.Errorf("%s: %w", rel, err)
 		}
@@ -95,6 +97,18 @@ func ReadWebPages(dir string) ([]WebPage, error) {
 		return nil, err
 	}
 	sort.SliceStable(pages, func(i, j int) bool { return lessNumber(pages[i].number, pages[j].number) })
+	chapter := 0
+	for _, pg := range pages {
+		if len(pg.number) > 0 {
+			chapter = max(chapter, pg.number[0])
+		}
+	}
+	for i := range pages {
+		if pages[i].unnumbered {
+			chapter++
+			pages[i].number = []int{chapter}
+		}
+	}
 	return pages, nil
 }
 
@@ -107,7 +121,7 @@ func lessNumber(a, b []int) bool {
 	return len(a) < len(b)
 }
 
-func readWebPage(file, rel string) (WebPage, bool, error) {
+func readWebPage(file, rel string, unnumbered bool) (WebPage, bool, error) {
 	f, err := os.Open(file)
 	if err != nil {
 		return WebPage{}, false, err
@@ -130,10 +144,15 @@ func readWebPage(file, rel string) (WebPage, bool, error) {
 		return WebPage{}, false, nil
 	}
 	num, title := headingParts(h1)
-	if len(num) == 0 {
+	if len(num) == 0 && !unnumbered {
 		return WebPage{}, false, nil
 	}
 	pg := WebPage{path: rel, number: num, title: title, body: sec}
+	if len(num) == 0 {
+		// index は h1 を持つ section が複数並ぶ。先頭だけでなく本文全体を残す。
+		pg.body, pg.unnumbered, pg.chapterTitle = body, true, title
+		return pg, true, nil
+	}
 
 	// 章名はパンくずから。「21. リモートアクセス編」のように番号が 1 段のものが章。
 	// 章そのもののページ (機能説明書の「8. IXシリーズとの差分」) はパンくずに
@@ -420,9 +439,24 @@ func ParseWebHeadings(pages []WebPage) ([]domain.Heading, map[int]string) {
 		chapters[pg.number[0]] = pg.chapterTitle
 		var visit func(sec *html.Node)
 		visit = func(sec *html.Node) {
-			h := findNode(sec, func(c *html.Node) bool { return c.Type == html.ElementNode && isHeadingTag(c.Data) })
+			var h *html.Node
+			for c := sec.FirstChild; c != nil; c = c.NextSibling {
+				if c.Type == html.ElementNode && isHeadingTag(c.Data) {
+					h = c
+					break
+				}
+			}
+			if h == nil {
+				// 番号なし冊子の articleBody は複数のトップレベル節を包む。
+				for c := sec.FirstChild; c != nil; c = c.NextSibling {
+					if c.Type == html.ElementNode && c.Data == "section" {
+						visit(c)
+					}
+				}
+				return
+			}
 			num, title := headingParts(h)
-			if len(num) == 0 {
+			if len(num) == 0 && !pg.unnumbered {
 				return
 			}
 			r := domain.Ref{Path: pg.path, Anchor: anchorOf(sec)}
@@ -433,6 +467,9 @@ func ParseWebHeadings(pages []WebPage) ([]domain.Heading, map[int]string) {
 				Chapter: pg.number[0],
 				Section: pg.title,
 				Ref:     r,
+			}
+			if pg.unnumbered {
+				hd.Depth = int(h.Data[1] - '0')
 			}
 			var content []*html.Node
 			var subs []*html.Node

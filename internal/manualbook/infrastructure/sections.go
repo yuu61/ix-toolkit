@@ -594,7 +594,7 @@ func renderHeading(b *strings.Builder, h *domain.Heading, lk links) {
 	// 番号の深さをそのまま見出しの深さにする。節ファイルの見出しが "# " なので
 	// 1 つ下げて始める。
 	level := min(6, h.Depth+1)
-	fmt.Fprintf(b, "%s %s %s\n\n", strings.Repeat("#", level), h.Number, h.Title)
+	fmt.Fprintf(b, "%s %s\n\n", strings.Repeat("#", level), inlineMarkup(strings.TrimSpace(h.Number+" "+h.Title)))
 
 	for _, blk := range h.Blocks {
 		switch blk.Kind {
@@ -613,6 +613,9 @@ func renderHeading(b *strings.Builder, h *domain.Heading, lk links) {
 			continue
 		}
 		renderBody(b, joined)
+		if lk.src.Kind == "web" {
+			renderRef(b, blk.Ref, lk, "")
+		}
 	}
 }
 
@@ -753,7 +756,11 @@ func writeSectionIndex(outDir, docTitle string, chapters map[int]string, order [
 	for i := range heads {
 		h := &heads[i]
 		file := filepath.ToSlash(relPath[domain.SectionKey{Chapter: h.Chapter, Section: h.Section}])
-		fmt.Fprintf(&t, "%s\t%s\t%s\t%d\t%s\n", h.Number, h.Title, file, h.Line, h.Ref.String())
+		section := h.Number
+		if section == "" {
+			section = h.Ref.Anchor
+		}
+		fmt.Fprintf(&t, "%s\t%s\t%s\t%d\t%s\n", section, h.Title, file, h.Line, h.Ref.String())
 	}
 	if err := os.WriteFile(filepath.Join(outDir, "sections.tsv"), []byte(t.String()), 0o644); err != nil {
 		return err
@@ -790,6 +797,9 @@ func writeSectionReadme(outDir, docTitle string, src Source,
 	fmt.Fprintf(&b, "\n## 引き方\n\n")
 	fmt.Fprintln(&b, "- `sections.tsv` — `section / title / file / line / source` のタブ区切り索引。")
 	fmt.Fprintln(&b, "  `line` は本文ファイル中の見出し行 (1 始まり)。")
+	if src.Profile != nil && src.Profile.WebUnnumberedHeadings {
+		fmt.Fprintln(&b, "  番号のない見出しの `section` は出典アンカー。`chNN` は変換時の整理番号で、原文の章番号ではない。")
+	}
 	fmt.Fprintln(&b, "  "+src.sourceColumnNote())
 	fmt.Fprintln(&b, "- `index.md` — 章・節の目次")
 	fmt.Fprintln(&b, "- `chNN-<章名>/<節名>.md` — 本文")

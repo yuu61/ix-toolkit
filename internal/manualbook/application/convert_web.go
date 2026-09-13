@@ -53,13 +53,13 @@ func convertWeb(o MDOptions) error {
 	}
 
 	fmt.Printf("読み込み: %s (プロファイル %s)\n", dir, p.Name)
-	pages, err := infrastructure.ReadWebPages(dir)
+	pages, err := infrastructure.ReadWebPages(dir, p.WebUnnumberedHeadings)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("  ページ数: %d\n", len(pages))
 	if len(pages) == 0 {
-		return fmt.Errorf("番号付きの見出しを持つページがありません: %s", dir)
+		return fmt.Errorf("プロファイルに合う見出しを持つページがありません: %s", dir)
 	}
 
 	if p.HasCommandEntries() {

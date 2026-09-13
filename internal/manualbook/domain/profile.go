@@ -37,6 +37,9 @@ type Profile struct {
 	EntryMarker string   `json:"entryMarker"` // 項目の先頭記号 (例 "■")
 	FieldLabels []string `json:"fieldLabels"` // 項目内の見出し語 (例 入力形式/パラメータ...)
 
+	// WebUnnumberedHeadings は節番号のない Web 冊子用。表紙の説明も本文として残す。
+	WebUnnumberedHeadings bool `json:"webUnnumberedHeadings,omitempty"`
+
 	// ChapterSep は版面ヘッダの「章名/節名」の区切り。機能説明書のヘッダは
 	// "ルータの設定・PPP の設定" の形をしている。節名自体が "運用・保守" のように
 	// 区切りを含むことがあるので、最初の 1 つだけで割る。
