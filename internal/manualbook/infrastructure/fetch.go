@@ -47,6 +47,77 @@ func ReadManifest(path string) (domain.Manifest, error) {
 	if len(m.Docs) == 0 {
 		return m, errors.New("マニフェストに docs がありません")
 	}
+	for i := range m.Docs {
+		d := &m.Docs[i]
+		if d.Kind == "" {
+			if d.Series == "ix" {
+				d.Kind = "pdf"
+			} else if d.Series == "ix-r" {
+				d.Kind = "web"
+			}
+		}
+		if d.Profile == "" && d.Series != "" && d.Book != "" {
+			d.Profile = fmt.Sprintf("profiles/nec-%s-%s.json", d.Series, d.Book)
+		}
+		if d.Version == "" && d.Kind == "pdf" && d.URL != "" {
+			if u, err := url.Parse(d.URL); err == nil {
+				if file := u.Query().Get("file"); file != "" {
+					base := strings.TrimSuffix(file, ".pdf")
+					if strings.HasPrefix(base, "CRM-ver") {
+						d.Version = strings.TrimPrefix(base, "CRM-ver")
+					} else if strings.HasPrefix(base, "FD-ver") {
+						d.Version = strings.TrimPrefix(base, "FD-ver")
+					} else if strings.HasPrefix(base, "IX1-3K-EX-") {
+						d.Version = strings.TrimPrefix(base, "IX1-3K-EX-")
+					}
+				}
+			}
+		}
+		if d.Title == "" && d.Series != "" && d.Book != "" && d.Version != "" {
+			var title string
+			switch d.Series {
+			case "ix":
+				title = "IX2000/IX3000 "
+				switch d.Book {
+				case "crm":
+					title += "コマンドリファレンスマニュアル"
+				case "fd":
+					title += "機能説明書"
+				case "ex":
+					title += "設定事例集"
+				}
+				v := strings.SplitN(d.Version, "-", 2)[0]
+				title += " " + v
+			case "ix-r":
+				title = "IX-R/IX-V "
+				switch d.Book {
+				case "crm":
+					title += "コマンドリファレンス"
+				case "fd":
+					title += "機能説明書"
+				case "ex":
+					title += "設定事例集"
+				}
+				title += " " + d.Version
+				if d.Book == "fd" {
+					title += "版"
+				}
+			}
+			d.Title = title
+		}
+		if d.Name == "" && d.Series != "" && d.Book != "" && d.Version != "" {
+			if d.Kind == "pdf" && d.URL != "" {
+				if u, err := url.Parse(d.URL); err == nil {
+					if file := u.Query().Get("file"); file != "" {
+						d.Name = strings.TrimSuffix(file, ".pdf")
+					}
+				}
+			}
+			if d.Name == "" {
+				d.Name = fmt.Sprintf("%s-%s-%s", strings.ToUpper(d.Series), strings.ToUpper(d.Book), d.Version)
+			}
+		}
+	}
 	return m, nil
 }
 
