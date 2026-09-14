@@ -120,7 +120,13 @@ def open_session(target: Target) -> NetmikoSession:
             # Its default implementation calls enable() with svintr-config.
             current = self.find_prompt()
             in_config = current.endswith(")#")
+            in_global_config = current.endswith("(config)#")
             hostname = current.rsplit("(", 1)[0] if in_config else current.removesuffix("#")
+
+            if in_global_config:
+                self.base_prompt = hostname
+                return ""
+
             command = "configure" if in_config else entry_command
             global_prompt = f"{hostname}(config)#"
             # Refusal returns the original prompt. Read it too, so a busy device
@@ -141,14 +147,37 @@ def open_session(target: Target) -> NetmikoSession:
             self.base_prompt = hostname
             return output
 
+        def exit_config_mode(self, exit_config="exit", pattern=""):
+            current = self.find_prompt()
+            if not current.endswith(")#"):
+                return ""
+            hostname = current.rsplit("(", 1)[0]
+            # If we might be in a submode, 'configure' drops us back to (config)# on IX.
+            # But we avoid sending it unless needed.
+            if not current.endswith("(config)#"):
+                self.send_command("configure", expect_string=rf"{re.escape(hostname)}\(config\)#")
+
+            global_prompt = f"{hostname}#"
+            expect = rf"(?m:^{re.escape(global_prompt)}[ \t]*$)"
+            output = self.send_command(
+                exit_config,
+                expect_string=expect,
+                read_timeout=READ_TIMEOUT,
+                strip_prompt=False,
+                strip_command=False,
+            )
+            self.base_prompt = hostname
+            return output
+
     params = {
         "device_type": "nec_ix_ssh",  # このスクリプトは NEC IX 専用
         "host": target.host,
         "port": target.port,
         "username": target.username,
         "password": target.password or "",
+        "global_delay_factor": 0.2,
         "conn_timeout": CONNECT_TIMEOUT,
-        "fast_cli": False,
+        "fast_cli": True,
     }
     if target.use_keys:
         params["use_keys"] = True
