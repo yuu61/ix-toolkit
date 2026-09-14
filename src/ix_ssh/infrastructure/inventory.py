@@ -47,6 +47,7 @@ def read_inventory(
 
     if not is_secure_file(path):
         import os
+
         cmd = (
             f'icacls "{path.absolute()}" /inheritance:r /grant:r "%USERNAME%:F"'
             if os.name == "nt"

@@ -78,7 +78,7 @@ class ErrorBoundaryTest(unittest.TestCase):
 
     def test_backup_permission_error_is_translated(self):
         with (
-            patch.object(Path, "write_text", side_effect=PermissionError("denied")),
+            patch("builtins.open", side_effect=PermissionError("denied")),
             self.assertRaisesRegex(UsageError, "cannot write backup"),
         ):
             write_backup(self.root / "backup.conf", "running config")
