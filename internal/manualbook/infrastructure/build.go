@@ -14,10 +14,10 @@ import (
 // 焼き直したいときは figures/ を消す (か manualbook figures を手で流す)。
 // build の -force は取得の話で、ここには効かない。
 type figuresMark struct {
-	Source   string `json:"source"` // 元 PDF のファイル名
+	Source   string `json:"source"`
+	Rendered string `json:"rendered"`
 	DPI      int    `json:"dpi"`
 	Pages    int    `json:"pages"`
-	Rendered string `json:"rendered"`
 }
 
 // figuresMarkName は figureNameRe (p<番号>.png) に掛からない名前にしてある。

@@ -2,6 +2,7 @@ package application
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,7 +45,7 @@ func Build(manifestPath, cacheDir, manualsDir string, force bool, only string) e
 		return err
 	}
 	if manualsDir == "" {
-		return fmt.Errorf("変換結果の置き場が決まりません。-manuals で指定してください")
+		return errors.New("変換結果の置き場が決まりません。-manuals で指定してください")
 	}
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return err
@@ -216,9 +217,9 @@ func convertDoc(d domain.Doc, cacheDir, outDir, profilePath string) error {
 // 混ざっても、どの資料の行か分かるようにする。1 回の Write を 1 回で書き出す
 // ので、行ごとに書く相手なら表の行と混線しない。
 type prefixWriter struct {
-	prefix string
 	dst    io.Writer
-	mid    bool // 行の途中で終わった (次の書き込みには印を付けない)
+	prefix string
+	mid    bool
 }
 
 func (w *prefixWriter) Write(p []byte) (int, error) {

@@ -5,6 +5,7 @@ import (
 	"image"
 	"os"
 	"runtime"
+	"slices"
 	"sync"
 	"time"
 
@@ -32,17 +33,12 @@ import (
 
 // glyph は 1 文字とその外接矩形 (PDF ポイント、原点は左下)。
 type glyph struct {
+	left        float64
+	right       float64
+	top         float64
+	bottom      float64
+	fontSize    float64
 	r           rune
-	left, right float64
-	top, bottom float64
-	fontSize    float64 // 変換行列を反映したポイント数。見出しと本文の区別に使う。
-
-	// spaceBefore は、この字の前に空白文字が入っていたことを表す。
-	//
-	// 語の切れ目を座標だけから当てるのは無理だった。字面の狭い字は外接矩形が
-	// 送りよりずっと狭く、隙間で測ると語の中で空きに見える。送りで測ると
-	// 今度は "default group" の空白が閾値に届かず "defaultgroup" になる。
-	// PDF 自身が持っている空白をそのまま使えば、どちらも起きない。
 	spaceBefore bool
 }
 
@@ -56,8 +52,9 @@ func (g glyph) height() float64 { return g.top - g.bottom }
 
 // pdfPage は 1 ページ分の文字と、その表示上のページ寸法。
 type pdfPage struct {
-	width, height float64
-	glyphs        []glyph
+	glyphs []glyph
+	width  float64
+	height float64
 }
 
 // pdfDoc は開いた PDF 1 冊。文字は初回アクセス時にまとめて読む。
@@ -164,8 +161,8 @@ func (d *pdfDoc) forPages(f func(*pdfDoc, int) error) error {
 	}
 	var cleanups []func()
 	defer func() {
-		for i := len(cleanups) - 1; i >= 0; i-- {
-			cleanups[i]()
+		for _, cleanup := range slices.Backward(cleanups) {
+			cleanup()
 		}
 	}()
 

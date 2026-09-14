@@ -49,9 +49,11 @@ func TestLocalPDFTables(t *testing.T) {
 		lines, blocks := sectionTableLines(pg, tables, bodyCrop(p), tc.page)
 		combined := strings.Join(lines, "\n")
 		for _, b := range blocks {
+			var combinedSb52 strings.Builder
 			for _, row := range b.Rows {
-				combined += strings.Join(row, "")
+				combinedSb52.WriteString(strings.Join(row, ""))
 			}
+			combined += combinedSb52.String()
 		}
 		counts := glyphCounts(combined)
 		for r, n := range glyphCounts(renderPage(pg, bodyCrop(p), true)) {

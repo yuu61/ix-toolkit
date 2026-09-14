@@ -1,6 +1,7 @@
 package application
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,16 +14,16 @@ import (
 // MDOptions は 1 冊分の変換の指定。md サブコマンドはフラグから、build は
 // マニフェストから組み立てる。
 type MDOptions struct {
-	Input       string // PDF か、fetch が置いた取得キャッシュのディレクトリ
+	Input       string
 	OutDir      string
 	ProfilePath string
 	Title       string
 	SourceLabel string
 	Series      string
 	Version     string
-	Figures     bool
-	FigureDPI   int
 	FigurePages string
+	FigureDPI   int
+	Figures     bool
 }
 
 // Convert は 1 冊を Markdown にする。
@@ -32,7 +33,7 @@ type MDOptions struct {
 func Convert(o MDOptions) error {
 	if st, err := os.Stat(o.Input); err == nil && st.IsDir() {
 		if o.Figures {
-			return fmt.Errorf("-figures は PDF 専用です。Web から読む資料は図をそのまま figures/ に置きます")
+			return errors.New("-figures は PDF 専用です。Web から読む資料は図をそのまま figures/ に置きます")
 		}
 		return convertWeb(o)
 	}

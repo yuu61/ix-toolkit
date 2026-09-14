@@ -64,12 +64,12 @@ func ReadManifest(path string) (domain.Manifest, error) {
 			if u, err := url.Parse(d.URL); err == nil {
 				if file := u.Query().Get("file"); file != "" {
 					base := strings.TrimSuffix(file, ".pdf")
-					if strings.HasPrefix(base, "CRM-ver") {
-						d.Version = strings.TrimPrefix(base, "CRM-ver")
-					} else if strings.HasPrefix(base, "FD-ver") {
-						d.Version = strings.TrimPrefix(base, "FD-ver")
-					} else if strings.HasPrefix(base, "IX1-3K-EX-") {
-						d.Version = strings.TrimPrefix(base, "IX1-3K-EX-")
+					if after, ok := strings.CutPrefix(base, "CRM-ver"); ok {
+						d.Version = after
+					} else if after, ok := strings.CutPrefix(base, "FD-ver"); ok {
+						d.Version = after
+					} else if after, ok := strings.CutPrefix(base, "IX1-3K-EX-"); ok {
+						d.Version = after
 					}
 				}
 			}
@@ -87,7 +87,7 @@ func ReadManifest(path string) (domain.Manifest, error) {
 				case "ex":
 					title += "設定事例集"
 				}
-				v := strings.SplitN(d.Version, "-", 2)[0]
+				v, _, _ := strings.Cut(d.Version, "-")
 				title += " " + v
 			case "ix-r":
 				title = "IX-R/IX-V "
@@ -142,7 +142,7 @@ func FetchDoc(w io.Writer, client *http.Client, d domain.Doc, cacheDir string, f
 		}
 		return fetchWeb(w, client, d, CachePath(cacheDir, d), force, delay, ua)
 	case "":
-		return fmt.Errorf(`kind が無い。"pdf" か "web" を書く (取得と検証の作法が変わるので推測しない)`)
+		return errors.New(`kind が無い。"pdf" か "web" を書く (取得と検証の作法が変わるので推測しない)`)
 	default:
 		return fmt.Errorf("kind %q は知らない", d.Kind)
 	}
@@ -267,7 +267,7 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 	}
 	get := func(rel string, tag etagEntry) (*http.Response, error) {
 		u := base.ResolveReference(&url.URL{Path: rel})
-		req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+		req, err := http.NewRequest(http.MethodGet, u.String(), http.NoBody)
 		if err != nil {
 			return nil, err
 		}
@@ -378,7 +378,7 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 		switch resp.StatusCode {
 		case http.StatusNotModified:
 			if force || cacheErr != nil || (tag.ETag == "" && tag.LastModified == "") {
-				return false, nil, fmt.Errorf("本文を再利用できないリクエストに HTTP 304 が返りました")
+				return false, nil, errors.New("本文を再利用できないリクエストに HTTP 304 が返りました")
 			}
 			body = cached
 		case http.StatusOK:

@@ -1,6 +1,7 @@
 package application
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -38,7 +39,7 @@ func convertSections(outDir, docTitle string, src infrastructure.Source) error {
 	fmt.Printf("  Markdown の表: %d 件\n", nTables)
 
 	if len(heads) == 0 {
-		return fmt.Errorf("見出しを 1 件も抽出できませんでした。" +
+		return errors.New("見出しを 1 件も抽出できませんでした。" +
 			"この資料の見出しが階層番号 (2.11.6 の形) で始まっているか確認してください")
 	}
 

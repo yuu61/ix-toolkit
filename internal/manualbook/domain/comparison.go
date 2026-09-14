@@ -71,7 +71,7 @@ func lookupCommand(cmds []IndexedCommand, text string) (IndexedCommand, bool) {
 // 範囲の語を返す。最初のパラメータ・括弧・記号で止まる。
 func keywords(cmd string) []string {
 	var out []string
-	for _, w := range strings.Fields(cmd) {
+	for w := range strings.FieldsSeq(cmd) {
 		if !isKeyword(w) {
 			break
 		}
@@ -227,7 +227,7 @@ func Ch8Rows(kind, ref string, table [][]string, ixCmds []IndexedCommand) []Diff
 
 func cellLines(s string) []string {
 	var out []string
-	for _, ln := range strings.Split(s, "\n") {
+	for ln := range strings.SplitSeq(s, "\n") {
 		if t := strings.TrimSpace(ln); t != "" {
 			out = append(out, t)
 		}
@@ -251,7 +251,7 @@ func expandAlternatives(cmds []string) []string {
 			out = append(out, c)
 			continue
 		}
-		for _, alt := range strings.Split(c[m[2]:m[3]], " | ") {
+		for alt := range strings.SplitSeq(c[m[2]:m[3]], " | ") {
 			out = append(out, expandAlternatives([]string{Collapse(c[:m[0]] + alt + c[m[1]:])})...)
 		}
 	}
@@ -286,8 +286,8 @@ func SetDiff(ixCmds, ixrCmds []IndexedCommand, known []DiffRow) []DiffRow {
 		}
 	}
 	type fam struct {
-		n     int
 		first IndexedCommand
+		n     int
 	}
 	fams := map[string]*fam{}
 	for _, c := range ixCmds {

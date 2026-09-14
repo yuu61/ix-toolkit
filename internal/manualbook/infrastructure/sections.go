@@ -690,7 +690,7 @@ func renderTableBlock(b *strings.Builder, blk domain.Block, lk links) {
 	}
 	writeRow := func(r []string) {
 		b.WriteString("|")
-		for i := 0; i < width; i++ {
+		for i := range width {
 			v := ""
 			if i < len(r) {
 				v = cell(r[i])

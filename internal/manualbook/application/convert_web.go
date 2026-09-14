@@ -1,6 +1,7 @@
 package application
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -66,7 +67,7 @@ func convertWeb(o MDOptions) error {
 		entries, chapters := infrastructure.ParseWebEntries(pages, p)
 		fmt.Printf("  抽出項目: %d 件 / 章: %d\n", len(entries), len(chapters))
 		if len(entries) == 0 {
-			return fmt.Errorf("項目を 1 件も抽出できませんでした。" +
+			return errors.New("項目を 1 件も抽出できませんでした。" +
 				"プロファイルの fieldLabels が資料の <dt> の見出し語に合っているか確認してください")
 		}
 		if err := infrastructure.WriteAll(outDir, title, src, chapters, entries); err != nil {
@@ -95,7 +96,7 @@ func convertWeb(o MDOptions) error {
 	fmt.Printf("  見出し: %d 件 / 章: %d / 表: %d / 図: %d / 版面ブロック: %d\n",
 		len(heads), len(chapters), nTable, nFigure, nLayout)
 	if len(heads) == 0 {
-		return fmt.Errorf("見出しを 1 件も抽出できませんでした")
+		return errors.New("見出しを 1 件も抽出できませんでした")
 	}
 	if err := infrastructure.WriteWebFigures(dir, outDir, heads); err != nil {
 		return err

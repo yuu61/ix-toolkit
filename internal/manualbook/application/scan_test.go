@@ -141,8 +141,8 @@ func TestScanContinuesAfterSplitWriteFailure(t *testing.T) {
 func writeScanSpread(t *testing.T, path string) {
 	t.Helper()
 	img := image.NewGray(image.Rect(0, 0, 40, 40))
-	for y := 0; y < 40; y++ {
-		for x := 0; x < 40; x++ {
+	for y := range 40 {
+		for x := range 40 {
 			shade := uint8(255)
 			if x < 4 {
 				shade = 0

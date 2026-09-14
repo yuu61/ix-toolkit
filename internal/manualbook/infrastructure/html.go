@@ -61,12 +61,12 @@ func ReadWebMeta(dir string) (WebMeta, error) {
 
 // WebPage は取得キャッシュの 1 ページ。
 type WebPage struct {
-	path         string     // 冊子の起点からの相対パス (cli/remoteaccess/cli_aaa.html)
-	number       []int      // <h1> の番号 (21.1 → [21 1])
-	title        string     // <h1> の題 (番号を除く)
-	chapterTitle string     // パンくずの章名
-	body         *html.Node // 本文の <section> (h1 を含む)
-	unnumbered   bool       // 番号なし冊子では本文全体を読み、章番号は出力の整理用に付ける
+	body         *html.Node
+	path         string
+	title        string
+	chapterTitle string
+	number       []int
+	unnumbered   bool
 }
 
 // --- 読み込み ---
@@ -195,7 +195,7 @@ func headingParts(n *html.Node) ([]int, string) {
 		return nil, t
 	}
 	var num []int
-	for _, part := range strings.Split(numText, ".") {
+	for part := range strings.SplitSeq(numText, ".") {
 		v, err := strconv.Atoi(strings.TrimSpace(part))
 		if err != nil {
 			return nil, t
@@ -630,7 +630,7 @@ func tableRows(t *html.Node) [][]string {
 			cs, _ := strconv.Atoi(attr(c, "colspan"))
 			rs, _ := strconv.Atoi(attr(c, "rowspan"))
 			cs, rs = max(cs, 1), max(rs, 1)
-			for i := 0; i < cs; i++ {
+			for range cs {
 				row = append(row, text)
 				for k := 1; k < rs; k++ {
 					pending[[2]int{ri + k, col}] = text
@@ -683,7 +683,7 @@ func cellText(c *html.Node) string {
 func rawLines(n *html.Node) []string {
 	var lines []string
 	if n.Type == html.ElementNode && n.Data == "pre" {
-		for _, ln := range strings.Split(strings.Trim(nodeText(n), "\n"), "\n") {
+		for ln := range strings.SplitSeq(strings.Trim(nodeText(n), "\n"), "\n") {
 			lines = append(lines, strings.TrimRight(ln, " \t"))
 		}
 		return lines
@@ -822,8 +822,10 @@ func proseLines(n *html.Node) []string {
 // svgText は SVG の 1 つの <text>。位置は transform="matrix(1 0 0 1 X Y)" から取る
 // (Office の書き出しはこの形。x / y 属性で置く書き出しも受ける)。
 type svgText struct {
-	x, y, size float64
-	s          string
+	s    string
+	x    float64
+	y    float64
+	size float64
 }
 
 var svgMatrixRe = regexp.MustCompile(`matrix\(\s*([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s*\)`)

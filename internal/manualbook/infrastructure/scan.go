@@ -2,6 +2,7 @@ package infrastructure
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"image"
 	"image/draw"
@@ -103,8 +104,8 @@ func ReadSpreads(paths []string) iter.Seq2[*Spread, error] {
 
 type spreadWrite struct {
 	spread *Spread
-	paths  []string
 	result chan error
+	paths  []string
 }
 
 // SpreadWriter は指定されたページを並列保存する。キューにも上限を設ける。
@@ -130,7 +131,7 @@ func NewSpreadWriter() *SpreadWriter {
 // Submit の後は、呼び出し元は spread を変更しない。
 func (w *SpreadWriter) Submit(spread *Spread, paths []string) <-chan error {
 	result := make(chan error, 1)
-	w.jobs <- spreadWrite{spread, append([]string(nil), paths...), result}
+	w.jobs <- spreadWrite{spread: spread, paths: append([]string(nil), paths...), result: result}
 	return result
 }
 
@@ -138,7 +139,7 @@ func (w *SpreadWriter) Close() { close(w.jobs); w.workers.Wait() }
 
 func (s *Spread) save(paths []string) error {
 	if len(paths) != len(s.pages) {
-		return fmt.Errorf("画像と出力先の数が一致しません")
+		return errors.New("画像と出力先の数が一致しません")
 	}
 	for i, page := range s.pages {
 		if err := savePNG(paths[i], page); err != nil {

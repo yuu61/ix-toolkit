@@ -20,9 +20,9 @@ type fetchResponse struct {
 
 type fetchSite struct {
 	*httptest.Server
-	mu       sync.Mutex
 	files    map[string]fetchResponse
 	requests map[string][]http.Header
+	mu       sync.Mutex
 }
 
 func newFetchSite(t *testing.T) *fetchSite {
@@ -261,7 +261,7 @@ func TestFetchWebEditionVersion(t *testing.T) {
 
 func TestFetchWebRejectsNamesOutsideDocumentCache(t *testing.T) {
 	s := newFetchSite(t)
-	for _, name := range []string{"", ".", "..", "../other", "nested/manual", `nested\manual`} {
+	for _, name := range []string{"", ".", "..", "../other", "nested/manual", `nested\mannual`} {
 		d := s.doc()
 		d.Name = name
 		if err := FetchDoc(io.Discard, s.Client(), d, t.TempDir(), false, 0, "test"); err == nil {

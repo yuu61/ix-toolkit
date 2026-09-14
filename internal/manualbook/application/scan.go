@@ -69,8 +69,8 @@ func splitSpreads(inputDir, outputDir string, dryRun bool) (scanReport, error) {
 		return report, fmt.Errorf("ディレクトリの読み取りに失敗: %w", err)
 	}
 	type fileEntry struct {
-		name    string
 		sortKey *big.Int
+		name    string
 	}
 	var files []fileEntry
 	digitRe := regexp.MustCompile(`\d+`)
@@ -84,7 +84,7 @@ func splitSpreads(inputDir, outputDir string, dryRun bool) (scanReport, error) {
 		}
 		n := new(big.Int)
 		n.SetString(matches[0], 10)
-		files = append(files, fileEntry{name, n})
+		files = append(files, fileEntry{name: name, sortKey: n})
 	}
 	if len(files) == 0 {
 		return report, nil
@@ -107,9 +107,9 @@ func splitSpreads(inputDir, outputDir string, dryRun bool) (scanReport, error) {
 		defer writer.Close()
 	}
 	type pendingWrite struct {
+		result  <-chan error
 		name    string
 		outputs []string
-		result  <-chan error
 	}
 	var pending []pendingWrite
 	printResult := func(name string, outputs []string) {
@@ -148,7 +148,7 @@ func splitSpreads(inputDir, outputDir string, dryRun bool) (scanReport, error) {
 			printResult(f.name, outputs)
 			report.Pages += len(outputs)
 		} else {
-			pending = append(pending, pendingWrite{f.name, outputs, writer.Submit(spread, destinations)})
+			pending = append(pending, pendingWrite{name: f.name, outputs: outputs, result: writer.Submit(spread, destinations)})
 		}
 	}
 	for _, p := range pending {

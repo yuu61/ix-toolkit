@@ -122,16 +122,16 @@ func TestPDFExampleHeadingsAndAlternatingFooters(t *testing.T) {
 func TestPDFBulletParagraphAndWrappedContinuation(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		gap  float64
 		want []string
+		gap  float64
 	}{
-		{"paragraph", 15, []string{"• first", "• second", "後続の本文です。"}},
-		{"wrap", 10, []string{"• first", "• second後続の本文です。"}},
+		{name: "paragraph", gap: 15, want: []string{"• first", "• second", "後続の本文です。"}},
+		{name: "wrap", gap: 10, want: []string{"• first", "• second後続の本文です。"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pg := pdfPage{width: 300, height: 400}
 			// 項目名の間隔が大きく、ページ全体の行送りは 17pt になる。
-			for i := 0; i < 8; i++ {
+			for i := range 8 {
 				pg.glyphs = append(pg.glyphs, structureLine("項目名", 45, float64(370-i*17), 8)...)
 			}
 			pg.glyphs = append(pg.glyphs, structureLine("• first", 30, 210, 8)...)

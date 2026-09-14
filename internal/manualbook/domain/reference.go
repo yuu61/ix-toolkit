@@ -14,9 +14,9 @@ import (
 // PDF ビューアにも渡せないので持たない。Web ならページのパスと節の id で、
 // そのまま URL の末尾になる。
 type Ref struct {
-	Page   int    // PDF の物理ページ (1 始まり)。Web では 0
-	Path   string // Web: 冊子の起点からのページのパス (cli/remoteaccess/cli_aaa.html)
-	Anchor string // Web: ページ内の節 id (aaa-enable)。無ければ空
+	Path   string
+	Anchor string
+	Page   int
 }
 
 // String は索引の source 列に載せる形。"p1057" か "cli/…html#aaa-enable"。

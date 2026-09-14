@@ -19,7 +19,7 @@ func TestImageRulesRGBA(t *testing.T) {
 	}
 	// 短い画だけでなく、閾値の前後の水平線・垂直線と画像端も比較する。
 	for y := 10; y < 140; y++ {
-		for x := 0; x < 150; x++ {
+		for x := range 150 {
 			c := uint8(179 + (y/10)%2)
 			if x < 10 || x >= 140 {
 				c = 0
@@ -28,20 +28,20 @@ func TestImageRulesRGBA(t *testing.T) {
 		}
 	}
 	colors := image.NewRGBA(image.Rect(0, 0, 160, 256))
-	for y := 0; y < 256; y++ {
+	for y := range 256 {
 		c := color.RGBA{uint8(rng.Uint32()), uint8(rng.Uint32()), uint8(rng.Uint32()), uint8(rng.Uint32())}
-		for x := 0; x < 160; x++ {
+		for x := range 160 {
 			colors.SetRGBA(x, y, c)
 		}
 	}
 	for _, tc := range []struct {
-		name string
 		img  *image.RGBA
+		name string
 	}{
-		{"full", img},
-		{"subimage", img.SubImage(image.Rect(1, 11, 148, 139)).(*image.RGBA)},
-		{"colors", colors},
-		{"empty", image.NewRGBA(image.Rectangle{})},
+		{name: "full", img: img},
+		{name: "subimage", img: img.SubImage(image.Rect(1, 11, 148, 139)).(*image.RGBA)},
+		{name: "colors", img: colors},
+		{name: "empty", img: image.NewRGBA(image.Rectangle{})},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := imageRules(tc.img, 80, 70)
@@ -64,9 +64,9 @@ func BenchmarkImageRules(b *testing.B) {
 		}
 	}
 	for _, tc := range []struct {
-		name string
 		img  image.Image
-	}{{"RGBA", img}, {"generic", genericImage{img}}} {
+		name string
+	}{{name: "RGBA", img: img}, {name: "generic", img: genericImage{img}}} {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {

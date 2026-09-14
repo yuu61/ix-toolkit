@@ -65,7 +65,7 @@ func parsePageSpec(spec string, nPages int) ([]int, error) {
 			out = append(out, n)
 		}
 	}
-	for _, part := range strings.Split(spec, ",") {
+	for part := range strings.SplitSeq(spec, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue

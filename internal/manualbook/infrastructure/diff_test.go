@@ -20,7 +20,7 @@ func TestTableMarkdownRoundTrip(t *testing.T) {
 	var output strings.Builder
 	renderTableBlock(&output, domain.Block{Rows: want}, links{})
 	var got [][]string
-	for _, line := range strings.Split(output.String(), "\n") {
+	for line := range strings.SplitSeq(output.String(), "\n") {
 		if mdTableRe.MatchString(line) && !mdRuleRe.MatchString(line) {
 			got = append(got, splitTableRow(line))
 		}

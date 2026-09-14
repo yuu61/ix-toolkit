@@ -11,12 +11,15 @@ import (
 const ruleTolerance = 1.0 // ラスタ化で生じる罫線の太さ・接点のずれ (pt)
 
 type pdfTable struct {
-	left, right, top, bottom float64
-	rows                     [][]string
-	columns                  []float64
-	headerPage               int
-	headerRows               int
-	mergedRows               []bool
+	rows       [][]string
+	columns    []float64
+	mergedRows []bool
+	left       float64
+	right      float64
+	top        float64
+	bottom     float64
+	headerPage int
+	headerRows int
 }
 
 func (t pdfTable) contains(g glyph) bool {
@@ -198,8 +201,8 @@ func tableFromRules(pg pdfPage, rules []pdfRule) (pdfTable, bool) {
 		}
 	}
 	sets := newCellSets(nr * nc)
-	for r := 0; r < nr; r++ {
-		for c := 0; c < nc; c++ {
+	for r := range nr {
+		for c := range nc {
 			if c+1 < nc {
 				switch ruleCoverage(rules, true, xs[c+1], ys[r+1], ys[r]) {
 				case -1:
@@ -221,8 +224,8 @@ func tableFromRules(pg pdfPage, rules []pdfRule) (pdfTable, bool) {
 	// 結合後の領域は長方形で、四辺が閉じている場合だけセルとして採る。
 	type span struct{ r0, r1, c0, c1, n int }
 	spans := map[int]span{}
-	for r := 0; r < nr; r++ {
-		for c := 0; c < nc; c++ {
+	for r := range nr {
+		for c := range nc {
 			k := sets.root(r*nc + c)
 			s, ok := spans[k]
 			if !ok {
@@ -280,7 +283,7 @@ func tableFromRules(pg pdfPage, rules []pdfRule) (pdfTable, bool) {
 		cell := pg
 		cell.glyphs = gs
 		var lines []string
-		for _, line := range strings.Split(renderPage(cell, crop{}, false), "\n") {
+		for line := range strings.SplitSeq(renderPage(cell, crop{}, false), "\n") {
 			if t := strings.TrimSpace(line); t != "" {
 				lines = append(lines, t)
 			}
@@ -288,9 +291,9 @@ func tableFromRules(pg pdfPage, rules []pdfRule) (pdfTable, bool) {
 		texts[k] = strings.Join(lines, "\n")
 	}
 	table.rows = make([][]string, nr)
-	for r := 0; r < nr; r++ {
+	for r := range nr {
 		table.rows[r] = make([]string, nc)
-		for c := 0; c < nc; c++ {
+		for c := range nc {
 			table.rows[r][c] = texts[sets.root(r*nc+c)]
 		}
 	}

@@ -3,55 +3,22 @@ package domain
 // Profile は 1 冊の PDF のページ幾何と構造マーカーを表す。
 // PDF の版面条件と、PDF / Web 共通の構造マーカーを持つ。
 type Profile struct {
-	Name string `json:"name"`
-
-	// --- ページ幾何 (ポイント) ---
-	PageWidth  float64 `json:"pageWidth"`
-	PageHeight float64 `json:"pageHeight"`
-
-	// 本文帯を切り出すための天地マージン。ヘッダ・フッタはここで落ちる。
-	MarginTop    float64 `json:"marginTop"`
-	MarginBottom float64 `json:"marginBottom"`
-
-	// --- 段組み ---
-	// Columns=1 なら GutterLeft/GutterRight は使わない。
-	Columns     int     `json:"columns"`
-	GutterLeft  float64 `json:"gutterLeft"`  // 左カラム抽出時に右端から削る幅
-	GutterRight float64 `json:"gutterRight"` // 右カラム抽出時に左端から削る幅
-
-	// --- ヘッダ・フッタ帯 (メタデータとして別に抜く) ---
-	HeaderBand float64 `json:"headerBand"` // ヘッダだけ残すため下端から削る幅。0 なら抽出しない
-	FooterBand float64 `json:"footerBand"` // フッタだけ残すため上端から削る幅。0 なら抽出しない
-
-	// --- 構造マーカー ---
-	//
-	// コマンド辞書 (コマンドリファレンス) は、項目が EntryMarker で始まり、
-	// 中身が FieldLabels で割れる、という形をしている。この 2 つが揃っている
-	// 資料だけがコマンド項目として読める。
-	//
-	// 揃っていない資料 (機能説明書のような解説書) は、階層番号の見出しで割る。
-	// 同じ記号でも資料ごとに指すものが違うので、記号の設定を流用してはいけない。
-	// "■" はコマンドリファレンスでは項目の頭 (2039 個) だが、機能説明書では
-	// 節見出しの頭 (353 個) であり、前者の設定で後者を読むと節見出しが
-	// そのまま偽のコマンドとして索引に並ぶ。
-	EntryMarker string   `json:"entryMarker"` // 項目の先頭記号 (例 "■")
-	FieldLabels []string `json:"fieldLabels"` // 項目内の見出し語 (例 入力形式/パラメータ...)
-
-	// WebUnnumberedHeadings は節番号のない Web 冊子用。表紙の説明も本文として残す。
-	WebUnnumberedHeadings bool `json:"webUnnumberedHeadings,omitempty"`
-
-	// ChapterSep は版面ヘッダの「章名/節名」の区切り。機能説明書のヘッダは
-	// "ルータの設定・PPP の設定" の形をしている。節名自体が "運用・保守" のように
-	// 区切りを含むことがあるので、最初の 1 つだけで割る。
-	ChapterSep string `json:"chapterSep,omitempty"`
-
-	// FooterSection は章名と章別ページ番号がフッタに並ぶ冊子用。
-	// 左右ページで並び順が変わるため、番号を除いた文字列を章名・節ファイル名に使う。
-	FooterSection bool `json:"footerSection,omitempty"`
-
-	// HeadingMinSize は節番号の最小文字サイズ (pt)。設定例の小さなコマンド文字が
-	// 本文の最頻サイズになる冊子で、地の文中の参照番号を見出しと誤認しないために使う。
-	HeadingMinSize float64 `json:"headingMinSize,omitempty"`
+	Name                  string   `json:"name"`
+	ChapterSep            string   `json:"chapterSep,omitempty"`
+	EntryMarker           string   `json:"entryMarker"`
+	FieldLabels           []string `json:"fieldLabels"`
+	HeaderBand            float64  `json:"headerBand"`
+	Columns               int      `json:"columns"`
+	GutterLeft            float64  `json:"gutterLeft"`
+	GutterRight           float64  `json:"gutterRight"`
+	MarginBottom          float64  `json:"marginBottom"`
+	FooterBand            float64  `json:"footerBand"`
+	MarginTop             float64  `json:"marginTop"`
+	PageHeight            float64  `json:"pageHeight"`
+	PageWidth             float64  `json:"pageWidth"`
+	HeadingMinSize        float64  `json:"headingMinSize,omitempty"`
+	WebUnnumberedHeadings bool     `json:"webUnnumberedHeadings,omitempty"`
+	FooterSection         bool     `json:"footerSection,omitempty"`
 }
 
 // HasCommandEntries は、この資料をコマンド項目として読めるかを返す。
