@@ -31,6 +31,9 @@ def inventory_path(
     return None
 
 
+from .permissions import is_secure_file
+
+
 def read_inventory(
     override: str | None = None, env: Mapping[str, str] | None = None
 ) -> tuple[dict[str, dict], Path | None]:
@@ -41,6 +44,15 @@ def read_inventory(
         return {}, None
     if not path.is_file():
         raise UsageError(f"ERROR: inventory file not found: {path}")
+
+    if not is_secure_file(path):
+        raise UsageError(
+            f"ERROR: UNPROTECTED INVENTORY FILE!\n"
+            f"Permissions for '{path}' are too open.\n"
+            f"It is required that your devices.json is accessible only by you.\n"
+            f"Please restrict the file permissions (e.g., chmod 600) to proceed."
+        )
+
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
