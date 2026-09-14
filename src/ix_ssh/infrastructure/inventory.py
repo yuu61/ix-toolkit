@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from ..domain import UsageError, parse_inventory
+from .permissions import fix_command, is_secure_file
 
 INVENTORY_ENV = "IX_INVENTORY"
 INVENTORY_CANDIDATES = (
@@ -31,9 +32,6 @@ def inventory_path(
     return None
 
 
-from .permissions import is_secure_file
-
-
 def read_inventory(
     override: str | None = None, env: Mapping[str, str] | None = None
 ) -> tuple[dict[str, dict], Path | None]:
@@ -46,18 +44,12 @@ def read_inventory(
         raise UsageError(f"ERROR: inventory file not found: {path}")
 
     if not is_secure_file(path):
-        import os
-        cmd = (
-            f'icacls "{path.absolute()}" /inheritance:r /grant:r "%USERNAME%:F"'
-            if os.name == "nt"
-            else f'chmod 600 "{path.absolute()}"'
-        )
         raise UsageError(
             f"ERROR: UNPROTECTED INVENTORY FILE!\n"
             f"Permissions for '{path}' are too open.\n"
             f"It is required that your devices.json is accessible only by you.\n"
             f"Please run the following command to fix this:\n\n"
-            f"  {cmd}\n"
+            f"  {fix_command(path)}\n"
         )
 
     try:

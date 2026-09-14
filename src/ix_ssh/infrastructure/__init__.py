@@ -5,6 +5,7 @@ or cli."""
 
 from .files import read_config_file, write_backup
 from .inventory import INVENTORY_CANDIDATES, INVENTORY_ENV, inventory_path, read_inventory
+from .permissions import fix_command
 from .session import NetmikoSession, open_session
 from .ssh_config import DEFAULT_SSH_CONFIG, load_ssh_config, quiet_load_ssh_config
 
@@ -13,6 +14,7 @@ __all__ = [
     "INVENTORY_CANDIDATES",
     "INVENTORY_ENV",
     "NetmikoSession",
+    "fix_command",
     "inventory_path",
     "load_ssh_config",
     "open_session",

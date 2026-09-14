@@ -87,3 +87,9 @@ class ConsoleOutput:
             f"[OK] running-config of {label} saved to {path} ({line_count} lines)",
             file=self.out,
         )
+
+    def backup_not_private(self, path: Path, fix: str) -> None:
+        print(
+            f"[WARN] could not restrict {path} to the current user; run: {fix}",
+            file=self.err,
+        )
