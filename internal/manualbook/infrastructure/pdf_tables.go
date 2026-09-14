@@ -168,7 +168,7 @@ func tableFromRules(pg pdfPage, rules []pdfRule) (pdfTable, bool) {
 // 行の空白幅や文末記号で表を分断せず、元ページの位置を保持する。
 func sectionTableLines(pg pdfPage, tables []pdfTable, body crop, page int) ([]string, map[int]domain.Block) {
 	blocks := map[int]domain.Block{}
-	lines := make([]string, 0, len(tables))
+	var lines []string //nolint:prealloc // 行数は表の数ではなくページの文字数で決まる。
 	remaining := pageOutsideTables(pg, tables, body)
 	for _, table := range tables {
 		above, below := remaining, remaining

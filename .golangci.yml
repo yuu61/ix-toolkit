@@ -37,7 +37,7 @@ linters:
     - wsl                  # deprecated (replaced by wsl_v5)
     - wsl_v5               # 空行のスタイル制限は過剰
     - gomodguard           # deprecated (replaced by gomodguard_v2)
-    - gomodguard_v2
+    - gomodguard_v2        # モジュールの許可・禁止リストは持たない (depguard と同じ理由)
     - nlreturn
     - tagalign
     - tagliatelle
@@ -83,6 +83,8 @@ linters:
         - G104
         - G301
         - G304
+        - G306                # 資格情報を含まないマニュアル・索引・キャッシュを他の利用者も読める 0644 で出力する
+        - G703                # 利用者が指定したローカル資料のパスを読む CLI
         - G115
     govet:
       enable-all: true

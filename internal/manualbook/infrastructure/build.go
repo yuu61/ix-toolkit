@@ -14,7 +14,7 @@ import (
 // 焼き直したいときは figures/ を消す (か manualbook figures を手で流す)。
 // build の -force は取得の話で、ここには効かない。
 type figuresMark struct {
-	Source   string `json:"source"`
+	Source   string `json:"source"` // 元 PDF のファイル名
 	Rendered string `json:"rendered"`
 	DPI      int    `json:"dpi"`
 	Pages    int    `json:"pages"`
@@ -41,5 +41,5 @@ func WriteFiguresMark(outDir, pdf string, dpi, pages int) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(outDir, "figures", figuresMarkName), append(b, '\n'), 0o644) // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
+	return os.WriteFile(filepath.Join(outDir, "figures", figuresMarkName), append(b, '\n'), 0o644)
 }

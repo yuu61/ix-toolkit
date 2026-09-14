@@ -45,7 +45,7 @@ func WriteDiffTSV(out string, rows []domain.DiffRow) error {
 			r.Kind, tsvCell(r.IX), tsvCell(r.IXR), r.Source, r.RefIX, r.RefIXR, tsvCell(r.Note),
 		}, "\t") + "\n")
 	}
-	return os.WriteFile(out, []byte(b.String()), 0o644) // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
+	return os.WriteFile(out, []byte(b.String()), 0o644)
 }
 
 // FindDerived は手で導いた差分の TSV を、カレント → 実行ファイルの隣の順に探す。

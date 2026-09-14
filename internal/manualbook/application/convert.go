@@ -14,7 +14,7 @@ import (
 // MDOptions は 1 冊分の変換の指定。md サブコマンドはフラグから、build は
 // マニフェストから組み立てる。
 type MDOptions struct {
-	Input       string
+	Input       string // PDF か、fetch が置いた取得キャッシュのディレクトリ
 	OutDir      string
 	ProfilePath string
 	Title       string

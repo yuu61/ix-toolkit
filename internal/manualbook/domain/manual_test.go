@@ -34,13 +34,13 @@ func TestReferencePreservesSourceLocation(t *testing.T) {
 // SyntaxLabels と CommandsOf は揃えたあとの綴りで見出し語を見る。揃える先がそれらと
 // 食い違うと、構文の欄が地の文として整形され、索引が空になる。
 func TestLabelSpellingKeepsSyntaxLabelsReachable(t *testing.T) {
-	for l := range domain.SyntaxLabels() {
+	for l := range domain.SyntaxLabels {
 		if got := domain.NormalizeLabel(l); got != l {
 			t.Errorf("LabelSpelling が SyntaxLabels の %q を %q に写している", l, got)
 		}
 	}
-	for from, to := range domain.LabelSpelling() {
-		if domain.SyntaxLabels()[from] && !domain.SyntaxLabels()[to] {
+	for from, to := range domain.LabelSpelling {
+		if domain.SyntaxLabels[from] && !domain.SyntaxLabels[to] {
 			t.Errorf("LabelSpelling: %q → %q で構文の欄の判定が外れる", from, to)
 		}
 	}

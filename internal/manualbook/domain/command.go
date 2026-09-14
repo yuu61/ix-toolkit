@@ -14,7 +14,9 @@ const (
 // 揃えたあとの綴り (NormalizeLabel を通した形) で引く。LabelSpelling の写し先が
 // ここと食い違うと、構文の欄が地の文として整形され、索引が空になる。
 // その不変条件は manual_test.go で確かめる。
-func SyntaxLabels() map[string]bool { return map[string]bool{SyntaxLabel: true, "入力例": true} }
+//
+//nolint:gochecknoglobals // 不変の見出し語表。欄ごとに引くので、呼ぶたびに作り直さない。
+var SyntaxLabels = map[string]bool{SyntaxLabel: true, "入力例": true}
 
 // CommandsOf は入力形式からコマンド行を取り出す (no 形は除く)。これが索引のキーになる。
 //

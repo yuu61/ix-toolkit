@@ -10,14 +10,14 @@ import (
 // Source は 1 冊の出どころと、README に書く生成条件。
 type Source struct {
 	Profile  *domain.Profile
-	Kind     string
-	PDF      string
-	BaseURL  string
-	CacheDir string
-	Label    string
-	Series   string
-	Version  string
-	Fetched  string
+	Kind     string // domain.KindPDF か domain.KindWeb
+	PDF      string // kind=pdf: PDF のパス
+	BaseURL  string // kind=web: 冊子の URL (末尾 /)。出典リンクの起点
+	CacheDir string // kind=web: fetch が置いた取得キャッシュ
+	Label    string // -source で渡された出典表記 (取得元 URL 等)
+	Series   string // 機種の系列 (ix / ix-r)
+	Version  string // 資料の版
+	Fetched  string // 取得日 (web)
 }
 
 // writeOrigin は README の「生成条件」のうち、出どころに依る行を書く。

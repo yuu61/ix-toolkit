@@ -266,7 +266,7 @@ func ParseHeadings(p *domain.Profile, pages []Page) ([]domain.Heading, map[int]s
 			chapters[pg.chapter] = chName
 		}
 		for line, raw := range pg.lines {
-			parser.line(raw, line, pg, secName)
+			parser.line(raw, line, &pg, secName)
 		}
 	}
 	parser.flushLayout()
@@ -406,7 +406,7 @@ func WriteSections(outDir, docTitle string, src Source,
 			line += strings.Count(hb.String(), "\n")
 			b.WriteString(hb.String())
 		}
-		if err := os.WriteFile(full, []byte(b.String()), 0o644); err != nil { // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
+		if err := os.WriteFile(full, []byte(b.String()), 0o644); err != nil {
 			return err
 		}
 	}
@@ -618,7 +618,7 @@ func writeSectionIndex(outDir, docTitle string, chapters map[int]string, order [
 		}
 		fmt.Fprintf(&t, "%s\t%s\t%s\t%d\t%s\n", section, h.Title, file, h.Line, h.Ref.String())
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "sections.tsv"), []byte(t.String()), 0o644); err != nil { // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
+	if err := os.WriteFile(filepath.Join(outDir, "sections.tsv"), []byte(t.String()), 0o644); err != nil {
 		return err
 	}
 
@@ -635,7 +635,7 @@ func writeSectionIndex(outDir, docTitle string, chapters map[int]string, order [
 		}
 		fmt.Fprintf(&b, "- [%s](%s) — %d 見出し\n", k.Section, mdLinkDest(relPath[k]), len(grouped[k]))
 	}
-	return os.WriteFile(filepath.Join(outDir, "index.md"), []byte(b.String()), 0o644) // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
+	return os.WriteFile(filepath.Join(outDir, "index.md"), []byte(b.String()), 0o644)
 }
 
 func writeSectionReadme(outDir, docTitle string, src Source,
@@ -671,11 +671,11 @@ func writeSectionReadme(outDir, docTitle string, src Source,
 		fmt.Fprintln(&b, "節を探し当てる手がかりにはなるが、**矢印の向き・包含関係はファイルを開かないと")
 		fmt.Fprintln(&b, "分からない。** SVG は XML なので、箱の座標 (`<rect>`) と矢印 (`<path>`) を")
 		fmt.Fprintln(&b, "読めば「どの箱からどの箱へ」は辿れる。ラベルの囲みから構成を推測しない。")
-		return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644) // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
+		return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644)
 	}
 
 	writePDFSectionGuide(&b, src, figs)
-	return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644) // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
+	return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644)
 }
 
 // headingParser は現在の見出しと、まだ閉じていない版面ブロックを保持する。
@@ -718,7 +718,7 @@ func (parser *headingParser) flushLayout() {
 	parser.pend, parser.hole = nil, 0
 }
 
-func (parser *headingParser) line(raw string, line int, pg Page, secName string) {
+func (parser *headingParser) line(raw string, line int, pg *Page, secName string) {
 	if table, ok := pg.tables[line]; ok {
 		parser.flushLayout()
 		if parser.cur != nil {
@@ -731,7 +731,7 @@ func (parser *headingParser) line(raw string, line int, pg Page, secName string)
 	if tocLeaderRe.MatchString(raw) {
 		return
 	}
-	if m := headingRe.FindStringSubmatch(t); len(m) > 2 && isPageHeading(pg, t, m[2]) {
+	if m := headingRe.FindStringSubmatch(t); len(m) > 3 && isPageHeading(pg, t, m[2]) {
 		parser.flushLayout()
 		parser.heads = append(parser.heads, domain.Heading{
 			Number:  normalizeHeadingNumber(m[2]),

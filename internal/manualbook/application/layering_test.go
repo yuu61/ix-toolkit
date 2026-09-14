@@ -47,20 +47,20 @@ func checkLayerFile(t *testing.T, layer string, dependencies map[string]bool, na
 	}
 	imports := map[string]string{}
 	for _, imp := range f.Imports {
-		name, err := strconv.Unquote(imp.Path.Value)
+		importPath, err := strconv.Unquote(imp.Path.Value)
 		if err != nil {
 			t.Fatal(err)
 		}
-		alias := filepath.Base(name)
+		alias := filepath.Base(importPath)
 		if imp.Name != nil {
 			alias = imp.Name.Name
 		}
-		imports[alias] = name
-		if strings.HasPrefix(name, prefix) && !dependencies[strings.TrimPrefix(name, prefix)] {
-			t.Errorf("%s: forbidden layer dependency %s", path, name)
+		imports[alias] = importPath
+		if strings.HasPrefix(importPath, prefix) && !dependencies[strings.TrimPrefix(importPath, prefix)] {
+			t.Errorf("%s: forbidden layer dependency %s", path, importPath)
 		}
-		if layer == domainLayer && externalDependency(name) {
-			t.Errorf("%s: domain depends on external I/O or technology: %s", path, name)
+		if layer == domainLayer && externalDependency(importPath) {
+			t.Errorf("%s: domain depends on external I/O or technology: %s", path, importPath)
 		}
 	}
 	checkProcessOwnership(t, layer, f, fset, imports)

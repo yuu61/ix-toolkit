@@ -109,18 +109,20 @@ func r0Lower(w string) bool { return w[0] >= 'a' && w[0] <= 'z' }
 //	8.3.5 その他変更があるコマンド                → changed
 //
 // 8.1 (パスワードの引継ぎ) と 8.2 (IX 互換モード) は表の形をしていないので読まない。
+//
+//nolint:gochecknoglobals // 不変の対応表。
+var ch8Kinds = []struct{ word, kind string }{
+	{"廃止", "removed"},
+	{"表現の変更", diffRenamed},
+	{"モード", "moved"},
+	{"デフォルト値", "range"},
+	{"設定範囲", "range"},
+	{"その他変更", "changed"},
+}
 
 // Ch8Kind は節の題から行の種類を決める。題に種類を決める語が無ければ false
 // (呼ぶ側は親の節の種類を引き継ぐ)。
 func Ch8Kind(title string) (string, bool) {
-	ch8Kinds := []struct{ word, kind string }{
-		{"廃止", "removed"},
-		{"表現の変更", diffRenamed},
-		{"モード", "moved"},
-		{"デフォルト値", "range"},
-		{"設定範囲", "range"},
-		{"その他変更", "changed"},
-	}
 	for _, c := range ch8Kinds {
 		if strings.Contains(title, c.word) {
 			return c.kind, true

@@ -192,7 +192,7 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 	defer cleanup()
 	tags := readETags(dst)
 	newTags := map[string]etagEntry{"index.html": {}}
-	if err := os.WriteFile(filepath.Join(stage, "index.html"), index, 0o644); err != nil { // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
+	if err := os.WriteFile(filepath.Join(stage, "index.html"), index, 0o644); err != nil {
 		return err
 	}
 
@@ -553,14 +553,14 @@ func writeWebMetadata(stage string, base *url.URL, d domain.Doc, newTags map[str
 	if err != nil {
 		return err
 	}
-	if writeErr := os.WriteFile(filepath.Join(stage, etagFile), append(b, '\n'), 0o644); writeErr != nil { // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
+	if writeErr := os.WriteFile(filepath.Join(stage, etagFile), append(b, '\n'), 0o644); writeErr != nil {
 		return writeErr
 	}
 	b, err = json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(stage, WebMetaName), append(b, '\n'), 0o644); err != nil { // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
+	if err := os.WriteFile(filepath.Join(stage, WebMetaName), append(b, '\n'), 0o644); err != nil {
 		return err
 	}
 	return nil
@@ -648,7 +648,7 @@ func writeCacheFile(stage, rel string, body []byte) error {
 	if err := root.MkdirAll(filepath.Dir(local), 0o755); err != nil {
 		return err
 	}
-	return root.WriteFile(local, body, 0o644) // #nosec G306 -- 公開マニュアルのキャッシュ。
+	return root.WriteFile(local, body, 0o644)
 }
 
 func prepareWebStage(dst string) (stage, previous string, cleanup func(), err error) {

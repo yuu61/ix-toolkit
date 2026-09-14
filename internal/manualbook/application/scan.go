@@ -125,10 +125,13 @@ type fileEntry struct {
 	name    string
 }
 
+// digitRe はファイル名の中の数字列。scanFiles の選別と scanOutputPattern の
+// 出力名の組み立てが同じ切り出しを使う。
+var digitRe = regexp.MustCompile(`\d+`)
+
 func scanFiles(names []string) ([]fileEntry, int) {
 	skipped := 0
 	var files []fileEntry
-	digitRe := regexp.MustCompile(`\d+`)
 	for _, name := range names {
 		base := strings.TrimSuffix(name, filepath.Ext(name))
 		matches := digitRe.FindAllString(base, -1)
@@ -178,7 +181,7 @@ func finishScanWrites(pending []pendingWrite, report *scanReport, dryRun bool) {
 func scanOutputPattern(files []fileEntry) (prefix, suffix, ext string, digits int) {
 	ext = filepath.Ext(files[0].name)
 	base := strings.TrimSuffix(files[0].name, ext)
-	loc := regexp.MustCompile(`\d+`).FindStringIndex(base)
+	loc := digitRe.FindStringIndex(base)
 	prefix, suffix = base[:loc[0]], base[loc[1]:]
 	digits = max(loc[1]-loc[0], len(strconv.Itoa(len(files)*2)))
 	return prefix, suffix, ext, digits

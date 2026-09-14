@@ -70,12 +70,12 @@ func ReadWebMeta(dir string) (WebMeta, error) {
 
 // WebPage は取得キャッシュの 1 ページ。
 type WebPage struct {
-	body         *html.Node
-	path         string
-	title        string
-	chapterTitle string
-	number       []int
-	unnumbered   bool
+	body         *html.Node // 本文の <section> (h1 を含む)
+	path         string     // 冊子の起点からの相対パス (cli/remoteaccess/cli_aaa.html)
+	title        string     // <h1> の題 (番号を除く)
+	chapterTitle string     // パンくずの章名
+	number       []int      // <h1> の番号 (21.1 → [21 1])
+	unnumbered   bool       // 番号なし冊子では本文全体を読み、章番号は出力の整理用に付ける
 }
 
 // --- 読み込み ---
@@ -632,25 +632,25 @@ func definitionFields(dl *html.Node, labels map[string]bool) []domain.Field {
 		if d.Type != html.ElementNode || d.Data != "dt" {
 			continue
 		}
-		label := dtLabel(d)
-		if !labels[domain.NormalizeLabel(label)] {
+		label := domain.NormalizeLabel(dtLabel(d))
+		if !labels[label] {
 			continue
 		}
 		dd := d.NextSibling
 		for dd != nil && (dd.Type != html.ElementNode || dd.Data != "dd") {
 			dd = dd.NextSibling
 		}
+		f := domain.Field{Label: label}
 		if dd != nil {
-			fields = append(fields, domain.Field{Label: domain.NormalizeLabel(label), Lines: webFieldLines(domain.NormalizeLabel(label), dd)})
-		} else {
-			fields = append(fields, domain.Field{Label: domain.NormalizeLabel(label)})
+			f.Lines = webFieldLines(label, dd)
 		}
+		fields = append(fields, f)
 	}
 	return fields
 }
 
 func webFieldLines(label string, n *html.Node) []string {
-	if domain.SyntaxLabels()[label] {
+	if domain.SyntaxLabels[label] {
 		return rawLines(n)
 	}
 	return proseLines(n)

@@ -142,7 +142,7 @@ func convertDoc(d domain.Doc, cacheDir, outDir, profilePath string) error {
 type prefixWriter struct {
 	dst    io.Writer
 	prefix string
-	mid    bool
+	mid    bool // 行の途中で終わった (次の書き込みには印を付けない)
 }
 
 func (w *prefixWriter) Write(p []byte) (int, error) {

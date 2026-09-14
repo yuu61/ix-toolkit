@@ -228,7 +228,7 @@ func TestFetchWebEditionVersion(t *testing.T) {
 
 func TestFetchWebRejectsNamesOutsideDocumentCache(t *testing.T) {
 	s := newFetchSite(t)
-	for _, name := range []string{"", ".", "..", "../other", "nested/manual", `nested\mannual`} {
+	for _, name := range []string{"", ".", "..", "../other", "nested/manual", `nested\dir`} {
 		d := s.doc()
 		d.Name = name
 		if err := FetchDoc(io.Discard, s.Client(), d, t.TempDir(), false, 0, "test"); err == nil {

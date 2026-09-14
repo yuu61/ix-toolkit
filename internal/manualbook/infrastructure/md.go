@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 )
@@ -22,14 +23,14 @@ import (
 
 // Page は 1 ページ分の本文と、ヘッダ・フッタ帯から得たメタデータ。
 type Page struct {
-	tables    map[int]domain.Block
-	headings  map[string]bool
-	printed   string
-	section   string
-	lines     []string
-	fullLines []string
-	num       int
-	chapter   int
+	tables    map[int]domain.Block // PDF の表。キーは lines 内の挿入位置
+	headings  map[string]bool      // PDF の書式で確認した見出し行。空白を除いた本文がキー
+	printed   string               // 印刷ページ番号 (例 "3-29")
+	section   string               // 版面ヘッダ = 節名
+	lines     []string             // 読み順に並べた本文行
+	fullLines []string             // ページ全幅で読んだ行 (段をまたぐ大見出し用)
+	num       int                  // PDF 上のページ番号 (1 始まり)
+	chapter   int                  // 印刷ページ番号の章部分
 	twoColumn bool
 }
 
@@ -182,7 +183,7 @@ func ParseEntries(p *domain.Profile, pages []Page) []domain.Entry {
 			continue
 		}
 		for _, raw := range pg.lines {
-			parser.line(raw, pg, p)
+			parser.line(raw, &pg, p)
 		}
 	}
 	parser.flushEntry()
@@ -264,6 +265,7 @@ func dedent(lines []string) []string {
 	return out
 }
 
+// bulletPrefix は箇条書きの頭に立つ記号 (1 文字ずつ)。行の最初の 1 文字で見分ける。
 // 機能説明書は "➢" を第 2 階層の箇条書きに使う。コマンドリファレンスには
 // 現れないが、どちらの読み方でも同じ判定を使うのでここに並べておく。
 const bulletPrefix = "•・※➢‒–—-*"
@@ -282,21 +284,13 @@ func isBullet(s string) bool {
 	if footnoteRef.MatchString(s) {
 		return false
 	}
-	for _, prefix := range bulletPrefix {
-		b := string(prefix)
-		if strings.HasPrefix(s, b) {
-			return true
-		}
-	}
-	return false
+	r, _ := utf8.DecodeRuneInString(s)
+	return strings.ContainsRune(bulletPrefix, r)
 }
 
 func stripBullet(s string) string {
-	for _, prefix := range bulletPrefix {
-		b := string(prefix)
-		if r, ok := strings.CutPrefix(s, b); ok {
-			return strings.TrimSpace(r)
-		}
+	if r, size := utf8.DecodeRuneInString(s); strings.ContainsRune(bulletPrefix, r) {
+		return strings.TrimSpace(s[size:])
 	}
 	return s
 }
@@ -455,7 +449,7 @@ func WriteAll(outDir, docTitle string, src Source,
 			line += strings.Count(eb.String(), "\n")
 			b.WriteString(eb.String())
 		}
-		if err := os.WriteFile(full, []byte(b.String()), 0o644); err != nil { // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
+		if err := os.WriteFile(full, []byte(b.String()), 0o644); err != nil {
 			return err
 		}
 	}
@@ -475,7 +469,7 @@ func renderEntry(b *strings.Builder, e *domain.Entry) {
 	fmt.Fprintf(b, "## %s\n\n", e.Title)
 	for _, f := range e.Fields {
 		lines := dedent(f.Lines)
-		if domain.SyntaxLabels()[f.Label] {
+		if domain.SyntaxLabels[f.Label] {
 			// コマンド構文は版面どおりに残す。折り返しも字下げも意味を持つ。
 			body := strings.Trim(strings.Join(lines, "\n"), "\n ")
 			if body == "" {
@@ -571,7 +565,7 @@ func writeIndex(outDir, docTitle string, chapters map[int]string, order []domain
 	for _, r := range rows {
 		fmt.Fprintf(&t, "%s\t%s\t%s\t%d\t%s\n", r.cmd, r.title, r.file, r.line, r.source)
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "commands.tsv"), []byte(t.String()), 0o644); err != nil { // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
+	if err := os.WriteFile(filepath.Join(outDir, "commands.tsv"), []byte(t.String()), 0o644); err != nil {
 		return err
 	}
 
@@ -593,7 +587,7 @@ func writeIndex(outDir, docTitle string, chapters map[int]string, order []domain
 		}
 		fmt.Fprintf(&b, "- [%s](%s) — %d 項目\n", k.Section, mdLinkDest(relPath[k]), len(grouped[k]))
 	}
-	return os.WriteFile(filepath.Join(outDir, "index.md"), []byte(b.String()), 0o644) // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
+	return os.WriteFile(filepath.Join(outDir, "index.md"), []byte(b.String()), 0o644)
 }
 
 func writeReadme(outDir, docTitle string, src Source, nEntries, nSections int) error {
@@ -611,7 +605,7 @@ func writeReadme(outDir, docTitle string, src Source, nEntries, nSections int) e
 	fmt.Fprintln(&b, "  "+src.sourceColumnNote())
 	fmt.Fprintln(&b, "- `index.md` — 章・節の目次")
 	fmt.Fprintln(&b, "- `chNN-<章名>/<節名>.md` — 本文")
-	return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644) // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
+	return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644)
 }
 
 // mdLinkDest は Markdown のリンク先を書く。
@@ -661,7 +655,7 @@ func (parser *entryParser) flushEntry() {
 	parser.cur = nil
 }
 
-func (parser *entryParser) line(raw string, pg Page, p *domain.Profile) {
+func (parser *entryParser) line(raw string, pg *Page, p *domain.Profile) {
 	t := strings.TrimSpace(raw)
 	if t == "" {
 		if parser.curField != nil {

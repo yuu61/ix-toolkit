@@ -86,18 +86,14 @@ func checkLocalModelTable(t *testing.T, rows [][]string) {
 
 func checkTableGlyphs(t *testing.T, pg pdfPage, tables []pdfTable, p *domain.Profile, page int) {
 	lines, blocks := sectionTableLines(pg, tables, bodyCrop(p), page)
-	combined := strings.Join(lines, "\n")
-	var combinedSb51 strings.Builder
+	var combined strings.Builder
+	combined.WriteString(strings.Join(lines, "\n"))
 	for k := range blocks {
-		b := blocks[k]
-		var combinedSb52 strings.Builder
-		for _, row := range b.Rows {
-			combinedSb52.WriteString(strings.Join(row, ""))
+		for _, row := range blocks[k].Rows {
+			combined.WriteString(strings.Join(row, ""))
 		}
-		combinedSb51.WriteString(combinedSb52.String())
 	}
-	combined += combinedSb51.String()
-	counts := glyphCounts(combined)
+	counts := glyphCounts(combined.String())
 	for r, n := range glyphCounts(renderPage(pg, bodyCrop(p), true)) {
 		// 結合セルの展開で文字が増えることはあるが、表外の本文を含めて減らしてはいけない。
 		if counts[r] < n {

@@ -14,9 +14,9 @@ import (
 // PDF ビューアにも渡せないので持たない。Web ならページのパスと節の id で、
 // そのまま URL の末尾になる。
 type Ref struct {
-	Path   string
-	Anchor string
-	Page   int
+	Path   string // Web: 冊子の起点からのページのパス (cli/remoteaccess/cli_aaa.html)
+	Anchor string // Web: ページ内の節 id (aaa-enable)。無ければ空
+	Page   int    // PDF の物理ページ (1 始まり)。Web では 0
 }
 
 // String は索引の source 列に載せる形。"p1057" か "cli/…html#aaa-enable"。
@@ -42,12 +42,12 @@ func (r Ref) IsWeb() bool { return r.Path != "" }
 // コマンドリファレンスは PDF 版が「ユーザ権限」、Web 版が「ユーザー権限」と
 // 綴りが違う。プロファイルの fieldLabels は照合に使うので元資料どおりに書き、
 // 本文と索引に出すときにここで揃える。
-func LabelSpelling() map[string]string {
-	return map[string]string{"ユーザ権限": "ユーザー権限"}
-}
+//
+//nolint:gochecknoglobals // 不変の綴り表。NormalizeLabel は段落ごとに呼ばれるので、呼ぶたびに作り直さない。
+var LabelSpelling = map[string]string{"ユーザ権限": "ユーザー権限"}
 
 func NormalizeLabel(l string) string {
-	if n, ok := LabelSpelling()[l]; ok {
+	if n, ok := LabelSpelling[l]; ok {
 		return n
 	}
 	return l

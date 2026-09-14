@@ -375,22 +375,19 @@ func renderGridLine(ln textLine, originX, unit, lineU float64, startCol int) str
 //
 // 空きは外接矩形の隙間ではなく送りで測る。字面の狭い字 ("1" "." "i") は矩形が
 // 送りよりずっと狭く、隙間で測ると語の中で割れる ("1 0 . 0 . 0 .254")。
+//
+// 語は gs の部分スライスで返す (読むだけなので写さない)。
 func splitWords(gs []glyph, unit float64) [][]glyph {
 	var words [][]glyph
-	cur := make([]glyph, 0, len(gs))
-	for i, g := range gs {
-		split := i == 0 || g.spaceBefore
-		if i > 0 && !split {
-			split = wordGap(gs[i-1], g, unit)
+	start := 0
+	for i := 1; i < len(gs); i++ {
+		if gs[i].spaceBefore || wordGap(gs[i-1], gs[i], unit) {
+			words = append(words, gs[start:i:i])
+			start = i
 		}
-		if split && len(cur) > 0 {
-			words = append(words, cur)
-			cur = nil
-		}
-		cur = append(cur, g)
 	}
-	if len(cur) > 0 {
-		words = append(words, cur)
+	if start < len(gs) {
+		words = append(words, gs[start:])
 	}
 	return words
 }

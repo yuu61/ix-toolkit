@@ -53,7 +53,7 @@ func pdfHeadingLines(pg pdfPage, body crop, bodySize, minSize float64) map[strin
 	return out
 }
 
-func isPageHeading(pg Page, text, number string) bool {
+func isPageHeading(pg *Page, text, number string) bool {
 	chapter, _, _ := strings.Cut(normalizeHeadingNumber(number), ".")
 	n, _ := strconv.Atoi(chapter)
 	if pg.chapter > 0 && n != pg.chapter {
