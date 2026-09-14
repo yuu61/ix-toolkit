@@ -46,11 +46,18 @@ def read_inventory(
         raise UsageError(f"ERROR: inventory file not found: {path}")
 
     if not is_secure_file(path):
+        import os
+        cmd = (
+            f'icacls "{path.absolute()}" /inheritance:r /grant:r "%USERNAME%:F"'
+            if os.name == "nt"
+            else f'chmod 600 "{path.absolute()}"'
+        )
         raise UsageError(
             f"ERROR: UNPROTECTED INVENTORY FILE!\n"
             f"Permissions for '{path}' are too open.\n"
             f"It is required that your devices.json is accessible only by you.\n"
-            f"Please restrict the file permissions (e.g., chmod 600) to proceed."
+            f"Please run the following command to fix this:\n\n"
+            f"  {cmd}\n"
         )
 
     try:
