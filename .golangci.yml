@@ -5,7 +5,7 @@ run:
   tests: true
 
 linters:
-  enable-all: true
+  default: all
   disable:
     # 未使用ライブラリ・技術に関連するリンター
     - arangolint
@@ -52,37 +52,37 @@ linters:
     - depguard
     - gomoddirectives
 
-  # enable-all を使うことで、これら以外の有益なリンター (intrange, prealloc, perfsprint, modernize, fieldalignment など) はすべて有効になります。
+  # default: all を使うことで、これら以外の有益なリンター (intrange, prealloc, perfsprint, modernize, fieldalignment など) はすべて有効になります。
 
-linters-settings:
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - performance
-      - style
-      - opinionated
-    disabled-checks:
-      - hugeParam
-      - unnamedResult
-  revive:
-    rules:
-      - name: blank-imports
-      - name: exported
-        disabled: true
-      - name: unexported-return
-        disabled: true
-      - name: cognitive-complexity
-        disabled: true
-  gosec:
-    excludes:
-      - G104
-      - G301
-      - G304
-      - G115
-  govet:
-    enable-all: true
-  nestif:
-    min-complexity: 8
+  settings:
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+        - opinionated
+      disabled-checks:
+        - hugeParam
+        - unnamedResult
+    revive:
+      rules:
+        - name: blank-imports
+        - name: exported
+          disabled: true
+        - name: unexported-return
+          disabled: true
+        - name: cognitive-complexity
+          disabled: true
+    gosec:
+      excludes:
+        - G104
+        - G301
+        - G304
+        - G115
+    govet:
+      enable-all: true
+    nestif:
+      min-complexity: 8
 
 formatters:
   enable:
