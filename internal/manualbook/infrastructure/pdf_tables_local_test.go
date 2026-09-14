@@ -48,13 +48,15 @@ func TestLocalPDFTables(t *testing.T) {
 		}
 		lines, blocks := sectionTableLines(pg, tables, bodyCrop(p), tc.page)
 		combined := strings.Join(lines, "\n")
+		var combinedSb51 strings.Builder
 		for _, b := range blocks {
 			var combinedSb52 strings.Builder
 			for _, row := range b.Rows {
 				combinedSb52.WriteString(strings.Join(row, ""))
 			}
-			combined += combinedSb52.String()
+			combinedSb51.WriteString(combinedSb52.String())
 		}
+		combined += combinedSb51.String()
 		counts := glyphCounts(combined)
 		for r, n := range glyphCounts(renderPage(pg, bodyCrop(p), true)) {
 			// 結合セルの展開で文字が増えることはあるが、表外の本文を含めて減らしてはいけない。

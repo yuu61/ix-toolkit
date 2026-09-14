@@ -8,14 +8,14 @@ import (
 
 func TestReferencePreservesSourceLocation(t *testing.T) {
 	for _, tc := range []struct {
-		ref  domain.Ref
 		want string
+		ref  domain.Ref
 		web  bool
 	}{
-		{domain.Ref{}, "", false},
-		{domain.Ref{Page: 1057}, "p1057", false},
-		{domain.Ref{Path: "cli/example.html", Anchor: "example-enable"}, "cli/example.html#example-enable", true},
-		{domain.Ref{Path: "cli/example.html"}, "cli/example.html", true},
+		{ref: domain.Ref{}, want: "", web: false},
+		{ref: domain.Ref{Page: 1057}, want: "p1057", web: false},
+		{ref: domain.Ref{Path: "cli/example.html", Anchor: "example-enable"}, want: "cli/example.html#example-enable", web: true},
+		{ref: domain.Ref{Path: "cli/example.html"}, want: "cli/example.html", web: true},
 	} {
 		if got := tc.ref.String(); got != tc.want {
 			t.Errorf("%+v: source = %q, want %q", tc.ref, got, tc.want)
