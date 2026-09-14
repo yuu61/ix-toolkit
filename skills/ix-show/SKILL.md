@@ -51,6 +51,8 @@ SSH のエイリアスと `ProxyJump` は `ix-ssh` が解決する。
 現在の設定は `show running-config`、IPsec / IKE は `show ipsec sa` / `show ike sa` を使う。
 インターフェース名は機種名から決め打ちせず、`show interfaces` で実在する名前を確かめる。
 綴りや出力の意味が不確かなら、系列と機種を添えて `ix-manual` を引く。
+ログの意味は両系列とも ix-manual の syslog 参照手順を使う。取得した無印のログも、
+IX-R/IX-V の syslog リファレンスにある無印の参考名称から対応する function を探して調べられる。
 
 ## 実行と報告
 

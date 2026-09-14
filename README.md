@@ -183,7 +183,8 @@ windows Defender の`Trojan:Win32/Bearfoos.A!ml` の誤検知に引っ掛かる�
 | `ix-r` | IX-R/IX-V | Web（Sphinx HTML、CRM / FD 1.5a、EX 1.5、SLOG 1.5.24） | `web` |
 
 冊子は `manifest.json` の `book` で、`crm`（コマンドリファレンス）、`fd`（機能説明書）、
-`ex`（設定事例集）、`slog`（syslog リファレンス）の4種類。`slog` は IX-R/IX-V のみ。
+`ex`（設定事例集）、`slog`（syslog リファレンス）の4種類。`slog` の資料・保存先は IX-R/IX-V 用だが、
+無印のログ調査でも同じ `ix-r/slog/` を参照する。
 変換結果は `~/.ix-toolkit/manuals/<系列>/<冊子>/` に置く。`ix-manual` は `$IX_MANUALS` →
 `~/.ix-toolkit/manuals/` → `~/.claude/ix-manuals/` の順に探し、その下を `<系列>/<冊子>/` として読む。
 
@@ -209,6 +210,10 @@ windows Defender の`Trojan:Win32/Bearfoos.A!ml` の誤検知に引っ掛かる�
   項目の終わりまで広げる。設定事例は複数ページに続くことがある。
 - slog は見出しに節番号がないため、`section` 列に出典アンカーを入れる。`title` 列の function 名と
   syslog ID・メッセージで検索する。`chNN` は変換時の整理番号で、原文の章番号ではない。
+- 無印のログは slog の `function名` の表にある「IX2000/IX3000シリーズの名称(参考)」列から
+  対応する function 名を探す（例: `eth` → `ether`、`ike` / `key` → `ikev1`）。
+  その function の項目でメッセージ・パラメータを照合する。名称の対応だけでログ ID・レベル・書式まで
+  同じとは扱わず、回答には IX-R/IX-V の資料を参考にしたことと参照版・出典を添える。
 - `source` は元資料上の位置。PDF 由来なら物理ページ `p1057`（PDF ビューアの `#page=` にそのまま
   渡せる）、Web 由来なら元のページと節のアンカー `cli/interface/cli_ngn.html#ngn-ip-enable`
   （冊子の `README.md` にある URL に続ければ開く）。
