@@ -75,11 +75,11 @@ func ReadPages(p *domain.Profile, pdf string) ([]Page, PageStats, error) {
 		if p.Columns >= 2 && i < len(left) && i < len(right) {
 			l, r, f := at(left, i), at(right, i), full[i]
 			nf := countGlyphs(f)
-			if abs(countGlyphs(l)+countGlyphs(r)-nf) <= columnTolerance(nf) && countGlyphs(r) > 0 {
+			if columnsMatch(l, r, nf) {
 				pg.twoColumn = true
 				// 判定で許したずれを欠落のまま出力しない。
 				l, r = renderColumns(d.pages[i], p)
-				// 読み順は左段を読み切ってから右段 (検証済み)
+				// 読み順は左段を読み切ってから右段へ進む。実測で検証済み。
 				pg.lines = append(splitLines(l), splitLines(r)...)
 				stats.Two++
 			}
@@ -176,70 +176,17 @@ func ParseEntries(p *domain.Profile, pages []Page) []domain.Entry {
 		labels[l] = true
 	}
 
-	var entries []domain.Entry
-	var cur *domain.Entry
-	var curField *domain.Field
-
-	flushField := func() {
-		if cur != nil && curField != nil {
-			cur.Fields = append(cur.Fields, *curField)
-		}
-		curField = nil
-	}
-	flushEntry := func() {
-		flushField()
-		if cur != nil {
-			entries = append(entries, *cur)
-		}
-		cur = nil
-	}
-
+	parser := entryParser{}
 	for _, pg := range pages {
 		if isNavigation(&pg, p.EntryMarker, labels) {
 			continue
 		}
 		for _, raw := range pg.lines {
-			t := strings.TrimSpace(raw)
-			if t == "" {
-				if curField != nil {
-					curField.Lines = append(curField.Lines, "")
-				}
-				continue
-			}
-
-			// 新しい項目の開始
-			if p.EntryMarker != "" && strings.HasPrefix(t, p.EntryMarker) {
-				flushEntry()
-				cur = &domain.Entry{
-					Title:   strings.TrimSpace(strings.TrimPrefix(t, p.EntryMarker)),
-					Chapter: pg.chapter,
-					Section: pg.section,
-					// 版面に刷られたページ番号 (3-29) ではなく PDF の物理ページを持つ。
-					// 刷られた番号は章ごとに振り直されていて、PDF を開くときにも
-					// ページ指定には使えない。3-29 は物理 61 ページ目にあたる。
-					Ref: domain.Ref{Page: pg.num},
-				}
-				continue
-			}
-			if cur == nil {
-				continue // 項目の外 (目次・章扉など) は無視
-			}
-
-			if label, rest, ok := splitLabel(t, p.FieldLabels); ok {
-				flushField()
-				curField = &domain.Field{Label: domain.NormalizeLabel(label)}
-				if rest != "" {
-					// 見出し語と同じ行に載ってしまった中身を拾う
-					curField.Lines = append(curField.Lines, rest)
-				}
-				continue
-			}
-			if curField != nil {
-				curField.Lines = append(curField.Lines, raw)
-			}
+			parser.line(raw, pg, p)
 		}
 	}
-	flushEntry()
+	parser.flushEntry()
+	entries := parser.entries
 
 	for i := range entries {
 		entries[i].Cmds = domain.CommandsOf(&entries[i])
@@ -319,7 +266,7 @@ func dedent(lines []string) []string {
 
 // 機能説明書は "➢" を第 2 階層の箇条書きに使う。コマンドリファレンスには
 // 現れないが、どちらの読み方でも同じ判定を使うのでここに並べておく。
-var bulletPrefix = []string{"•", "・", "※", "➢", "‒", "–", "—", "-", "*"}
+const bulletPrefix = "•・※➢‒–—-*"
 
 func startsNewUnit(s string) bool {
 	return isBullet(s) || isParamDef(s)
@@ -335,7 +282,8 @@ func isBullet(s string) bool {
 	if footnoteRef.MatchString(s) {
 		return false
 	}
-	for _, b := range bulletPrefix {
+	for _, prefix := range bulletPrefix {
+		b := string(prefix)
 		if strings.HasPrefix(s, b) {
 			return true
 		}
@@ -344,7 +292,8 @@ func isBullet(s string) bool {
 }
 
 func stripBullet(s string) string {
-	for _, b := range bulletPrefix {
+	for _, prefix := range bulletPrefix {
+		b := string(prefix)
 		if r, ok := strings.CutPrefix(s, b); ok {
 			return strings.TrimSpace(r)
 		}
@@ -506,7 +455,7 @@ func WriteAll(outDir, docTitle string, src Source,
 			line += strings.Count(eb.String(), "\n")
 			b.WriteString(eb.String())
 		}
-		if err := os.WriteFile(full, []byte(b.String()), 0o644); err != nil {
+		if err := os.WriteFile(full, []byte(b.String()), 0o644); err != nil { // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
 			return err
 		}
 	}
@@ -526,7 +475,7 @@ func renderEntry(b *strings.Builder, e *domain.Entry) {
 	fmt.Fprintf(b, "## %s\n\n", e.Title)
 	for _, f := range e.Fields {
 		lines := dedent(f.Lines)
-		if domain.SyntaxLabels[f.Label] {
+		if domain.SyntaxLabels()[f.Label] {
 			// コマンド構文は版面どおりに残す。折り返しも字下げも意味を持つ。
 			body := strings.Trim(strings.Join(lines, "\n"), "\n ")
 			if body == "" {
@@ -540,12 +489,8 @@ func renderEntry(b *strings.Builder, e *domain.Entry) {
 			continue
 		}
 
-		// "なし" などのみで構成される項目は省き、LLM のコンテキストを節約する
-		if len(joined) == 1 {
-			t := strings.TrimSpace(joined[0])
-			if t == "なし" || t == "なし。" || t == "特になし" || t == "特になし。" || t == "－" || t == "-" || t == "省略可能" || t == "省略可能。" {
-				continue
-			}
+		if emptyEntryField(joined) {
+			continue
 		}
 
 		// デフォルト値・実行モード・ユーザ権限のように 1 行で済む項目は
@@ -626,7 +571,7 @@ func writeIndex(outDir, docTitle string, chapters map[int]string, order []domain
 	for _, r := range rows {
 		fmt.Fprintf(&t, "%s\t%s\t%s\t%d\t%s\n", r.cmd, r.title, r.file, r.line, r.source)
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "commands.tsv"), []byte(t.String()), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, "commands.tsv"), []byte(t.String()), 0o644); err != nil { // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
 		return err
 	}
 
@@ -648,7 +593,7 @@ func writeIndex(outDir, docTitle string, chapters map[int]string, order []domain
 		}
 		fmt.Fprintf(&b, "- [%s](%s) — %d 項目\n", k.Section, mdLinkDest(relPath[k]), len(grouped[k]))
 	}
-	return os.WriteFile(filepath.Join(outDir, "index.md"), []byte(b.String()), 0o644)
+	return os.WriteFile(filepath.Join(outDir, "index.md"), []byte(b.String()), 0o644) // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
 }
 
 func writeReadme(outDir, docTitle string, src Source, nEntries, nSections int) error {
@@ -666,7 +611,7 @@ func writeReadme(outDir, docTitle string, src Source, nEntries, nSections int) e
 	fmt.Fprintln(&b, "  "+src.sourceColumnNote())
 	fmt.Fprintln(&b, "- `index.md` — 章・節の目次")
 	fmt.Fprintln(&b, "- `chNN-<章名>/<節名>.md` — 本文")
-	return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644)
+	return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644) // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
 }
 
 // mdLinkDest は Markdown のリンク先を書く。
@@ -693,4 +638,81 @@ func safeName(s string) string {
 		s = string(r[:60])
 	}
 	return s
+}
+
+type entryParser struct {
+	cur      *domain.Entry
+	curField *domain.Field
+	entries  []domain.Entry
+}
+
+func (parser *entryParser) flushField() {
+	if parser.cur != nil && parser.curField != nil {
+		parser.cur.Fields = append(parser.cur.Fields, *parser.curField)
+	}
+	parser.curField = nil
+}
+
+func (parser *entryParser) flushEntry() {
+	parser.flushField()
+	if parser.cur != nil {
+		parser.entries = append(parser.entries, *parser.cur)
+	}
+	parser.cur = nil
+}
+
+func (parser *entryParser) line(raw string, pg Page, p *domain.Profile) {
+	t := strings.TrimSpace(raw)
+	if t == "" {
+		if parser.curField != nil {
+			parser.curField.Lines = append(parser.curField.Lines, "")
+		}
+		return
+	}
+
+	// 新しい項目の開始
+	if p.EntryMarker != "" && strings.HasPrefix(t, p.EntryMarker) {
+		parser.flushEntry()
+		parser.cur = &domain.Entry{
+			Title:   strings.TrimSpace(strings.TrimPrefix(t, p.EntryMarker)),
+			Chapter: pg.chapter,
+			Section: pg.section,
+			// 版面に刷られたページ番号 (3-29) ではなく PDF の物理ページを持つ。
+			// 刷られた番号は章ごとに振り直されていて、PDF を開くときにも
+			// ページ指定には使えない。3-29 は物理 61 ページ目にあたる。
+			Ref: domain.Ref{Page: pg.num},
+		}
+		return
+	}
+	if parser.cur == nil {
+		return // 項目の外 (目次・章扉など) は無視
+	}
+
+	if label, rest, ok := splitLabel(t, p.FieldLabels); ok {
+		parser.flushField()
+		parser.curField = &domain.Field{Label: domain.NormalizeLabel(label)}
+		if rest != "" {
+			// 見出し語と同じ行に載ってしまった中身を拾う
+			parser.curField.Lines = append(parser.curField.Lines, rest)
+		}
+		return
+	}
+	if parser.curField != nil {
+		parser.curField.Lines = append(parser.curField.Lines, raw)
+	}
+}
+
+func emptyEntryField(lines []string) bool {
+	if len(lines) != 1 {
+		return false
+	}
+	switch strings.TrimSpace(lines[0]) {
+	case "なし", "なし。", "特になし", "特になし。", "－", "-", "省略可能", "省略可能。":
+		return true
+	}
+	return false
+}
+
+func columnsMatch(left, right string, total int) bool {
+	return abs(countGlyphs(left)+countGlyphs(right)-total) <= columnTolerance(total) && countGlyphs(right) > 0
 }

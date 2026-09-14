@@ -27,7 +27,7 @@ import (
 
 // LoadProfile はプロファイル JSON を読む。書いていない欄は既定値のまま。
 func LoadProfile(path string) (*domain.Profile, error) {
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) // #nosec G703 -- 利用者が指定したローカル資料のパスを読む CLI。
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +44,7 @@ func SaveProfile(p *domain.Profile, path string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+	return os.WriteFile(path, append(b, '\n'), 0o644) // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
 }
 
 // --- 抽出 ---

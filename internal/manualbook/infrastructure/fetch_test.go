@@ -13,6 +13,13 @@ import (
 	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 )
 
+const firstPage = "one.html"
+
+const (
+	diagramPath   = "_images/diagram.svg"
+	editionSource = "edition"
+)
+
 type fetchResponse struct {
 	body, etag string
 	status     int
@@ -31,7 +38,7 @@ func newFetchSite(t *testing.T) *fetchSite {
 		files: map[string]fetchResponse{
 			"/":                    {body: "<title>Example manual 1.5a版</title>"},
 			"/searchindex.js":      {body: `Search.setIndex({"docnames":["index","one","two"]})`},
-			"/one.html":            {body: `<h1>1. Example</h1><img src="_images/diagram.svg">`, etag: `"one"`},
+			"/one.html":            {body: `<h1>1. Example</h1><img src="` + diagramPath + `">`, etag: `"one"`},
 			"/two.html":            {body: "<h1>2. Example</h1>", etag: `"two"`},
 			"/_images/diagram.svg": {body: "<svg></svg>", etag: `"image"`},
 		},
@@ -104,16 +111,16 @@ func TestFetchWebConditionalCache(t *testing.T) {
 	if err := s.fetch(cache, false); err != nil {
 		t.Fatal(err)
 	}
-	original := readFetchFile(t, filepath.Join(dst, "one.html"))
+	original := readFetchFile(t, filepath.Join(dst, firstPage))
 	if err := s.fetch(cache, false); err != nil {
 		t.Fatal(err)
 	}
-	for _, rel := range []string{"one.html", "two.html", "_images/diagram.svg"} {
+	for _, rel := range []string{firstPage, "two.html", diagramPath} {
 		if s.lastRequest("/"+rel).Get("If-None-Match") == "" {
 			t.Errorf("%s: existing cache was not used", rel)
 		}
 	}
-	if got := readFetchFile(t, filepath.Join(dst, "one.html")); got != original {
+	if got := readFetchFile(t, filepath.Join(dst, firstPage)); got != original {
 		t.Errorf("304 lost body: %q", got)
 	}
 	if !WebFetched(dst, s.doc()) {
@@ -122,7 +129,7 @@ func TestFetchWebConditionalCache(t *testing.T) {
 }
 
 func TestFetchWebRepairsMissingFiles(t *testing.T) {
-	for _, rel := range []string{"one.html", "_images/diagram.svg"} {
+	for _, rel := range []string{firstPage, diagramPath} {
 		t.Run(rel, func(t *testing.T) {
 			s := newFetchSite(t)
 			cache := t.TempDir()
@@ -158,47 +165,7 @@ func TestFetchWebRepairsMissingFiles(t *testing.T) {
 func TestFetchWebFailurePreservesPreviousFiles(t *testing.T) {
 	for _, failPath := range []string{"/two.html", "/_images/diagram.svg"} {
 		t.Run(failPath, func(t *testing.T) {
-			s := newFetchSite(t)
-			cache := t.TempDir()
-			dst := CachePath(cache, s.doc())
-			if err := s.fetch(cache, false); err != nil {
-				t.Fatal(err)
-			}
-			original := map[string]string{}
-			for _, rel := range []string{"index.html", "one.html", "two.html", "_images/diagram.svg", etagFile} {
-				original[rel] = readFetchFile(t, filepath.Join(dst, filepath.FromSlash(rel)))
-			}
-			const newBody = `new body<img src="_images/diagram.svg">`
-			s.set("/one.html", fetchResponse{body: newBody, etag: `"new"`})
-			s.set(failPath, fetchResponse{status: http.StatusServiceUnavailable})
-			if err := s.fetch(cache, true); err == nil {
-				t.Fatal("failed download returned success")
-			}
-			if WebFetched(dst, s.doc()) {
-				t.Error("failed refresh considered complete")
-			}
-			for rel, want := range original {
-				if got := readFetchFile(t, filepath.Join(dst, filepath.FromSlash(rel))); got != want {
-					t.Errorf("failed refresh changed %s", rel)
-				}
-			}
-			files, err := os.ReadDir(cache)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(files) != 1 {
-				t.Errorf("temporary directories remain: %v", files)
-			}
-			s.set(failPath, fetchResponse{body: "restored", etag: `"restored"`})
-			if err := s.fetch(cache, false); err != nil {
-				t.Fatal(err)
-			}
-			if !WebFetched(dst, s.doc()) {
-				t.Error("retry did not complete cache")
-			}
-			if got := readFetchFile(t, filepath.Join(dst, "one.html")); got != newBody {
-				t.Errorf("retry body = %q", got)
-			}
+			checkFetchFailurePreservesFiles(t, failPath)
 		})
 	}
 }
@@ -231,11 +198,11 @@ func TestFetchWebEditionVersion(t *testing.T) {
 		name, body, source string
 		want               bool
 	}{
-		{"edition", `<title>Examples</title><section><h2>版数<a class="headerlink">¶</a></h2><p>第1.5版 2026年4月発行</p></section>`, "edition", true},
-		{"changed", `<h2>版数</h2><p>第1.6版</p><p>旧版 第1.5版</p>`, "edition", false},
-		{"suffix", `<h2>版数</h2><p>第1.5a版</p>`, "edition", false},
-		{"missing", `<title>Examples 1.5</title><p>第1.5版</p>`, "edition", false},
-		{"nested", `<h2>版数</h2><section><p>第1.5版</p></section>`, "edition", false},
+		{editionSource, `<title>Examples</title><section><h2>版数<a class="headerlink">¶</a></h2><p>第1.5版 2026年4月発行</p></section>`, editionSource, true},
+		{"changed", `<h2>版数</h2><p>第1.6版</p><p>旧版 第1.5版</p>`, editionSource, false},
+		{"suffix", `<h2>版数</h2><p>第1.5a版</p>`, editionSource, false},
+		{"missing", `<title>Examples 1.5</title><p>第1.5版</p>`, editionSource, false},
+		{"nested", `<h2>版数</h2><section><p>第1.5版</p></section>`, editionSource, false},
 		{"title remains strict", `<title>Examples 1.6</title><h2>版数</h2><p>第1.5版</p>`, "", false},
 		{"unknown source", `<title>Examples 1.5</title>`, "body", false},
 	} {
@@ -287,5 +254,53 @@ func TestPublishWebCacheRestoresOnFailure(t *testing.T) {
 	}
 	if got := readFetchFile(t, filepath.Join(dst, "page.html")); got != "old" {
 		t.Errorf("restored body = %q", got)
+	}
+}
+
+func checkFetchFailurePreservesFiles(t *testing.T, failPath string) {
+	s := newFetchSite(t)
+	cache := t.TempDir()
+	dst := CachePath(cache, s.doc())
+	if err := s.fetch(cache, false); err != nil {
+		t.Fatal(err)
+	}
+	original := map[string]string{}
+	for _, rel := range []string{"index.html", firstPage, "two.html", diagramPath, etagFile} {
+		original[rel] = readFetchFile(t, filepath.Join(dst, filepath.FromSlash(rel)))
+	}
+	const newBody = `new body<img src="` + diagramPath + `">`
+	s.set("/one.html", fetchResponse{body: newBody, etag: `"new"`})
+	s.set(failPath, fetchResponse{status: http.StatusServiceUnavailable})
+	if err := s.fetch(cache, true); err == nil {
+		t.Fatal("failed download returned success")
+	}
+	if WebFetched(dst, s.doc()) {
+		t.Error("failed refresh considered complete")
+	}
+	checkUnchangedCache(t, cache, dst, original)
+	s.set(failPath, fetchResponse{body: "restored", etag: `"restored"`})
+	if err := s.fetch(cache, false); err != nil {
+		t.Fatal(err)
+	}
+	if !WebFetched(dst, s.doc()) {
+		t.Error("retry did not complete cache")
+	}
+	if got := readFetchFile(t, filepath.Join(dst, firstPage)); got != newBody {
+		t.Errorf("retry body = %q", got)
+	}
+}
+
+func checkUnchangedCache(t *testing.T, cache, dst string, original map[string]string) {
+	for rel, want := range original {
+		if got := readFetchFile(t, filepath.Join(dst, filepath.FromSlash(rel))); got != want {
+			t.Errorf("failed refresh changed %s", rel)
+		}
+	}
+	files, err := os.ReadDir(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Errorf("temporary directories remain: %v", files)
 	}
 }

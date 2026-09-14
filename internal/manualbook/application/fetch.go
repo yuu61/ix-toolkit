@@ -25,12 +25,13 @@ func Fetch(manifestPath, outDir string, force bool, only string, timeout, delay 
 
 	client := &http.Client{Timeout: timeout}
 	failed, total := 0, 0
-	for _, d := range m.Docs {
+	for i := range m.Docs {
+		d := &m.Docs[i]
 		if only != "" && d.Name != only {
 			continue
 		}
 		total++
-		if err := infrastructure.FetchDoc(os.Stdout, client, d, outDir, force, delay, ua); err != nil {
+		if err := infrastructure.FetchDoc(os.Stdout, client, *d, outDir, force, delay, ua); err != nil {
 			fmt.Fprintf(os.Stderr, "  ✗ %s: %s\n", d.Name, err)
 			failed++
 		}

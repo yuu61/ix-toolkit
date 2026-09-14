@@ -41,5 +41,5 @@ func WriteFiguresMark(outDir, pdf string, dpi, pages int) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(outDir, "figures", figuresMarkName), append(b, '\n'), 0o644)
+	return os.WriteFile(filepath.Join(outDir, "figures", figuresMarkName), append(b, '\n'), 0o644) // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
 }

@@ -6,21 +6,25 @@ import (
 	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 )
 
+const (
+	webVersion = "1.5a"
+)
+
 func TestMatchesWebVersion(t *testing.T) {
 	for _, tc := range []struct {
 		title, version string
 		want           bool
 	}{
-		{"Example command reference 1.5a ドキュメント", "1.5a", true},
-		{"Example manual 1.5a版 ドキュメント", "1.5a", true},
-		{"Example manual (1.5a)", "1.5a", true},
-		{"Example manual 1.5ab版", "1.5a", false},
-		{"Example manual 11.5a版", "1.5a", false},
+		{"Example command reference 1.5a ドキュメント", webVersion, true},
+		{"Example manual 1.5a版 ドキュメント", webVersion, true},
+		{"Example manual (1.5a)", webVersion, true},
+		{"Example manual 1.5ab版", webVersion, false},
+		{"Example manual 11.5a版", webVersion, false},
 		{"Example manual 1.50版", "1.5", false},
-		{"Example manual 1.5a.1版", "1.5a", false},
-		{"Example manual 1.5a-beta版", "1.5a", false},
-		{"Example manual 1.5a+build版", "1.5a", false},
-		{"Example manual", "1.5a", false},
+		{"Example manual 1.5a.1版", webVersion, false},
+		{"Example manual 1.5a-beta版", webVersion, false},
+		{"Example manual 1.5a+build版", webVersion, false},
+		{"Example manual", webVersion, false},
 		{"Example manual 1.5a版", "", false},
 	} {
 		t.Run(tc.title+"/"+tc.version, func(t *testing.T) {

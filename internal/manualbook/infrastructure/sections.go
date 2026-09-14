@@ -40,7 +40,7 @@ import (
 
 // 見出し行。"■2.11 PPP の設定" と "2.11.6 オンデマンド帯域幅制御（BOD）の設定" の両方。
 // 目次のリーダ罫 (".........") を含む行は本文の見出しではないので呼ぶ側で落とす。
-var headingRe = regexp.MustCompile(`^(■)?\s*([0-9０-９]+(?:[.．][0-9０-９]+)+)[\s\x{3000}]+(\S.*?)\s*$`)
+var headingRe = regexp.MustCompile(`^(■)?\s*([0-9\x{FF10}-\x{FF19}]+(?:[.．][0-9\x{FF10}-\x{FF19}]+)+)[\s\x{3000}]+(\S.*?)\s*$`)
 
 var tocLeaderRe = regexp.MustCompile(`(?:[.·．・][\s\x{3000}]*){6,}`)
 
@@ -89,34 +89,13 @@ func ReadSectionPages(p *domain.Profile, pdf string, progress func(completed, to
 	bodySize := pdfBodyFontSize(d.pages, bodyCrop(p))
 	// 描画と表の検出はページごとに独立して行える。前ページからの
 	// ヘッダ継承と本文への組み込みは、全結果が揃ってから元の順で行う。
-	pageTables := make([][]pdfTable, len(body))
-	var progressMu sync.Mutex
-	completed := 0
-	if err := d.forPages(func(worker *pdfDoc, i int) error {
-		rules, err := worker.readRules(i)
-		if err != nil {
-			return err
-		}
-		pageTables[i] = findPDFTables(d.pages[i], rules)
-		progressMu.Lock()
-		defer progressMu.Unlock()
-		completed++
-		if progress != nil {
-			progress(completed, len(body))
-		}
-		return nil
-	}); err != nil {
+	pageTables, err := d.readPageTables(progress)
+	if err != nil {
 		return nil, err
 	}
 	var previousTables []pdfTable
 	for i := range body {
-		pg := Page{num: i + 1}
-		pg.section = at(headers, i)
-		pg.printed = firstToken(at(footers, i))
-		if p.FooterSection {
-			pg.section, pg.printed = footerSection(at(footers, i))
-		}
-		pg.chapter = chapterOf(pg.printed)
+		pg := sectionPageHeader(p, headers, footers, i)
 		pg.headings = pdfHeadingLines(d.pages[i], bodyCrop(p), bodySize, p.HeadingMinSize)
 		pg.lines = collapseTableBlanks(splitLines(body[i]))
 		tables := pageTables[i]
@@ -124,7 +103,7 @@ func ReadSectionPages(p *domain.Profile, pdf string, progress func(completed, to
 			tables[j].headerPage = pg.num
 		}
 		if len(tables) > 0 {
-			if i > 0 && pg.section == pages[i-1].section && len(previousTables) > 0 {
+			if canInheritTableHeader(i, pg, pages, previousTables) {
 				continuePDFTable(previousTables[len(previousTables)-1], &tables[0], d.pages[i-1], d.pages[i], bodyCrop(p), pg.num)
 			}
 			pg.lines, pg.tables = sectionTableLines(d.pages[i], tables, bodyCrop(p), pg.num)
@@ -134,23 +113,7 @@ func ReadSectionPages(p *domain.Profile, pdf string, progress func(completed, to
 		pages = append(pages, pg)
 	}
 
-	// 版面ヘッダは 55 ページで空になる。大きな表が版面いっぱいに広がるページでは
-	// 柱もノンブルも省かれており、ヘッダ (節名) とフッタ (章番号) が同時に落ちる。
-	// 節も章も複数ページに跨がるので、空のときは直前のページのものを引き継ぐ。
-	// 引き継がないと、そのページの見出しが行き場を失って "ch00-その他/無題" に落ちる。
-	lastSection, lastChapter := "", 0
-	for i := range pages {
-		if pages[i].section == "" {
-			pages[i].section = lastSection
-		} else {
-			lastSection = pages[i].section
-		}
-		if pages[i].chapter == 0 {
-			pages[i].chapter = lastChapter
-		} else {
-			lastChapter = pages[i].chapter
-		}
-	}
+	inheritPageHeaders(pages)
 	return pages, nil
 }
 
@@ -291,52 +254,10 @@ func hasJapanese(s string) bool {
 
 func ParseHeadings(p *domain.Profile, pages []Page) ([]domain.Heading, map[int]string) {
 	chapters := map[int]string{}
-	var heads []domain.Heading
-	var cur *domain.Heading
-
-	// 版面が続く塊をためる。空行 1 つでは切らない。表の行間にも空行が入るので、
-	// 空行で切ると表が 1 行ずつばらばらになる。
-	var pend []string
-	var pendPage int
-	hole := 0
-
-	addProse := func(s string, pg int) {
-		if cur == nil {
-			return
-		}
-		n := len(cur.Blocks)
-		if n > 0 && cur.Blocks[n-1].Kind == domain.BlockProse {
-			cur.Blocks[n-1].Lines = append(cur.Blocks[n-1].Lines, s)
-			return
-		}
-		cur.Blocks = append(cur.Blocks, domain.Block{Ref: domain.Ref{Page: pg}, Lines: []string{s}})
-	}
-	flushLayout := func() {
-		if cur == nil || len(pend) == 0 {
-			pend, hole = nil, 0
-			return
-		}
-		// 1 行だけの塊は、囲むほどの版面ではない。図のラベルの取りこぼしか、
-		// 番号の付かない小見出し (「トラフィックシェーピングの動作原理」) である。
-		// 地の文として出すが、直後の段落と地続きにしてはいけない。繋げると
-		// 「動作原理トラフィックシェーピングでは、…」と見出しが本文に癒着して、
-		// 見出しでも本文でも grep で当たらなくなる。空行を入れて段落を切る。
-		if len(pend) < 2 {
-			addProse(pend[0], pendPage)
-			addProse("", pendPage)
-			pend, hole = nil, 0
-			return
-		}
-		cur.Blocks = append(cur.Blocks, domain.Block{Kind: domain.BlockLayout, Ref: domain.Ref{Page: pendPage}, Lines: pend})
-		pend, hole = nil, 0
-	}
-
+	parser := headingParser{}
 	for _, pg := range pages {
-		// 版面ブロックはページを跨がせない。跨がせると、後半の行に対しても
-		// 前のページ番号のリンクが付き、引く側を別のページへ送ってしまう。
-		// 図や表が見開きで続く場合は、ページごとの塊が 2 つ並ぶ形になる。
-		flushLayout()
-
+		// 版面ブロックはページを跨がせず、出典ページを保つ。
+		parser.flushLayout()
 		chName, secName := splitRunningHeader(pg.section, p.ChapterSep)
 		if p.FooterSection {
 			chName = secName
@@ -345,68 +266,11 @@ func ParseHeadings(p *domain.Profile, pages []Page) ([]domain.Heading, map[int]s
 			chapters[pg.chapter] = chName
 		}
 		for line, raw := range pg.lines {
-			if table, ok := pg.tables[line]; ok {
-				flushLayout()
-				if cur != nil {
-					cur.Blocks = append(cur.Blocks, table)
-				}
-				continue
-			}
-			t := strings.TrimSpace(raw)
-			// 目次のリーダ罫を含む行は本文ではない。
-			if tocLeaderRe.MatchString(raw) {
-				continue
-			}
-			if m := headingRe.FindStringSubmatch(t); m != nil && isPageHeading(pg, t, m[2]) {
-				flushLayout()
-				heads = append(heads, domain.Heading{
-					Number:  normalizeHeadingNumber(m[2]),
-					Title:   m[3],
-					Depth:   strings.Count(normalizeHeadingNumber(m[2]), ".") + 1,
-					Chapter: pg.chapter,
-					Section: secName,
-					// 版面に刷られた番号 (2-118) ではなく PDF の物理ページを持つ。
-					// 刷られた番号は章ごとに振り直されていて PDF ビューアにも
-					// ページ指定にも渡せない。
-					Ref: domain.Ref{Page: pg.num},
-				})
-				cur = &heads[len(heads)-1]
-				continue
-			}
-			if cur == nil {
-				continue // 最初の見出しより前 (表紙・目次) は捨てる
-			}
-
-			switch classifyLine(raw) {
-			case lineBlank:
-				if len(pend) > 0 {
-					// collapseTableBlanks を通したあとなので、空行はもう
-					// 組版の都合ではなく版面にあった切れ目を指す。
-					// 表の中の段の区切りは 1 つまで許し、2 つ続いたら塊を閉じる。
-					hole++
-					if hole > 1 {
-						flushLayout()
-					}
-					continue
-				}
-				addProse("", pg.num)
-			case lineLayout:
-				if len(pend) == 0 {
-					pendPage = pg.num
-				}
-				// 空行を挟んで続いた分は、塊の一部として戻す。
-				for ; hole > 0; hole-- {
-					pend = append(pend, "")
-				}
-				pend = append(pend, strings.TrimRight(raw, " "))
-			case lineProse:
-				flushLayout()
-				addProse(raw, pg.num)
-			}
+			parser.line(raw, line, pg, secName)
 		}
 	}
-	flushLayout()
-	return heads, chapters
+	parser.flushLayout()
+	return parser.heads, chapters
 }
 
 // --- 出力 ---
@@ -508,16 +372,7 @@ func WriteSections(outDir, docTitle string, src Source,
 	}
 	figs := loadFigures(outDir)
 
-	var order []domain.SectionKey
-	grouped := map[domain.SectionKey][]*domain.Heading{}
-	for i := range heads {
-		k := domain.SectionKey{Chapter: heads[i].Chapter, Section: heads[i].Section}
-		if _, ok := grouped[k]; !ok {
-			order = append(order, k)
-		}
-		grouped[k] = append(grouped[k], &heads[i])
-	}
-
+	order, grouped := groupSectionHeadings(heads)
 	relPath := map[domain.SectionKey]string{}
 	for _, k := range order {
 		chDir := "ch00-その他"
@@ -537,7 +392,7 @@ func WriteSections(outDir, docTitle string, src Source,
 			figs: figs,
 			base: relLink(filepath.Dir(full), filepath.Join(outDir, "figures")),
 		}
-		if src.Kind == "pdf" {
+		if src.Kind == domain.KindPDF {
 			lk.pdf = pdfLinkBase(filepath.Dir(full), src.PDF)
 		}
 
@@ -551,7 +406,7 @@ func WriteSections(outDir, docTitle string, src Source,
 			line += strings.Count(hb.String(), "\n")
 			b.WriteString(hb.String())
 		}
-		if err := os.WriteFile(full, []byte(b.String()), 0o644); err != nil {
+		if err := os.WriteFile(full, []byte(b.String()), 0o644); err != nil { // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
 			return err
 		}
 	}
@@ -596,16 +451,17 @@ func renderHeading(b *strings.Builder, h *domain.Heading, lk links) {
 	level := min(6, h.Depth+1)
 	fmt.Fprintf(b, "%s %s\n\n", strings.Repeat("#", level), inlineMarkup(strings.TrimSpace(h.Number+" "+h.Title)))
 
-	for _, blk := range h.Blocks {
+	for i := range h.Blocks {
+		blk := &h.Blocks[i]
 		switch blk.Kind {
 		case domain.BlockLayout:
-			renderLayoutBlock(b, blk, lk)
+			renderLayoutBlock(b, *blk, lk)
 			continue
 		case domain.BlockTable:
-			renderTableBlock(b, blk, lk)
+			renderTableBlock(b, *blk, lk)
 			continue
 		case domain.BlockFigure:
-			renderFigureBlock(b, blk, lk)
+			renderFigureBlock(b, *blk, lk)
 			continue
 		}
 		joined := joinWrapped(blk.Lines)
@@ -650,7 +506,7 @@ func renderLayoutBlock(b *strings.Builder, blk domain.Block, lk links) {
 // PDF なら元 PDF のページと、置いてあればページ画像。Web の出典は索引に集約する。
 // extra は図のように出所より先に並べたいリンク (無ければ空)。
 func renderRef(b *strings.Builder, r domain.Ref, lk links, extra string) {
-	if lk.src.Kind == "web" {
+	if lk.src.Kind == domain.KindWeb {
 		if extra != "" {
 			fmt.Fprintf(b, "<sup>%s</sup>\n", extra)
 		}
@@ -762,7 +618,7 @@ func writeSectionIndex(outDir, docTitle string, chapters map[int]string, order [
 		}
 		fmt.Fprintf(&t, "%s\t%s\t%s\t%d\t%s\n", section, h.Title, file, h.Line, h.Ref.String())
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "sections.tsv"), []byte(t.String()), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, "sections.tsv"), []byte(t.String()), 0o644); err != nil { // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
 		return err
 	}
 
@@ -779,7 +635,7 @@ func writeSectionIndex(outDir, docTitle string, chapters map[int]string, order [
 		}
 		fmt.Fprintf(&b, "- [%s](%s) — %d 見出し\n", k.Section, mdLinkDest(relPath[k]), len(grouped[k]))
 	}
-	return os.WriteFile(filepath.Join(outDir, "index.md"), []byte(b.String()), 0o644)
+	return os.WriteFile(filepath.Join(outDir, "index.md"), []byte(b.String()), 0o644) // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
 }
 
 func writeSectionReadme(outDir, docTitle string, src Source,
@@ -804,7 +660,7 @@ func writeSectionReadme(outDir, docTitle string, src Source,
 	fmt.Fprintln(&b, "- `index.md` — 章・節の目次")
 	fmt.Fprintln(&b, "- `chNN-<章名>/<節名>.md` — 本文")
 
-	if src.Kind == "web" {
+	if src.Kind == domain.KindWeb {
 		fmt.Fprintf(&b, "\n## 表と図\n\n")
 		fmt.Fprintln(&b, "表は Markdown の表になっている。**値は見出し行の列名で引く。** 元の表で")
 		fmt.Fprintln(&b, "セルが結合されていた箇所は、覆う範囲のセル全部に同じ値を繰り返してある。")
@@ -815,44 +671,225 @@ func writeSectionReadme(outDir, docTitle string, src Source,
 		fmt.Fprintln(&b, "節を探し当てる手がかりにはなるが、**矢印の向き・包含関係はファイルを開かないと")
 		fmt.Fprintln(&b, "分からない。** SVG は XML なので、箱の座標 (`<rect>`) と矢印 (`<path>`) を")
 		fmt.Fprintln(&b, "読めば「どの箱からどの箱へ」は辿れる。ラベルの囲みから構成を推測しない。")
-		return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644)
+		return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644) // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
 	}
 
-	fmt.Fprintf(&b, "\n## 表と固定幅ブロック\n\n")
-	fmt.Fprintln(&b, "罫線からセルを復元できた表は Markdown の表として出力する。値は見出しの列名で引く。")
-	fmt.Fprintln(&b, "結合セルは覆う行・列へ値を繰り返し、セル内の複数行は `<br>` で区切る。")
-	fmt.Fprintln(&b, "ページをまたぐ表はページごとに分ける。前ページの列見出しを補った場合は、その出典も付ける。")
-	fmt.Fprintln(&b, "文字は PDF のテキスト層から取得する。罫線だけをページ画像から検出し、OCR は使わない。")
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "セルを確定できない表・図・コンソール出力は、版面どおりの固定幅ブロックとして囲ってある。")
-	fmt.Fprintln(&b, "地の文に流し込むと表の列の対応が崩れ、図のラベルが本文に混ざるためで、")
-	fmt.Fprintln(&b, "**囲みの中は行と桁の位置に意味がある。**")
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "罫線が無い表や途切れた表などは、囲みの中に残る。各ブロックの直後に")
-	fmt.Fprintln(&b, "元 PDF の該当ページへのリンクを置いてある。")
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "**図の中身はこのテキストだけでは完結しない。** 図のラベル (機器名・")
-	fmt.Fprintln(&b, "インタフェース名・プロトコル名) は抽出できているが、矢印の向き・包含関係・")
-	fmt.Fprintln(&b, "順序は失われている。構成や流れを答えるにはページそのものを見る必要がある。")
-	fmt.Fprintln(&b, "テキストの断片から構成を推測しない。")
+	writePDFSectionGuide(&b, src, figs)
+	return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644) // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
+}
 
-	fmt.Fprintf(&b, "\n## ページ画像\n\n")
+// headingParser は現在の見出しと、まだ閉じていない版面ブロックを保持する。
+type headingParser struct {
+	heads          []domain.Heading
+	cur            *domain.Heading
+	pend           []string
+	pendPage, hole int
+}
+
+func (parser *headingParser) addProse(s string, pg int) {
+	if parser.cur == nil {
+		return
+	}
+	n := len(parser.cur.Blocks)
+	if n > 0 && parser.cur.Blocks[n-1].Kind == domain.BlockProse {
+		parser.cur.Blocks[n-1].Lines = append(parser.cur.Blocks[n-1].Lines, s)
+		return
+	}
+	parser.cur.Blocks = append(parser.cur.Blocks, domain.Block{Ref: domain.Ref{Page: pg}, Lines: []string{s}})
+}
+
+func (parser *headingParser) flushLayout() {
+	if parser.cur == nil || len(parser.pend) == 0 {
+		parser.pend, parser.hole = nil, 0
+		return
+	}
+	// 1 行だけの塊は、囲むほどの版面ではない。図のラベルの取りこぼしか、
+	// 番号の付かない小見出し (「トラフィックシェーピングの動作原理」) である。
+	// 地の文として出すが、直後の段落と地続きにしてはいけない。繋げると
+	// 「動作原理トラフィックシェーピングでは、…」と見出しが本文に癒着して、
+	// 見出しでも本文でも grep で当たらなくなる。空行を入れて段落を切る。
+	if len(parser.pend) < 2 {
+		parser.addProse(parser.pend[0], parser.pendPage)
+		parser.addProse("", parser.pendPage)
+		parser.pend, parser.hole = nil, 0
+		return
+	}
+	parser.cur.Blocks = append(parser.cur.Blocks, domain.Block{Kind: domain.BlockLayout, Ref: domain.Ref{Page: parser.pendPage}, Lines: parser.pend})
+	parser.pend, parser.hole = nil, 0
+}
+
+func (parser *headingParser) line(raw string, line int, pg Page, secName string) {
+	if table, ok := pg.tables[line]; ok {
+		parser.flushLayout()
+		if parser.cur != nil {
+			parser.cur.Blocks = append(parser.cur.Blocks, table)
+		}
+		return
+	}
+	t := strings.TrimSpace(raw)
+	// 目次のリーダ罫を含む行は本文ではない。
+	if tocLeaderRe.MatchString(raw) {
+		return
+	}
+	if m := headingRe.FindStringSubmatch(t); len(m) > 2 && isPageHeading(pg, t, m[2]) {
+		parser.flushLayout()
+		parser.heads = append(parser.heads, domain.Heading{
+			Number:  normalizeHeadingNumber(m[2]),
+			Title:   m[3],
+			Depth:   strings.Count(normalizeHeadingNumber(m[2]), ".") + 1,
+			Chapter: pg.chapter,
+			Section: secName,
+			// 版面に刷られた番号 (2-118) ではなく PDF の物理ページを持つ。
+			// 刷られた番号は章ごとに振り直されていて PDF ビューアにも
+			// ページ指定にも渡せない。
+			Ref: domain.Ref{Page: pg.num},
+		})
+		parser.cur = &parser.heads[len(parser.heads)-1]
+		return
+	}
+	if parser.cur == nil {
+		return // 最初の見出しより前 (表紙・目次) は捨てる
+	}
+
+	parser.bodyLine(raw, pg.num)
+}
+
+func (parser *headingParser) bodyLine(raw string, page int) {
+	switch classifyLine(raw) {
+	case lineBlank:
+		if len(parser.pend) > 0 {
+			// collapseTableBlanks を通したあとなので、空行はもう
+			// 組版の都合ではなく版面にあった切れ目を指す。
+			// 表の中の段の区切りは 1 つまで許し、2 つ続いたら塊を閉じる。
+			parser.hole++
+			if parser.hole > 1 {
+				parser.flushLayout()
+			}
+			return
+		}
+		parser.addProse("", page)
+	case lineLayout:
+		if len(parser.pend) == 0 {
+			parser.pendPage = page
+		}
+		// 空行を挟んで続いた分は、塊の一部として戻す。
+		for ; parser.hole > 0; parser.hole-- {
+			parser.pend = append(parser.pend, "")
+		}
+		parser.pend = append(parser.pend, strings.TrimRight(raw, " "))
+	case lineProse:
+		parser.flushLayout()
+		parser.addProse(raw, page)
+	}
+}
+
+func inheritPageHeaders(pages []Page) {
+	// 版面ヘッダは 55 ページで空になる。大きな表が版面いっぱいに広がるページでは
+	// 柱もノンブルも省かれており、ヘッダ (節名) とフッタ (章番号) が同時に落ちる。
+	// 節も章も複数ページに跨がるので、空のときは直前のページのものを引き継ぐ。
+	// 引き継がないと、そのページの見出しが行き場を失って "ch00-その他/無題" に落ちる。
+	lastSection, lastChapter := "", 0
+	for i := range pages {
+		if pages[i].section == "" {
+			pages[i].section = lastSection
+		} else {
+			lastSection = pages[i].section
+		}
+		if pages[i].chapter == 0 {
+			pages[i].chapter = lastChapter
+		} else {
+			lastChapter = pages[i].chapter
+		}
+	}
+}
+
+func (d *pdfDoc) readPageTables(progress func(completed, total int)) ([][]pdfTable, error) {
+	pageTables := make([][]pdfTable, len(d.pages))
+	var progressMu sync.Mutex
+	completed := 0
+	if err := d.forPages(func(worker *pdfDoc, i int) error {
+		rules, err := worker.readRules(i)
+		if err != nil {
+			return err
+		}
+		pageTables[i] = findPDFTables(d.pages[i], rules)
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		completed++
+		if progress != nil {
+			progress(completed, len(d.pages))
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return pageTables, nil
+}
+
+func groupSectionHeadings(heads []domain.Heading) ([]domain.SectionKey, map[domain.SectionKey][]*domain.Heading) {
+	var order []domain.SectionKey
+	grouped := map[domain.SectionKey][]*domain.Heading{}
+	for i := range heads {
+		k := domain.SectionKey{Chapter: heads[i].Chapter, Section: heads[i].Section}
+		if _, ok := grouped[k]; !ok {
+			order = append(order, k)
+		}
+		grouped[k] = append(grouped[k], &heads[i])
+	}
+
+	return order, grouped
+}
+
+func writePDFSectionGuide(b *strings.Builder, src Source, figs figureSet) {
+	fmt.Fprintf(b, "\n## 表と固定幅ブロック\n\n")
+	fmt.Fprintln(b, "罫線からセルを復元できた表は Markdown の表として出力する。値は見出しの列名で引く。")
+	fmt.Fprintln(b, "結合セルは覆う行・列へ値を繰り返し、セル内の複数行は `<br>` で区切る。")
+	fmt.Fprintln(b, "ページをまたぐ表はページごとに分ける。前ページの列見出しを補った場合は、その出典も付ける。")
+	fmt.Fprintln(b, "文字は PDF のテキスト層から取得する。罫線だけをページ画像から検出し、OCR は使わない。")
+	fmt.Fprintln(b)
+	fmt.Fprintln(b, "セルを確定できない表・図・コンソール出力は、版面どおりの固定幅ブロックとして囲ってある。")
+	fmt.Fprintln(b, "地の文に流し込むと表の列の対応が崩れ、図のラベルが本文に混ざるためで、")
+	fmt.Fprintln(b, "**囲みの中は行と桁の位置に意味がある。**")
+	fmt.Fprintln(b)
+	fmt.Fprintln(b, "罫線が無い表や途切れた表などは、囲みの中に残る。各ブロックの直後に")
+	fmt.Fprintln(b, "元 PDF の該当ページへのリンクを置いてある。")
+	fmt.Fprintln(b)
+	fmt.Fprintln(b, "**図の中身はこのテキストだけでは完結しない。** 図のラベル (機器名・")
+	fmt.Fprintln(b, "インタフェース名・プロトコル名) は抽出できているが、矢印の向き・包含関係・")
+	fmt.Fprintln(b, "順序は失われている。構成や流れを答えるにはページそのものを見る必要がある。")
+	fmt.Fprintln(b, "テキストの断片から構成を推測しない。")
+
+	fmt.Fprintf(b, "\n## ページ画像\n\n")
 	if len(figs) > 0 {
-		fmt.Fprintf(&b, "`figures/` に %d ページ分の画像がある。囲みの直後の "+
+		fmt.Fprintf(b, "`figures/` に %d ページ分の画像がある。囲みの直後の "+
 			"`[ページ画像]` から辿れる。\n", len(figs))
-		fmt.Fprintln(&b, "**図について答えるときは、囲みのテキストではなくこの画像を見ること。**")
+		fmt.Fprintln(b, "**図について答えるときは、囲みのテキストではなくこの画像を見ること。**")
 	} else {
-		fmt.Fprintln(&b, "`figures/` が無いので、囲みには元 PDF へのリンクしか付いていない。")
-		fmt.Fprintln(&b, "ページを焼いて `figures/` に置き、変換し直すと、囲みの直後に")
-		fmt.Fprintln(&b, "`[ページ画像]` が並ぶ。焼くのは manualbook で、外部の道具は要らない。")
-		fmt.Fprintln(&b, "ix-toolkit のリポジトリで `manualbook build` を流せば、この冊子の")
-		fmt.Fprintln(&b, "全ページを焼いて変換し直すところまで 1 回で済む (72 秒・404 MB)。")
-		fmt.Fprintln(&b)
-		fmt.Fprintln(&b, "一部のページだけ焼くなら、このディレクトリで:")
-		fmt.Fprintln(&b)
-		fmt.Fprintf(&b, "    manualbook figures <%s のあるパス> -out . -pages 1050-1060\n", BaseName(src.PDF))
-		fmt.Fprintln(&b)
-		fmt.Fprintln(&b, "そのあと `manualbook md` をもう一度流す (変換は figures/ を消さない)。")
+		fmt.Fprintln(b, "`figures/` が無いので、囲みには元 PDF へのリンクしか付いていない。")
+		fmt.Fprintln(b, "ページを焼いて `figures/` に置き、変換し直すと、囲みの直後に")
+		fmt.Fprintln(b, "`[ページ画像]` が並ぶ。焼くのは manualbook で、外部の道具は要らない。")
+		fmt.Fprintln(b, "ix-toolkit のリポジトリで `manualbook build` を流せば、この冊子の")
+		fmt.Fprintln(b, "全ページを焼いて変換し直すところまで 1 回で済む (72 秒・404 MB)。")
+		fmt.Fprintln(b)
+		fmt.Fprintln(b, "一部のページだけ焼くなら、このディレクトリで:")
+		fmt.Fprintln(b)
+		fmt.Fprintf(b, "    manualbook figures <%s のあるパス> -out . -pages 1050-1060\n", BaseName(src.PDF))
+		fmt.Fprintln(b)
+		fmt.Fprintln(b, "そのあと `manualbook md` をもう一度流す (変換は figures/ を消さない)。")
 	}
-	return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644)
+}
+
+func sectionPageHeader(p *domain.Profile, headers, footers []string, i int) Page {
+	pg := Page{num: i + 1}
+	pg.section = at(headers, i)
+	pg.printed = firstToken(at(footers, i))
+	if p.FooterSection {
+		pg.section, pg.printed = footerSection(at(footers, i))
+	}
+	pg.chapter = chapterOf(pg.printed)
+	return pg
+}
+
+func canInheritTableHeader(i int, pg Page, pages []Page, previousTables []pdfTable) bool {
+	return i > 0 && pg.section == pages[i-1].section && len(previousTables) > 0
 }

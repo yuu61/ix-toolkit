@@ -7,6 +7,10 @@ import (
 	"strings"
 )
 
+const (
+	diffRenamed = "renamed"
+)
+
 // diff サブコマンド。無印 (ix) と IX-R (ix-r) の変換結果から、系列間のコマンド
 // 対応表 diff.tsv を作る。ix-manual skill が「無印の設定を IX-R に移す」「無印で
 // 覚えたコマンドが IX-R に無い」ときに引く。
@@ -105,18 +109,18 @@ func r0Lower(w string) bool { return w[0] >= 'a' && w[0] <= 'z' }
 //	8.3.5 その他変更があるコマンド                → changed
 //
 // 8.1 (パスワードの引継ぎ) と 8.2 (IX 互換モード) は表の形をしていないので読まない。
-var ch8Kinds = []struct{ word, kind string }{
-	{"廃止", "removed"},
-	{"表現の変更", "renamed"},
-	{"モード", "moved"},
-	{"デフォルト値", "range"},
-	{"設定範囲", "range"},
-	{"その他変更", "changed"},
-}
 
 // Ch8Kind は節の題から行の種類を決める。題に種類を決める語が無ければ false
 // (呼ぶ側は親の節の種類を引き継ぐ)。
 func Ch8Kind(title string) (string, bool) {
+	ch8Kinds := []struct{ word, kind string }{
+		{"廃止", "removed"},
+		{"表現の変更", diffRenamed},
+		{"モード", "moved"},
+		{"デフォルト値", "range"},
+		{"設定範囲", "range"},
+		{"その他変更", "changed"},
+	}
 	for _, c := range ch8Kinds {
 		if strings.Contains(title, c.word) {
 			return c.kind, true
@@ -145,29 +149,14 @@ func fdRef(source string) string {
 //	range / changed: コマンドの機能 | 対象コマンド | IXシリーズからの変更内容 | [補足]
 func Ch8Rows(kind, ref string, table [][]string, ixCmds []IndexedCommand) []DiffRow {
 	head := table[0]
-	col := func(names ...string) int {
-		for _, n := range names {
-			for i, h := range head {
-				if h == n {
-					return i
-				}
-			}
-		}
-		return -1
-	}
-	cell := func(row []string, i int) string {
-		if i < 0 || i >= len(row) {
-			return ""
-		}
-		return row[i]
-	}
-	cFunc := col("機能", "コマンドの機能")
-	cCmd := col("設定コマンド", "対象コマンド")
-	cIX := col("IXシリーズ")
-	cIXR := col("IX-Rシリーズ")
-	cChange := col("IXシリーズからの変更内容")
-	cNote := col("備考", "補足")
-	if cCmd < 0 && kind == "renamed" {
+
+	cFunc := headerColumn(head, "機能", "コマンドの機能")
+	cCmd := headerColumn(head, "設定コマンド", "対象コマンド")
+	cIX := headerColumn(head, "IXシリーズ")
+	cIXR := headerColumn(head, "IX-Rシリーズ")
+	cChange := headerColumn(head, "IXシリーズからの変更内容")
+	cNote := headerColumn(head, "備考", "補足")
+	if cCmd < 0 && kind == diffRenamed {
 		cCmd = cIX
 		cIX = -1
 	}
@@ -177,44 +166,16 @@ func Ch8Rows(kind, ref string, table [][]string, ixCmds []IndexedCommand) []Diff
 
 	var rows []DiffRow
 	for _, row := range table[1:] {
-		ixs := expandAlternatives(cellLines(cell(row, cCmd)))
-		ixrs := cellLines(cell(row, cIXR))
+		ixs := expandAlternatives(cellLines(tableCell(row, cCmd)))
+		ixrs := cellLines(tableCell(row, cIXR))
 		var note []string
-		if f := cell(row, cFunc); f != "" {
+		if f := tableCell(row, cFunc); f != "" {
 			note = append(note, f)
 		}
 		for i, ix := range ixs {
 			r := DiffRow{Kind: kind, IX: ix, Source: "ch8", RefIXR: fdRef(ref)}
 			n := append([]string{}, note...)
-			switch kind {
-			case "removed":
-				// 「reloadコマンドに統一」の形なら置き換え先が取れる。それ以外
-				// (「UFSキャッシュに統一」「廃止」) は note を読んでもらう。
-				if m := unifiedRe.FindStringSubmatch(cell(row, cIXR)); m != nil {
-					r.IXR = strings.TrimSpace(m[1])
-				}
-				n = append(n, "IX-R: "+cell(row, cIXR))
-			case "renamed":
-				if i < len(ixrs) {
-					r.IXR = ixrs[i]
-				} else if len(ixrs) > 0 {
-					r.IXR = ixrs[len(ixrs)-1]
-				}
-				if v := cell(row, cNote); v != "" {
-					n = append(n, v)
-				}
-			case "moved":
-				r.IXR = ix
-				n = append(n, "モード: "+cell(row, cIX)+" → "+cell(row, cIXR))
-			default: // range / changed
-				r.IXR = ix
-				if v := cell(row, cChange); v != "" {
-					n = append(n, v)
-				}
-				if v := cell(row, cNote); v != "" {
-					n = append(n, v)
-				}
-			}
+			n = ch8Change(&r, row, i, ixrs, n, cIX, cIXR, cChange, cNote)
 			r.Note = strings.Join(n, "。")
 			if c, ok := lookupCommand(ixCmds, ix); ok {
 				r.RefIX = crmRef(c.Source)
@@ -321,4 +282,55 @@ func SetDiff(ixCmds, ixrCmds []IndexedCommand, known []DiffRow) []DiffRow {
 		})
 	}
 	return rows
+}
+
+func headerColumn(head []string, names ...string) int {
+	for _, n := range names {
+		for i, h := range head {
+			if h == n {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func tableCell(row []string, i int) string {
+	if i < 0 || i >= len(row) {
+		return ""
+	}
+	return row[i]
+}
+
+func ch8Change(r *DiffRow, row []string, i int, ixrs, n []string, cIX, cIXR, cChange, cNote int) []string {
+	switch r.Kind {
+	case "removed":
+		// 「reloadコマンドに統一」の形なら置き換え先が取れる。それ以外
+		// (「UFSキャッシュに統一」「廃止」) は note を読んでもらう。
+		if m := unifiedRe.FindStringSubmatch(tableCell(row, cIXR)); m != nil {
+			r.IXR = strings.TrimSpace(m[1])
+		}
+		n = append(n, "IX-R: "+tableCell(row, cIXR))
+	case diffRenamed:
+		if i < len(ixrs) {
+			r.IXR = ixrs[i]
+		} else {
+			r.IXR = tableCell(ixrs, len(ixrs)-1)
+		}
+		if v := tableCell(row, cNote); v != "" {
+			n = append(n, v)
+		}
+	case "moved":
+		r.IXR = r.IX
+		n = append(n, "モード: "+tableCell(row, cIX)+" → "+tableCell(row, cIXR))
+	default: // range / changed
+		r.IXR = r.IX
+		if v := tableCell(row, cChange); v != "" {
+			n = append(n, v)
+		}
+		if v := tableCell(row, cNote); v != "" {
+			n = append(n, v)
+		}
+	}
+	return n
 }

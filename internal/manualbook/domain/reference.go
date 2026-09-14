@@ -37,17 +37,17 @@ func (r Ref) IsWeb() bool { return r.Path != "" }
 
 // --- 見出し語の綴り ---
 
-// 見出し語は元資料の綴りで照合し、出力は 1 つに揃える。
+// LabelSpelling は見出し語を元資料の綴りで照合し、出力を 1 つに揃える。
 //
 // コマンドリファレンスは PDF 版が「ユーザ権限」、Web 版が「ユーザー権限」と
 // 綴りが違う。プロファイルの fieldLabels は照合に使うので元資料どおりに書き、
 // 本文と索引に出すときにここで揃える。
-var LabelSpelling = map[string]string{
-	"ユーザ権限": "ユーザー権限",
+func LabelSpelling() map[string]string {
+	return map[string]string{"ユーザ権限": "ユーザー権限"}
 }
 
 func NormalizeLabel(l string) string {
-	if n, ok := LabelSpelling[l]; ok {
+	if n, ok := LabelSpelling()[l]; ok {
 		return n
 	}
 	return l

@@ -45,12 +45,9 @@ func Convert(o MDOptions) error {
 func convertPDF(o MDOptions) error {
 	pdf := o.Input
 
-	p := domain.DefaultProfile()
-	if o.ProfilePath != "" {
-		var err error
-		if p, err = infrastructure.LoadProfile(o.ProfilePath); err != nil {
-			return err
-		}
+	p, err := conversionProfile(o.ProfilePath)
+	if err != nil {
+		return err
 	}
 
 	docTitle := o.Title
@@ -64,21 +61,13 @@ func convertPDF(o MDOptions) error {
 	// 囲みとページリンクを出すのは節見出し経路 (sections.go) だけなので、
 	// コマンド辞書として読む資料では焼いても誰も参照しない。黙って焼くと
 	// 時間とディスクだけ使うため断る。
-	if o.Figures {
-		if p.HasCommandEntries() {
-			return fmt.Errorf("-figures はこの資料 (プロファイル %s) では効きません。"+
-				"囲みにページ画像を添えるのは節見出しで割る資料だけです", p.Name)
-		}
-		n, err := infrastructure.RenderFigures(pdf, o.OutDir, o.FigureDPI, o.FigurePages)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("ページ画像: %d 枚を焼きました\n", n)
+	if figureErr := renderRequestedFigures(o, p); figureErr != nil {
+		return figureErr
 	}
 
 	// 項目の記号と見出し語を持たない資料はコマンド辞書として読めないので、
 	// 節見出しで割る経路へ回す (sections.go)。
-	src := infrastructure.Source{Kind: "pdf", PDF: pdf, Label: o.SourceLabel, Series: o.Series, Version: o.Version, Profile: p}
+	src := infrastructure.Source{Kind: domain.KindPDF, PDF: pdf, Label: o.SourceLabel, Series: o.Series, Version: o.Version, Profile: p}
 	if !p.HasCommandEntries() {
 		return convertSections(o.OutDir, docTitle, src)
 	}
@@ -105,5 +94,33 @@ func convertPDF(o MDOptions) error {
 	fmt.Printf("\n出力しました: %s\n", o.OutDir)
 	fmt.Printf("  機械可読索引: %s\n", filepath.Join(o.OutDir, "commands.tsv"))
 	fmt.Printf("  目次:         %s\n", filepath.Join(o.OutDir, "index.md"))
+	return nil
+}
+
+func conversionProfile(profilePath string) (*domain.Profile, error) {
+	p := domain.DefaultProfile()
+	if profilePath != "" {
+		var err error
+		if p, err = infrastructure.LoadProfile(profilePath); err != nil {
+			return nil, err
+		}
+	}
+
+	return p, nil
+}
+
+func renderRequestedFigures(o MDOptions, p *domain.Profile) error {
+	if o.Figures {
+		if p.HasCommandEntries() {
+			return fmt.Errorf("-figures はこの資料 (プロファイル %s) では効きません。"+
+				"囲みにページ画像を添えるのは節見出しで割る資料だけです", p.Name)
+		}
+		n, err := infrastructure.RenderFigures(o.Input, o.OutDir, o.FigureDPI, o.FigurePages)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("ページ画像: %d 枚を焼きました\n", n)
+	}
+
 	return nil
 }

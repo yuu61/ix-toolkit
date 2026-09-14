@@ -66,6 +66,7 @@ type pdfDoc struct {
 	pages    []pdfPage
 }
 
+//nolint:gochecknoglobals // PDFium の初期化と冊をまたぐプール・文書キャッシュを共有する。docsMu と engineOnce で保護する。
 var (
 	engineOnce  sync.Once
 	engine      pdfium.Pdfium
@@ -110,7 +111,7 @@ func openDoc(path string) (*pdfDoc, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) // #nosec G703 -- 利用者が指定したローカル資料のパスを読む CLI。
 	if err != nil {
 		return nil, err
 	}
@@ -152,12 +153,7 @@ func (d *pdfDoc) page(i int) requests.Page {
 func (d *pdfDoc) forPages(f func(*pdfDoc, int) error) error {
 	n := min(maxPDFWorkers, runtime.GOMAXPROCS(0), len(d.pages))
 	if n <= 1 {
-		for i := range d.pages {
-			if err := f(d, i); err != nil {
-				return err
-			}
-		}
-		return nil
+		return d.forPagesSequential(f)
 	}
 	var cleanups []func()
 	defer func() {
@@ -166,27 +162,9 @@ func (d *pdfDoc) forPages(f func(*pdfDoc, int) error) error {
 		}
 	}()
 
-	workers := []*pdfDoc{d}
-	for len(workers) < n {
-		k := len(workers)
-		if enginePools[k] == nil {
-			pool, err := webassembly.Init(webassembly.Config{MinIdle: 1, MaxIdle: 1, MaxTotal: 1})
-			if err != nil {
-				return fmt.Errorf("並列処理用 PDFium の初期化に失敗: %w", err)
-			}
-			enginePools[k] = pool
-		}
-		inst, err := enginePools[k].GetInstance(30 * time.Second)
-		if err != nil {
-			return fmt.Errorf("並列処理用 PDFium の取得に失敗: %w", err)
-		}
-		cleanups = append(cleanups, func() { _ = inst.Close() })
-		res, err := inst.OpenDocument(&requests.OpenDocument{File: &d.data})
-		if err != nil {
-			return fmt.Errorf("並列処理用 PDF を開けません (%s): %w", d.path, err)
-		}
-		cleanups = append(cleanups, func() { _, _ = inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: res.Document}) })
-		workers = append(workers, &pdfDoc{path: d.path, data: d.data, instance: inst, ref: res.Document, pages: d.pages})
+	workers, err := d.pageWorkers(n, &cleanups)
+	if err != nil {
+		return err
 	}
 	var wg sync.WaitGroup
 	errs := make([]error, n)
@@ -217,57 +195,9 @@ func (d *pdfDoc) readPages() error {
 	}
 	d.pages = make([]pdfPage, cnt.PageCount)
 	return d.forPages(func(worker *pdfDoc, i int) error {
-		size, err := worker.instance.GetPageSize(&requests.GetPageSize{Page: worker.page(i)})
+		pg, err := worker.readPage(i)
 		if err != nil {
-			return fmt.Errorf("ページ %d の寸法を取得できません: %w", i+1, err)
-		}
-		txt, err := worker.instance.GetPageTextStructured(&requests.GetPageTextStructured{
-			Page:                   worker.page(i),
-			Mode:                   requests.GetPageTextStructuredModeChars,
-			CollectFontInformation: true,
-		})
-		if err != nil {
-			return fmt.Errorf("ページ %d の文字を取得できません: %w", i+1, err)
-		}
-
-		pg := pdfPage{width: size.Width, height: size.Height}
-		pg.glyphs = make([]glyph, 0, len(txt.Chars))
-		space := false
-		for _, c := range txt.Chars {
-			for _, r := range c.Text {
-				// 空白と改行は外接矩形が当てにならない (潰れていることが
-				// ある) ので、次の字に「前に空白があった」印だけ残す。
-				if isSpace(r) {
-					space = true
-					continue
-				}
-				// PDFium は行末の折り返しハイフンを U+0002 で返す。落とすと
-				// "[suppress-" が "[suppress" になり、次行と繋いだときに
-				// "suppress restoration" という存在しない綴りになる。
-				if r == 0x02 {
-					r = '-'
-				}
-				if r < 0x20 {
-					continue
-				}
-				fontSize := 0.0
-				if c.FontInformation != nil {
-					fontSize = c.FontInformation.RenderedSize
-					if fontSize <= 0 {
-						fontSize = c.FontInformation.Size
-					}
-				}
-				pg.glyphs = append(pg.glyphs, glyph{
-					r:           r,
-					left:        c.PointPosition.Left,
-					right:       c.PointPosition.Right,
-					top:         c.PointPosition.Top,
-					bottom:      c.PointPosition.Bottom,
-					spaceBefore: space,
-					fontSize:    fontSize,
-				})
-				space = false
-			}
+			return err
 		}
 		d.pages[i] = pg
 		return nil
@@ -292,4 +222,95 @@ func isSpace(r rune) bool {
 		return true
 	}
 	return false
+}
+
+func (d *pdfDoc) pageWorkers(n int, cleanups *[]func()) ([]*pdfDoc, error) {
+	workers := []*pdfDoc{d}
+	for len(workers) < n {
+		k := len(workers)
+		if enginePools[k] == nil {
+			pool, err := webassembly.Init(webassembly.Config{MinIdle: 1, MaxIdle: 1, MaxTotal: 1})
+			if err != nil {
+				return nil, fmt.Errorf("並列処理用 PDFium の初期化に失敗: %w", err)
+			}
+			enginePools[k] = pool
+		}
+		inst, err := enginePools[k].GetInstance(30 * time.Second)
+		if err != nil {
+			return nil, fmt.Errorf("並列処理用 PDFium の取得に失敗: %w", err)
+		}
+		*cleanups = append(*cleanups, func() { _ = inst.Close() })
+		res, err := inst.OpenDocument(&requests.OpenDocument{File: &d.data})
+		if err != nil {
+			return nil, fmt.Errorf("並列処理用 PDF を開けません (%s): %w", d.path, err)
+		}
+		*cleanups = append(*cleanups, func() { _, _ = inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: res.Document}) })
+		workers = append(workers, &pdfDoc{path: d.path, data: d.data, instance: inst, ref: res.Document, pages: d.pages})
+	}
+	return workers, nil
+}
+
+func (worker *pdfDoc) readPage(i int) (pdfPage, error) {
+	size, err := worker.instance.GetPageSize(&requests.GetPageSize{Page: worker.page(i)})
+	if err != nil {
+		return pdfPage{}, fmt.Errorf("ページ %d の寸法を取得できません: %w", i+1, err)
+	}
+	txt, err := worker.instance.GetPageTextStructured(&requests.GetPageTextStructured{
+		Page:                   worker.page(i),
+		Mode:                   requests.GetPageTextStructuredModeChars,
+		CollectFontInformation: true,
+	})
+	if err != nil {
+		return pdfPage{}, fmt.Errorf("ページ %d の文字を取得できません: %w", i+1, err)
+	}
+
+	pg := pdfPage{width: size.Width, height: size.Height}
+	pg.glyphs = make([]glyph, 0, len(txt.Chars))
+	space := false
+	for _, c := range txt.Chars {
+		for _, r := range c.Text {
+			// 空白と改行は外接矩形が当てにならない (潰れていることが
+			// ある) ので、次の字に「前に空白があった」印だけ残す。
+			if isSpace(r) {
+				space = true
+				continue
+			}
+			// PDFium は行末の折り返しハイフンを U+0002 で返す。落とすと
+			// "[suppress-" が "[suppress" になり、次行と繋いだときに
+			// "suppress restoration" という存在しない綴りになる。
+			if r == 0x02 {
+				r = '-'
+			}
+			if r < 0x20 {
+				continue
+			}
+			fontSize := 0.0
+			if c.FontInformation != nil {
+				fontSize = c.FontInformation.RenderedSize
+				if fontSize <= 0 {
+					fontSize = c.FontInformation.Size
+				}
+			}
+			pg.glyphs = append(pg.glyphs, glyph{
+				r:           r,
+				left:        c.PointPosition.Left,
+				right:       c.PointPosition.Right,
+				top:         c.PointPosition.Top,
+				bottom:      c.PointPosition.Bottom,
+				spaceBefore: space,
+				fontSize:    fontSize,
+			})
+			space = false
+		}
+	}
+	return pg, nil
+}
+
+func (d *pdfDoc) forPagesSequential(f func(*pdfDoc, int) error) error {
+	for i := range d.pages {
+		if err := f(d, i); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -68,34 +68,13 @@ func splitSpreads(inputDir, outputDir string, dryRun bool) (scanReport, error) {
 	if err != nil {
 		return report, fmt.Errorf("ディレクトリの読み取りに失敗: %w", err)
 	}
-	type fileEntry struct {
-		sortKey *big.Int
-		name    string
-	}
-	var files []fileEntry
-	digitRe := regexp.MustCompile(`\d+`)
-	for _, name := range names {
-		base := strings.TrimSuffix(name, filepath.Ext(name))
-		matches := digitRe.FindAllString(base, -1)
-		if len(matches) != 1 {
-			fmt.Fprintf(os.Stderr, "数字列が1つでないためスキップ: %s (検出数: %d)\n", name, len(matches))
-			report.Skipped++
-			continue
-		}
-		n := new(big.Int)
-		n.SetString(matches[0], 10)
-		files = append(files, fileEntry{name: name, sortKey: n})
-	}
+	files, skipped := scanFiles(names)
+	report.Skipped = skipped
 	if len(files) == 0 {
 		return report, nil
 	}
-	slices.SortStableFunc(files, func(a, b fileEntry) int { return a.sortKey.Cmp(b.sortKey) })
 	report.Input = len(files)
-	ext := filepath.Ext(files[0].name)
-	base := strings.TrimSuffix(files[0].name, ext)
-	loc := digitRe.FindStringIndex(base)
-	prefix, suffix := base[:loc[0]], base[loc[1]:]
-	digits := max(loc[1]-loc[0], len(strconv.Itoa(len(files)*2)))
+	prefix, suffix, ext, digits := scanOutputPattern(files)
 	paths := make([]string, len(files))
 	for i, f := range files {
 		paths[i] = filepath.Join(inputDir, f.name)
@@ -106,23 +85,9 @@ func splitSpreads(inputDir, outputDir string, dryRun bool) (scanReport, error) {
 		writer = infrastructure.NewSpreadWriter()
 		defer writer.Close()
 	}
-	type pendingWrite struct {
-		result  <-chan error
-		name    string
-		outputs []string
-	}
+
 	var pending []pendingWrite
-	printResult := func(name string, outputs []string) {
-		mark := ""
-		if dryRun {
-			mark = "[DryRun] "
-		}
-		if len(outputs) == 1 {
-			fmt.Printf("%sコピー: %s -> %s\n", mark, name, outputs[0])
-		} else {
-			fmt.Printf("%s分割: %s -> %s, %s\n", mark, name, outputs[0], outputs[1])
-		}
-	}
+
 	counter, i := 0, 0
 	for spread, err := range infrastructure.ReadSpreads(paths) {
 		f := files[i]
@@ -145,20 +110,76 @@ func splitSpreads(inputDir, outputDir string, dryRun bool) (scanReport, error) {
 			report.Split++
 		}
 		if dryRun {
-			printResult(f.name, outputs)
+			printScanResult(f.name, outputs, dryRun)
 			report.Pages += len(outputs)
 		} else {
 			pending = append(pending, pendingWrite{name: f.name, outputs: outputs, result: writer.Submit(spread, destinations)})
 		}
 	}
+	finishScanWrites(pending, &report, dryRun)
+	return report, nil
+}
+
+type fileEntry struct {
+	sortKey *big.Int
+	name    string
+}
+
+func scanFiles(names []string) ([]fileEntry, int) {
+	skipped := 0
+	var files []fileEntry
+	digitRe := regexp.MustCompile(`\d+`)
+	for _, name := range names {
+		base := strings.TrimSuffix(name, filepath.Ext(name))
+		matches := digitRe.FindAllString(base, -1)
+		if len(matches) != 1 {
+			fmt.Fprintf(os.Stderr, "数字列が1つでないためスキップ: %s (検出数: %d)\n", name, len(matches))
+			skipped++
+			continue
+		}
+		n := new(big.Int)
+		n.SetString(matches[0], 10)
+		files = append(files, fileEntry{name: name, sortKey: n})
+	}
+	slices.SortStableFunc(files, func(a, b fileEntry) int { return a.sortKey.Cmp(b.sortKey) })
+	return files, skipped
+}
+
+func printScanResult(name string, outputs []string, dryRun bool) {
+	mark := ""
+	if dryRun {
+		mark = "[DryRun] "
+	}
+	if len(outputs) == 1 {
+		fmt.Printf("%sコピー: %s -> %s\n", mark, name, outputs[0])
+	} else {
+		fmt.Printf("%s分割: %s -> %s, %s\n", mark, name, outputs[0], outputs[1])
+	}
+}
+
+type pendingWrite struct {
+	result  <-chan error
+	name    string
+	outputs []string
+}
+
+func finishScanWrites(pending []pendingWrite, report *scanReport, dryRun bool) {
 	for _, p := range pending {
 		if err := <-p.result; err != nil {
 			fmt.Fprintf(os.Stderr, "処理失敗: %s - %s\n", p.name, err)
 			report.Errors++
 			continue
 		}
-		printResult(p.name, p.outputs)
+		printScanResult(p.name, p.outputs, dryRun)
 		report.Pages += len(p.outputs)
 	}
-	return report, nil
+}
+
+func scanOutputPattern(files []fileEntry) (prefix, suffix, ext string, digits int) {
+	ext = filepath.Ext(files[0].name)
+	base := strings.TrimSuffix(files[0].name, ext)
+	loc := regexp.MustCompile(`\d+`).FindStringIndex(base)
+	prefix, suffix = base[:loc[0]], base[loc[1]:]
+	digits = max(loc[1]-loc[0], len(strconv.Itoa(len(files)*2)))
+	return prefix, suffix, ext, digits
 }

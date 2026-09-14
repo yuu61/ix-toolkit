@@ -18,7 +18,7 @@ func InitInventory() (bool, string, error) {
 	}
 	invPath := filepath.Join(toolkitDir, "devices.json")
 	if _, err := os.Stat(invPath); os.IsNotExist(err) {
-		if err := os.WriteFile(invPath, []byte("{\n  \"devices\": {}\n}\n"), 0o644); err != nil {
+		if err := os.WriteFile(invPath, []byte("{\n  \"devices\": {}\n}\n"), 0o600); err != nil {
 			return false, "", fmt.Errorf("インベントリファイルを作れません: %w", err)
 		}
 		return true, invPath, nil

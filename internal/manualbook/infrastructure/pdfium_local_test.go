@@ -2,7 +2,6 @@ package infrastructure
 
 import (
 	"errors"
-	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -11,16 +10,9 @@ import (
 )
 
 func TestLocalPDFPageWorkers(t *testing.T) {
-	root := os.Getenv("IX_MANUALBOOK_PDF_ROOT")
-	if root == "" {
-		t.Skip("set IX_MANUALBOOK_PDF_ROOT to check local PDFs")
-	}
+	root := localPDFRoot(t)
 	pdf := filepath.Join(root, "pdf", "FD-ver10.11-1.1.pdf")
-	d, err := openDoc(pdf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer CloseDoc(pdf)
+	d := localPDFDoc(t, pdf)
 	// 同じ実 PDF の先頭 8 ページで、逐次経路と並列経路を両方通す。
 	sample := *d
 	sample.pages = d.pages[:8]

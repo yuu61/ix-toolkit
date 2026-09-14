@@ -85,22 +85,14 @@ func TestScanPreservesNumericOrderAndSplitGeometry(t *testing.T) {
 			}
 			for i, width := range []int{20, 20, 40} {
 				path := filepath.Join(dir, "processed", fmt.Sprintf("page%03d.png", i+1))
-				f, err := os.Open(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				img, err := png.Decode(f)
-				_ = f.Close()
-				if err != nil {
-					t.Fatal(err)
-				}
+				img := readScanPNG(t, path)
 				if img.Bounds().Dx() != width || img.Bounds().Dy() != 36 {
 					t.Fatalf("%s: size = %v", path, img.Bounds())
 				}
-				if i == 0 && color.GrayModel.Convert(img.At(0, 0)).(color.Gray).Y != 0 {
+				if i == 0 && grayValue(t, img.At(0, 0)) != 0 {
 					t.Fatal("left page lost")
 				}
-				if i == 1 && color.GrayModel.Convert(img.At(19, 0)).(color.Gray).Y != 80 {
+				if i == 1 && grayValue(t, img.At(19, 0)) != 80 {
 					t.Fatal("right page lost")
 				}
 			}
@@ -160,4 +152,26 @@ func writeScanSpread(t *testing.T, path string) {
 	if err := errors.Join(encodeErr, f.Close()); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func grayValue(t *testing.T, c color.Color) uint8 {
+	t.Helper()
+	gray, ok := color.GrayModel.Convert(c).(color.Gray)
+	if !ok {
+		t.Fatal("GrayModel returned unexpected type")
+	}
+	return gray.Y
+}
+
+func readScanPNG(t *testing.T, path string) image.Image {
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(f)
+	_ = f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return img
 }

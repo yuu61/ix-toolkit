@@ -26,7 +26,8 @@ func convertSections(outDir, docTitle string, src infrastructure.Source) error {
 	heads, chapters := infrastructure.ParseHeadings(p, pages)
 	nLayout, nTables := 0, 0
 	for i := range heads {
-		for _, b := range heads[i].Blocks {
+		for j := range heads[i].Blocks {
+			b := &heads[i].Blocks[j]
 			if b.Kind == domain.BlockTable {
 				nTables++
 			}

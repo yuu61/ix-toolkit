@@ -4,13 +4,17 @@ import (
 	"strings"
 )
 
+const (
+	SyntaxLabel = "入力形式"
+)
+
 // SyntaxLabels は「コマンド構文そのもの」を載せる見出し語。
 // ここだけはコードブロックにし、行の折り返しをいじらない。
 //
 // 揃えたあとの綴り (NormalizeLabel を通した形) で引く。LabelSpelling の写し先が
 // ここと食い違うと、構文の欄が地の文として整形され、索引が空になる。
 // その不変条件は manual_test.go で確かめる。
-var SyntaxLabels = map[string]bool{"入力形式": true, "入力例": true}
+func SyntaxLabels() map[string]bool { return map[string]bool{SyntaxLabel: true, "入力例": true} }
 
 // CommandsOf は入力形式からコマンド行を取り出す (no 形は除く)。これが索引のキーになる。
 //
@@ -25,30 +29,10 @@ var SyntaxLabels = map[string]bool{"入力形式": true, "入力例": true}
 func CommandsOf(e *Entry) []string {
 	var joined []string
 	for _, f := range e.Fields {
-		if f.Label != "入力形式" {
+		if f.Label != SyntaxLabel {
 			continue
 		}
-		base := -1
-		for _, ln := range f.Lines {
-			t := strings.TrimSpace(ln)
-			if t == "" {
-				continue
-			}
-			if base < 0 {
-				base = indentOf(ln)
-			}
-			// コマンドは必ず英小文字で始まる。1 行目より字下げが深い行と、
-			// 英小文字で始まらない行 ("ADDRESS]" のような折り返しの後半) は
-			// 直前のコマンドの続きとして繋ぎ直す。
-			if indentOf(ln) > base || !startsLowerASCII(t) {
-				if len(joined) == 0 {
-					continue // 繋ぐ先が無い断片 = 版面のにじみ。索引には載せない
-				}
-				joined[len(joined)-1] += " " + t
-				continue
-			}
-			joined = append(joined, t)
-		}
+		joined = joinCommandLines(joined, f.Lines)
 	}
 
 	var out []string
@@ -68,4 +52,29 @@ func indentOf(s string) int { return len(s) - len(strings.TrimLeft(s, " ")) }
 func startsLowerASCII(s string) bool {
 	r := []rune(s)
 	return len(r) > 0 && r[0] >= 'a' && r[0] <= 'z'
+}
+
+func joinCommandLines(joined, lines []string) []string {
+	base := -1
+	for _, ln := range lines {
+		t := strings.TrimSpace(ln)
+		if t == "" {
+			continue
+		}
+		if base < 0 {
+			base = indentOf(ln)
+		}
+		// コマンドは必ず英小文字で始まる。1 行目より字下げが深い行と、
+		// 英小文字で始まらない行 ("ADDRESS]" のような折り返しの後半) は
+		// 直前のコマンドの続きとして繋ぎ直す。
+		if indentOf(ln) > base || !startsLowerASCII(t) {
+			if len(joined) == 0 {
+				continue // 繋ぐ先が無い断片 = 版面のにじみ。索引には載せない
+			}
+			joined[len(joined)-1] += " " + t
+			continue
+		}
+		joined = append(joined, t)
+	}
+	return joined
 }

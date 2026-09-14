@@ -256,18 +256,7 @@ func findEmptyBand(pdf string, sample []sampleRange, p *domain.Profile, body cro
 		for i := r.lo; i <= r.hi && i <= len(d.pages); i++ {
 			pg := d.pages[i-1]
 			pages++
-			seen := make([]bool, w+1)
-			for _, g := range pg.glyphs {
-				if !body.keep(g, pg.width, pg.height) {
-					continue
-				}
-				for x := int(math.Floor(g.left)); x <= int(math.Ceil(g.right)) && x <= w; x++ {
-					if x >= 0 && !seen[x] {
-						seen[x] = true
-						count[x]++
-					}
-				}
-			}
+			countOccupiedColumns(pg, body, count)
 		}
 	}
 	if pages == 0 {
@@ -275,6 +264,44 @@ func findEmptyBand(pdf string, sample []sampleRange, p *domain.Profile, body cro
 	}
 	limit := pages / 10
 
+	return widestEmptyBand(count, limit)
+}
+
+// --- 補助 ---
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+func BaseName(p string) string {
+	p = strings.ReplaceAll(p, "\\", "/")
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		return p[i+1:]
+	}
+	return p
+}
+
+func countOccupiedColumns(pg pdfPage, body crop, count []int) {
+	w := len(count) - 1
+	seen := make([]bool, w+1)
+	for _, g := range pg.glyphs {
+		if !body.keep(g, pg.width, pg.height) {
+			continue
+		}
+		for x := int(math.Floor(g.left)); x <= int(math.Ceil(g.right)) && x <= w; x++ {
+			if x >= 0 && !seen[x] {
+				seen[x] = true
+				count[x]++
+			}
+		}
+	}
+}
+
+func widestEmptyBand(count []int, limit int) (lo, hi float64, ok bool) {
+	w := len(count) - 1
 	// 中央 50% の範囲だけを見る。左右の余白は段間ではない。
 	from, to := w/4, w*3/4
 	bestLo, bestHi := -1, -1
@@ -295,21 +322,4 @@ func findEmptyBand(pdf string, sample []sampleRange, p *domain.Profile, body cro
 		return 0, 0, false
 	}
 	return float64(bestLo), float64(bestHi), true
-}
-
-// --- 補助 ---
-
-func abs(n int) int {
-	if n < 0 {
-		return -n
-	}
-	return n
-}
-
-func BaseName(p string) string {
-	p = strings.ReplaceAll(p, "\\", "/")
-	if i := strings.LastIndex(p, "/"); i >= 0 {
-		return p[i+1:]
-	}
-	return p
 }

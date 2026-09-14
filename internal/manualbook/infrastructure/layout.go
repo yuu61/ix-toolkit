@@ -57,12 +57,7 @@ type textLine struct {
 // grid が true なら桁を揃える (-table 相当)。false なら空きを 1 個の空白に
 // 潰す (-raw 相当)。ヘッダ・フッタ帯は後者で読む。
 func renderPage(pg pdfPage, c crop, grid bool) string {
-	var gs []glyph
-	for _, g := range pg.glyphs {
-		if c.keep(g, pg.width, pg.height) {
-			gs = append(gs, g)
-		}
-	}
+	gs := croppedGlyphs(pg, c)
 	if len(gs) == 0 {
 		return ""
 	}
@@ -73,12 +68,7 @@ func renderPage(pg pdfPage, c crop, grid bool) string {
 	}
 
 	unit := columnUnit(lines)
-	originX := math.Inf(1)
-	for _, g := range gs {
-		if g.left < originX {
-			originX = g.left
-		}
-	}
+	originX := glyphOrigin(gs)
 	spacing := lineSpacing(lines)
 
 	starts := snapStarts(lines, originX, unit)
@@ -349,7 +339,7 @@ func blankLines(gap, spacing float64) int {
 func renderGridLine(ln textLine, originX, unit, lineU float64, startCol int) string {
 	var buf []rune
 	cols := 0      // buf が占める桁数 (全角を 2 と数える)
-	prevEnd := 0.0 // 直前の語の右端 (ポイント)
+	prevEnd := 0.0 // 直前の語の右端。単位はポイント。
 	for w, word := range splitWords(ln.glyphs, lineU) {
 		switch {
 		case w == 0:
@@ -357,14 +347,14 @@ func renderGridLine(ln textLine, originX, unit, lineU float64, startCol int) str
 				buf = append(buf, ' ')
 				cols++
 			}
-		case w > 0 && word[0].left-prevEnd <= lineU*1.8:
+		case word[0].left-prevEnd <= lineU*1.8:
 			// ただの語間。桁に合わせると丸めの余りが空白になって、
 			// 入力形式の "TRIGGER METHOD1" が "TRIGGER   METHOD1" になる。
 			buf = append(buf, ' ')
 			cols++
 		default:
 			col := int(math.Round((word[0].left - originX) / unit))
-			if w > 0 && col <= cols {
+			if col <= cols {
 				col = cols + 1 // 空きは必ず 1 桁以上に見せる
 			}
 			for cols < col {
@@ -391,24 +381,7 @@ func splitWords(gs []glyph, unit float64) [][]glyph {
 	for i, g := range gs {
 		split := i == 0 || g.spaceBefore
 		if i > 0 && !split {
-			// 送りの目安は「桁幅か、その字の字面の広いほう」。桁幅だけで
-			// 測ると "G" のような広い字の後ろが毎回割れる ("G igaEthernet")。
-			//
-			// 閾値は半角 1 桁ぶんに近く取る。PDF が持つ空白は上の spaceBefore で
-			// 拾えているので、ここで見つけたいのは表の列のような広い空きだけ。
-			// 狭く取ると字面の寄り (「・」は全角の枠の中央に置かれる) を空きと
-			// 読んで、項目名が「ローカル ・プリファレンス」と割れる。
-			prev := gs[i-1]
-			expect := math.Max(float64(runeCols(prev.r))*unit, prev.width())
-			split = (g.left-prev.left)-expect > unit*0.9
-
-			// 約物は字面が全角の枠のどこにあるか分からない。「（」は右寄り、
-			// 「。」は左下に寄る。座標の差を空きと読むと「DNS サーバ （IPv4）」
-			// のように語の中で割れるので、約物が絡む隙間は PDF が持つ空白
-			// (spaceBefore) だけを信じる。
-			if split && (isCJKPunct(prev.r) || isCJKPunct(g.r)) {
-				split = false
-			}
+			split = wordGap(gs[i-1], g, unit)
 		}
 		if split && len(cur) > 0 {
 			words = append(words, cur)
@@ -446,4 +419,45 @@ func isCJKPunct(r rune) bool {
 		return true
 	}
 	return false
+}
+
+func croppedGlyphs(pg pdfPage, c crop) []glyph {
+	var gs []glyph
+	for _, g := range pg.glyphs {
+		if c.keep(g, pg.width, pg.height) {
+			gs = append(gs, g)
+		}
+	}
+	return gs
+}
+
+func wordGap(prev, g glyph, unit float64) bool {
+	// 送りの目安は「桁幅か、その字の字面の広いほう」。桁幅だけで
+	// 測ると "G" のような広い字の後ろが毎回割れる ("G igaEthernet")。
+	//
+	// 閾値は半角 1 桁ぶんに近く取る。PDF が持つ空白は上の spaceBefore で
+	// 拾えているので、ここで見つけたいのは表の列のような広い空きだけ。
+	// 狭く取ると字面の寄り (「・」は全角の枠の中央に置かれる) を空きと
+	// 読んで、項目名が「ローカル ・プリファレンス」と割れる。
+	expect := math.Max(float64(runeCols(prev.r))*unit, prev.width())
+	split := (g.left-prev.left)-expect > unit*0.9
+
+	// 約物は字面が全角の枠のどこにあるか分からない。「（」は右寄り、
+	// 「。」は左下に寄る。座標の差を空きと読むと「DNS サーバ （IPv4）」
+	// のように語の中で割れるので、約物が絡む隙間は PDF が持つ空白
+	// (spaceBefore) だけを信じる。
+	if split && (isCJKPunct(prev.r) || isCJKPunct(g.r)) {
+		split = false
+	}
+	return split
+}
+
+func glyphOrigin(gs []glyph) float64 {
+	originX := math.Inf(1)
+	for _, g := range gs {
+		if g.left < originX {
+			originX = g.left
+		}
+	}
+	return originX
 }

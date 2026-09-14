@@ -85,7 +85,7 @@ func writeSyntheticPDF(t *testing.T, path string) {
 		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
 		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 40 40] /Resources << >> >>",
 	}
-	var offsets []int
+	offsets := make([]int, 0, len(objects))
 	for i, object := range objects {
 		offsets = append(offsets, b.Len())
 		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", i+1, object)

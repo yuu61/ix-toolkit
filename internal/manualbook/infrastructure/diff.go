@@ -45,7 +45,7 @@ func WriteDiffTSV(out string, rows []domain.DiffRow) error {
 			r.Kind, tsvCell(r.IX), tsvCell(r.IXR), r.Source, r.RefIX, r.RefIXR, tsvCell(r.Note),
 		}, "\t") + "\n")
 	}
-	return os.WriteFile(out, []byte(b.String()), 0o644)
+	return os.WriteFile(out, []byte(b.String()), 0o644) // #nosec G306 -- 資格情報を含まないマニュアル・索引を他の利用者も読める形で出力する。
 }
 
 // FindDerived は手で導いた差分の TSV を、カレント → 実行ファイルの隣の順に探す。
@@ -130,49 +130,7 @@ func ReadCh8(fdDir string, ixCmds []domain.IndexedCommand) ([]domain.DiffRow, er
 	if err != nil {
 		return nil, err
 	}
-	lines := strings.Split(string(data), "\n")
-
-	var rows []domain.DiffRow
-	kindAt := map[int]string{} // 見出しの深さ → 種類 (親から引き継ぐ)
-	kind, ref := "", ""
-	for i := 0; i < len(lines); i++ {
-		ln := strings.TrimRight(lines[i], "\r")
-		if m := mdHeadingRe.FindStringSubmatch(ln); m != nil {
-			depth := len(m[1])
-			title := m[3]
-			k, ok := domain.Ch8Kind(title)
-			if !ok {
-				k = kindAt[depth-1]
-			}
-			for d := depth; d <= 6; d++ {
-				delete(kindAt, d)
-			}
-			kindAt[depth] = k
-			kind = k
-			if r, ok := refAt[i+1]; ok {
-				ref = r
-			}
-			continue
-		}
-		if kind == "" || !mdTableRe.MatchString(ln) {
-			continue
-		}
-		// 表の始まり。見出し行・罫線・本体の順。
-		var table [][]string
-		for i < len(lines) && mdTableRe.MatchString(strings.TrimRight(lines[i], "\r")) {
-			t := strings.TrimRight(lines[i], "\r")
-			if !mdRuleRe.MatchString(t) {
-				table = append(table, splitTableRow(t))
-			}
-			i++
-		}
-		i--
-		if len(table) < 2 {
-			continue
-		}
-		rows = append(rows, domain.Ch8Rows(kind, ref, table, ixCmds)...)
-	}
-	return rows, nil
+	return ch8TableRows(data, refAt, ixCmds), nil
 }
 
 type indexedSection struct {
@@ -264,4 +222,56 @@ func ReadDerived(path string) ([]domain.DiffRow, error) {
 		rows = append(rows, domain.DiffRow{Kind: c[0], IX: c[1], IXR: c[2], Source: "derived", RefIX: c[3], RefIXR: c[4], Note: c[5]})
 	}
 	return rows, sc.Err()
+}
+
+func ch8TableRows(data []byte, refAt map[int]string, ixCmds []domain.IndexedCommand) []domain.DiffRow {
+	lines := strings.Split(string(data), "\n")
+
+	var rows []domain.DiffRow
+	kindAt := map[int]string{} // 見出しの深さ → 種類 (親から引き継ぐ)
+	kind, ref := "", ""
+	for i := 0; i < len(lines); i++ {
+		ln := strings.TrimRight(lines[i], "\r")
+		if m := mdHeadingRe.FindStringSubmatch(ln); m != nil {
+			depth := len(m[1])
+			title := m[3]
+			k, ok := domain.Ch8Kind(title)
+			if !ok {
+				k = kindAt[depth-1]
+			}
+			for d := depth; d <= 6; d++ {
+				delete(kindAt, d)
+			}
+			kindAt[depth] = k
+			kind = k
+			if r, ok := refAt[i+1]; ok {
+				ref = r
+			}
+			continue
+		}
+		if kind == "" || !mdTableRe.MatchString(ln) {
+			continue
+		}
+		var table [][]string
+		table, i = readMarkdownTable(lines, i)
+		i--
+		if len(table) < 2 {
+			continue
+		}
+		rows = append(rows, domain.Ch8Rows(kind, ref, table, ixCmds)...)
+	}
+	return rows
+}
+
+func readMarkdownTable(lines []string, i int) ([][]string, int) {
+	// 表の始まり。見出し行・罫線・本体の順。
+	var table [][]string
+	for i < len(lines) && mdTableRe.MatchString(strings.TrimRight(lines[i], "\r")) {
+		t := strings.TrimRight(lines[i], "\r")
+		if !mdRuleRe.MatchString(t) {
+			table = append(table, splitTableRow(t))
+		}
+		i++
+	}
+	return table, i
 }

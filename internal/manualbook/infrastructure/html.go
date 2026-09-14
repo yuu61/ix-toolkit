@@ -18,6 +18,15 @@ import (
 	"golang.org/x/net/html"
 )
 
+const (
+	htmlSection = "section"
+	htmlSpan    = "span"
+	htmlFigure  = "figure"
+	htmlImg     = "img"
+	htmlPre     = "pre"
+	htmlDiv     = "div"
+)
+
 // Sphinx が出した HTML を読む前段。fetch が置いた取得キャッシュ (1 ページ 1 ファイル)
 // から、md.go の entry か sections.go の heading を組み立てる。
 //
@@ -97,18 +106,7 @@ func ReadWebPages(dir string, unnumbered bool) ([]WebPage, error) {
 		return nil, err
 	}
 	sort.SliceStable(pages, func(i, j int) bool { return lessNumber(pages[i].number, pages[j].number) })
-	chapter := 0
-	for _, pg := range pages {
-		if len(pg.number) > 0 {
-			chapter = max(chapter, pg.number[0])
-		}
-	}
-	for i := range pages {
-		if pages[i].unnumbered {
-			chapter++
-			pages[i].number = []int{chapter}
-		}
-	}
+	numberWebPages(pages)
 	return pages, nil
 }
 
@@ -131,15 +129,7 @@ func readWebPage(file, rel string, unnumbered bool) (WebPage, bool, error) {
 	if err != nil {
 		return WebPage{}, false, err
 	}
-	body := findNode(doc, func(n *html.Node) bool { return attr(n, "itemprop") == "articleBody" })
-	if body == nil {
-		return WebPage{}, false, nil
-	}
-	sec := findNode(body, func(n *html.Node) bool { return n.Type == html.ElementNode && n.Data == "section" })
-	if sec == nil {
-		return WebPage{}, false, nil
-	}
-	h1 := findNode(sec, func(n *html.Node) bool { return n.Type == html.ElementNode && n.Data == "h1" })
+	body, sec, h1 := webArticleHeading(doc)
 	if h1 == nil {
 		return WebPage{}, false, nil
 	}
@@ -154,18 +144,7 @@ func readWebPage(file, rel string, unnumbered bool) (WebPage, bool, error) {
 		return pg, true, nil
 	}
 
-	// 章名はパンくずから。「21. リモートアクセス編」のように番号が 1 段のものが章。
-	// 章そのもののページ (機能説明書の「8. IXシリーズとの差分」) はパンくずに
-	// 章の項が無いので、h1 の題がそのまま章名になる。
-	pg.chapterTitle = title
-	walk(doc, func(n *html.Node) bool {
-		if n.Type == html.ElementNode && n.Data == "li" && strings.Contains(attr(n, "class"), "breadcrumb-item") {
-			if bn, bt := headingParts(n); len(bn) == 1 && bn[0] == num[0] {
-				pg.chapterTitle = bt
-			}
-		}
-		return true
-	})
+	pg.chapterTitle = webChapterTitle(doc, num, title)
 	return pg, true, nil
 }
 
@@ -177,7 +156,7 @@ func headingParts(n *html.Node) ([]int, string) {
 	walk(n, func(c *html.Node) bool {
 		if c.Type == html.ElementNode {
 			switch {
-			case c.Data == "span" && strings.Contains(attr(c, "class"), "section-number"):
+			case c.Data == htmlSpan && strings.Contains(attr(c, "class"), "section-number"):
 				numText = nodeText(c)
 				return false
 			case c.Data == "a" && strings.Contains(attr(c, "class"), "headerlink"):
@@ -230,7 +209,7 @@ func anchorOf(sec *html.Node) string {
 		if isHeadingTag(c.Data) {
 			break
 		}
-		if c.Data == "span" {
+		if c.Data == htmlSpan {
 			if id := attr(c, "id"); id != "" && !autoIDRe.MatchString(id) {
 				return id
 			}
@@ -263,7 +242,7 @@ func ParseWebEntries(pages []WebPage, p *domain.Profile) ([]domain.Entry, map[in
 	for _, pg := range pages {
 		chapters[pg.number[0]] = pg.chapterTitle
 		walk(pg.body, func(n *html.Node) bool {
-			if n.Type != html.ElementNode || n.Data != "section" {
+			if n.Type != html.ElementNode || n.Data != htmlSection {
 				return true
 			}
 			fields := entryFields(n, labels)
@@ -305,47 +284,18 @@ func entryFields(sec *html.Node, labels map[string]bool) []domain.Field {
 			cur = nil
 		}
 	}
-	add := func(label string, nodes ...*html.Node) {
-		f := domain.Field{Label: label}
-		for _, n := range nodes {
-			// 構文の欄は 1 行 1 コマンドの生の行。それ以外は論理行で、
-			// joinWrapped が行を繋がないよう空行で区切る (proseLines)。
-			if domain.SyntaxLabels[label] {
-				f.Lines = append(f.Lines, rawLines(n)...)
-			} else {
-				f.Lines = append(f.Lines, proseLines(n)...)
-			}
-		}
-		fields = append(fields, f)
-	}
+
 	for c := sec.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type != html.ElementNode {
 			continue
 		}
 		switch {
-		case c.Data == "section":
+		case c.Data == htmlSection:
 			flush()
 			return fields
 		case c.Data == "dl":
 			flush()
-			for d := c.FirstChild; d != nil; d = d.NextSibling {
-				if d.Type != html.ElementNode || d.Data != "dt" {
-					continue
-				}
-				label := dtLabel(d)
-				if !labels[domain.NormalizeLabel(label)] {
-					continue
-				}
-				dd := d.NextSibling
-				for dd != nil && (dd.Type != html.ElementNode || dd.Data != "dd") {
-					dd = dd.NextSibling
-				}
-				if dd != nil {
-					add(domain.NormalizeLabel(label), dd)
-				} else {
-					add(domain.NormalizeLabel(label))
-				}
-			}
+			fields = append(fields, definitionFields(c, labels)...)
 		case c.Data == "p" && labels[domain.NormalizeLabel(dtLabel(c))]:
 			flush()
 			cur = &domain.Field{Label: domain.NormalizeLabel(dtLabel(c))}
@@ -353,11 +303,7 @@ func entryFields(sec *html.Node, labels map[string]bool) []domain.Field {
 			if cur == nil {
 				continue
 			}
-			if domain.SyntaxLabels[cur.Label] {
-				cur.Lines = append(cur.Lines, rawLines(c)...)
-			} else {
-				cur.Lines = append(cur.Lines, proseLines(c)...)
-			}
+			cur.Lines = append(cur.Lines, webFieldLines(cur.Label, c)...)
 		}
 	}
 	flush()
@@ -434,164 +380,21 @@ func copyFile(from, to string) error {
 // ParseWebHeadings は機能説明書のページ群から見出しと本文を切り出す。
 func ParseWebHeadings(pages []WebPage) ([]domain.Heading, map[int]string) {
 	chapters := map[int]string{}
-	var heads []domain.Heading
+	heads := make([]domain.Heading, 0, len(pages))
 	for _, pg := range pages {
 		chapters[pg.number[0]] = pg.chapterTitle
-		var visit func(sec *html.Node)
-		visit = func(sec *html.Node) {
-			var h *html.Node
-			for c := sec.FirstChild; c != nil; c = c.NextSibling {
-				if c.Type == html.ElementNode && isHeadingTag(c.Data) {
-					h = c
-					break
-				}
-			}
-			if h == nil {
-				// 番号なし冊子の articleBody は複数のトップレベル節を包む。
-				for c := sec.FirstChild; c != nil; c = c.NextSibling {
-					if c.Type == html.ElementNode && c.Data == "section" {
-						visit(c)
-					}
-				}
-				return
-			}
-			num, title := headingParts(h)
-			if len(num) == 0 && !pg.unnumbered {
-				return
-			}
-			r := domain.Ref{Path: pg.path, Anchor: anchorOf(sec)}
-			hd := domain.Heading{
-				Number:  numberString(num),
-				Title:   title,
-				Depth:   len(num),
-				Chapter: pg.number[0],
-				Section: pg.title,
-				Ref:     r,
-			}
-			if pg.unnumbered {
-				hd.Depth = int(h.Data[1] - '0')
-			}
-			var content []*html.Node
-			var subs []*html.Node
-			for c := sec.FirstChild; c != nil; c = c.NextSibling {
-				if c.Type != html.ElementNode {
-					continue
-				}
-				switch {
-				case c.Data == "section":
-					subs = append(subs, c)
-				case isHeadingTag(c.Data) && c == h:
-				default:
-					content = append(content, c)
-				}
-			}
-			hd.Blocks = contentBlocks(content, pg.path, r)
-			heads = append(heads, hd)
-			for _, s := range subs {
-				visit(s)
-			}
-		}
-		visit(pg.body)
+		heads = append(heads, pg.headings(pg.body)...)
 	}
 	return heads, chapters
 }
 
 // contentBlocks は節の直下の要素を本文の塊に組み立てる。
 func contentBlocks(nodes []*html.Node, pagePath string, r domain.Ref) []domain.Block {
-	var blocks []domain.Block
-	addProse := func(lines []string) {
-		if len(lines) == 0 {
-			return
-		}
-		n := len(blocks)
-		if n > 0 && blocks[n-1].Kind == domain.BlockProse {
-			blocks[n-1].Lines = append(blocks[n-1].Lines, lines...)
-			return
-		}
-		blocks = append(blocks, domain.Block{Kind: domain.BlockProse, Ref: r, Lines: lines})
-	}
-	addFigure := func(n *html.Node) {
-		img := n
-		if n.Data == "figure" {
-			img = findNode(n, func(c *html.Node) bool { return c.Type == html.ElementNode && c.Data == "img" })
-		}
-		if img == nil {
-			return
-		}
-		rel := path.Join(path.Dir(pagePath), attr(img, "src"))
-		blocks = append(blocks, domain.Block{Kind: domain.BlockFigure, Ref: r, FigureSource: rel})
-		// figcaption があれば地の文として続ける
-		if captionNode := findNode(n, func(c *html.Node) bool { return c.Type == html.ElementNode && c.Data == "figcaption" }); captionNode != nil {
-			addProse([]string{domain.Collapse(nodeText(captionNode)), ""})
-		}
-	}
-	// nestedFigures は箇条書きなどの中に埋まった図を拾う。地の文の塊には図を
-	// 置けないので、その塊の直後に並べる (節の中での位置は少しずれる)。
-	nestedFigures := func(n *html.Node) {
-		walk(n, func(c *html.Node) bool {
-			if c.Type == html.ElementNode && (c.Data == "figure" || c.Data == "img") {
-				addFigure(c)
-				return false
-			}
-			return true
-		})
-	}
-	var add func(n *html.Node)
-	add = func(n *html.Node) {
-		if n.Type != html.ElementNode {
-			return
-		}
-		class := attr(n, "class")
-		switch {
-		case n.Data == "table":
-			blocks = append(blocks, domain.Block{Kind: domain.BlockTable, Ref: r, Rows: tableRows(n)})
-		case n.Data == "figure" || n.Data == "img":
-			addFigure(n)
-		case n.Data == "pre":
-			blocks = append(blocks, domain.Block{Kind: domain.BlockLayout, Ref: r, Lines: rawLines(n)})
-		case n.Data == "div" && strings.Contains(class, "line-block"):
-			// line-block は「| 行」の書式で、この資料では地の文の段落にも
-			// コンソール出力や設定例にも使われている。行の中身で見分ける
-			// (PDF 前段の classifyLine と同じ判定)。全行が地の文なら段落、
-			// 1 行でも版面なら塊ごと囲う。
-			lines := rawLines(n)
-			prose := len(lines) > 0
-			for _, ln := range lines {
-				if classifyLine(ln) == lineLayout {
-					prose = false
-					break
-				}
-			}
-			if prose {
-				var pl []string
-				for _, ln := range lines {
-					pl = append(pl, ln, "")
-				}
-				addProse(pl)
-				return
-			}
-			blocks = append(blocks, domain.Block{Kind: domain.BlockLayout, Ref: r, Lines: lines})
-		case n.Data == "div" && strings.Contains(class, "toctree-wrapper"):
-			// 目次は本文ではない
-		case n.Data == "div" || n.Data == "blockquote" || n.Data == "aside" && strings.Contains(class, "footnote-list"):
-			// 入れ物は中身を順に見る (admonition は下で 1 塊として扱う)
-			if strings.Contains(class, "admonition") {
-				addProse(proseLines(n))
-				nestedFigures(n)
-				return
-			}
-			for c := n.FirstChild; c != nil; c = c.NextSibling {
-				add(c)
-			}
-		default:
-			addProse(proseLines(n))
-			nestedFigures(n)
-		}
-	}
+	b := webBlocks{pagePath: pagePath, r: r}
 	for _, n := range nodes {
-		add(n)
+		b.add(n)
 	}
-	return blocks
+	return b.blocks
 }
 
 // --- 表 ---
@@ -608,37 +411,7 @@ func tableRows(t *html.Node) [][]string {
 		if n.Type != html.ElementNode || n.Data != "tr" {
 			return true
 		}
-		var row []string
-		col := 0
-		take := func() {
-			for {
-				v, ok := pending[[2]int{ri, col}]
-				if !ok {
-					return
-				}
-				delete(pending, [2]int{ri, col})
-				row = append(row, v)
-				col++
-			}
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			if c.Type != html.ElementNode || (c.Data != "td" && c.Data != "th") {
-				continue
-			}
-			take()
-			text := cellText(c)
-			cs, _ := strconv.Atoi(attr(c, "colspan"))
-			rs, _ := strconv.Atoi(attr(c, "rowspan"))
-			cs, rs = max(cs, 1), max(rs, 1)
-			for range cs {
-				row = append(row, text)
-				for k := 1; k < rs; k++ {
-					pending[[2]int{ri + k, col}] = text
-				}
-				col++
-			}
-		}
-		take()
+		row := htmlTableRow(n, pending, ri)
 		rows = append(rows, row)
 		ri++
 		return false
@@ -653,7 +426,7 @@ func tableRows(t *html.Node) [][]string {
 func cellText(c *html.Node) string {
 	var parts []string
 	for n := c.FirstChild; n != nil; n = n.NextSibling {
-		if n.Type == html.ElementNode && n.Data == "div" && strings.Contains(attr(n, "class"), "line-block") {
+		if n.Type == html.ElementNode && n.Data == htmlDiv && strings.Contains(attr(n, "class"), "line-block") {
 			parts = append(parts, rawLines(n)...)
 			continue
 		}
@@ -682,44 +455,14 @@ func cellText(c *html.Node) string {
 // 崩れている)。そのまま写し、索引の側 (domain.CommandsOf) が 1 行目の字下げを基準にする。
 func rawLines(n *html.Node) []string {
 	var lines []string
-	if n.Type == html.ElementNode && n.Data == "pre" {
+	if n.Type == html.ElementNode && n.Data == htmlPre {
 		for ln := range strings.SplitSeq(strings.Trim(nodeText(n), "\n"), "\n") {
 			lines = append(lines, strings.TrimRight(ln, " \t"))
 		}
 		return lines
 	}
-	found := false
-	var visit func(c *html.Node, depth int)
-	visit = func(c *html.Node, depth int) {
-		if c.Type == html.ElementNode && c.Data == "div" {
-			class := attr(c, "class")
-			switch {
-			case strings.Contains(class, "line-block"):
-				for k := c.FirstChild; k != nil; k = k.NextSibling {
-					visit(k, depth+1)
-				}
-				return
-			case strings.Contains(class, "line"):
-				// 一番外の line-block が深さ 1。その中の入れ子から字下げする。
-				// ただし no で始まる行は入れ子にあっても no 形の頭とみなす
-				// (tunnel keepalive の項目で no 形が続きの深さに書かれている
-				// 原稿の誤り。続きの行が語 no で始まることはない)。
-				text := domain.Collapse(nodeText(c))
-				indent := ""
-				if depth > 1 && !strings.HasPrefix(text, "no ") {
-					indent = strings.Repeat("  ", depth-1)
-				}
-				lines = append(lines, indent+text)
-				found = true
-				return
-			}
-		}
-		for k := c.FirstChild; k != nil; k = k.NextSibling {
-			visit(k, depth)
-		}
-	}
-	visit(n, 0)
-	if !found {
+	rawLineBlock(n, 0, &lines)
+	if len(lines) == 0 {
 		for _, ln := range proseLines(n) {
 			if ln != "" {
 				lines = append(lines, ln)
@@ -736,85 +479,9 @@ func rawLines(n *html.Node) []string {
 // 論理行なので、空行を挟まないと段落どうしが 1 行に繋がれる。
 // 見た目を整えるための空行ではないので、消してはいけない。
 func proseLines(n *html.Node) []string {
-	var lines []string
-	emit := func(s string) {
-		if s = strings.TrimRight(s, " "); strings.TrimSpace(s) != "" {
-			lines = append(lines, s, "")
-		}
-	}
-	var visit func(n *html.Node, indent string)
-	visit = func(n *html.Node, indent string) {
-		if n.Type == html.TextNode {
-			emit(indent + domain.Collapse(n.Data))
-			return
-		}
-		if n.Type != html.ElementNode {
-			return
-		}
-		class := attr(n, "class")
-		switch n.Data {
-		case "p", "dt", "figcaption":
-			emit(indent + domain.Collapse(nodeText(n)))
-		case "aside":
-			// 脚注 <aside class="footnote"> は "[1] 本文" の 1 行。footnote-list は入れ物。
-			if strings.Contains(class, "footnote") && !strings.Contains(class, "footnote-list") {
-				emit(indent + domain.Collapse(nodeText(n)))
-				return
-			}
-			for c := n.FirstChild; c != nil; c = c.NextSibling {
-				visit(c, indent)
-			}
-		case "li":
-			// 箇条書きの本文 (最初の段落) と、入れ子のリスト
-			var own []string
-			for c := n.FirstChild; c != nil; c = c.NextSibling {
-				if c.Type == html.ElementNode && (c.Data == "ul" || c.Data == "ol") {
-					continue
-				}
-				if t := domain.Collapse(nodeText(c)); t != "" {
-					own = append(own, t)
-				}
-			}
-			emit(indent + "- " + strings.Join(own, " "))
-			for c := n.FirstChild; c != nil; c = c.NextSibling {
-				if c.Type == html.ElementNode && (c.Data == "ul" || c.Data == "ol") {
-					visit(c, indent+"  ")
-				}
-			}
-		case "ul", "ol", "dd", "dl", "blockquote", "div", "section", "span", "nav":
-			// Sphinx のページ内目次は nav の中に ul/li を持つ。入れ物ごと
-			// nodeText で畳まず、箇条書きの境界を保って読む。
-			if strings.Contains(class, "admonition-title") {
-				emit(indent + domain.Collapse(nodeText(n)) + ":")
-				return
-			}
-			if strings.Contains(class, "toctree-wrapper") {
-				return
-			}
-			for c := n.FirstChild; c != nil; c = c.NextSibling {
-				visit(c, indent)
-			}
-		case "table":
-			// 地の文の中の表は 1 行 1 段の縦線区切り。セル内の改行は " / " に畳む。
-			for _, row := range tableRows(n) {
-				cells := make([]string, len(row))
-				for i, c := range row {
-					cells[i] = strings.ReplaceAll(c, "\n", " / ")
-				}
-				emit(indent + "| " + strings.Join(cells, " | ") + " |")
-			}
-		case "pre":
-			for _, ln := range rawLines(n) {
-				emit(indent + ln)
-			}
-		case "img", "figure":
-			// 地の文の中の図は落とす (節の直下にある図は contentBlocks が拾う)
-		default:
-			emit(indent + domain.Collapse(nodeText(n)))
-		}
-	}
-	visit(n, "")
-	return lines
+	var p webProse
+	p.visit(n, "")
+	return p.lines
 }
 
 // --- SVG のラベル ---
@@ -843,107 +510,8 @@ func svgLabels(file string) []string {
 		return nil
 	}
 	defer func() { _ = f.Close() }()
-	dec := xml.NewDecoder(f)
-	dec.Strict = false
-	var items []svgText
-	var stack []svgText // 入れ子の <text> / <tspan> に備える
-	var cur *svgText
-	var buf strings.Builder
-	for {
-		tok, err := dec.Token()
-		if err != nil {
-			break
-		}
-		switch t := tok.(type) {
-		case xml.StartElement:
-			if t.Name.Local != "text" {
-				continue
-			}
-			st := svgText{size: 12}
-			for _, a := range t.Attr {
-				switch a.Name.Local {
-				case "x":
-					st.x, _ = strconv.ParseFloat(strings.Fields(a.Value + " 0")[0], 64)
-				case "y":
-					st.y, _ = strconv.ParseFloat(strings.Fields(a.Value + " 0")[0], 64)
-				case "font-size":
-					if v, err := strconv.ParseFloat(strings.TrimSuffix(a.Value, "px"), 64); err == nil {
-						st.size = v
-					}
-				case "transform":
-					if m := svgMatrixRe.FindStringSubmatch(a.Value); m != nil {
-						st.x, _ = strconv.ParseFloat(m[5], 64)
-						st.y, _ = strconv.ParseFloat(m[6], 64)
-					}
-				}
-			}
-			stack = append(stack, st)
-			cur = &stack[len(stack)-1]
-			buf.Reset()
-		case xml.CharData:
-			if cur != nil {
-				buf.Write(t)
-			}
-		case xml.EndElement:
-			if t.Name.Local != "text" || cur == nil {
-				continue
-			}
-			if s := domain.Collapse(buf.String()); s != "" {
-				it := *cur
-				it.s = s
-				items = append(items, it)
-			}
-			stack = stack[:len(stack)-1]
-			if len(stack) > 0 {
-				cur = &stack[len(stack)-1]
-			} else {
-				cur = nil
-			}
-			buf.Reset()
-		}
-	}
-	if len(items) == 0 {
-		return nil
-	}
-	// 読み順: 上から下、左から右。同じ行かどうかは字の大きさの半分で見る。
-	sort.SliceStable(items, func(i, j int) bool {
-		if d := items[i].y - items[j].y; d < -items[i].size/2 || d > items[i].size/2 {
-			return items[i].y < items[j].y
-		}
-		return items[i].x < items[j].x
-	})
-	width := func(it svgText) float64 {
-		w := 0.0
-		for _, r := range it.s {
-			if r < 0x80 {
-				w += it.size * 0.55
-			} else {
-				w += it.size
-			}
-		}
-		return w
-	}
-	var lines []string
-	var ln strings.Builder
-	prev := items[0]
-	ln.WriteString(prev.s)
-	for _, it := range items[1:] {
-		sameLine := it.y-prev.y > -prev.size/2 && it.y-prev.y < prev.size/2
-		gap := it.x - (prev.x + width(prev))
-		switch {
-		case sameLine && gap < prev.size*0.5:
-			ln.WriteString(it.s) // 字送りで割れた同じ語
-		case sameLine:
-			ln.WriteString("  " + it.s)
-		default:
-			lines = append(lines, ln.String())
-			ln.Reset()
-			ln.WriteString(it.s)
-		}
-		prev = it
-	}
-	lines = append(lines, ln.String())
-	return lines
+	items := readSVGTexts(f)
+	return svgTextLines(items)
 }
 
 // --- DOM の補助 ---
@@ -1026,4 +594,549 @@ func nodeText(n *html.Node) string {
 	}
 	visit(n)
 	return b.String()
+}
+
+func numberWebPages(pages []WebPage) {
+	chapter := 0
+	for _, pg := range pages {
+		if len(pg.number) > 0 {
+			chapter = max(chapter, pg.number[0])
+		}
+	}
+	for i := range pages {
+		if pages[i].unnumbered {
+			chapter++
+			pages[i].number = []int{chapter}
+		}
+	}
+}
+
+func webChapterTitle(doc *html.Node, num []int, title string) string {
+	// 章名はパンくずから。「21. リモートアクセス編」のように番号が 1 段のものが章。
+	// 章そのもののページ (機能説明書の「8. IXシリーズとの差分」) はパンくずに
+	// 章の項が無いので、h1 の題がそのまま章名になる。
+	walk(doc, func(n *html.Node) bool {
+		if n.Type == html.ElementNode && n.Data == "li" && strings.Contains(attr(n, "class"), "breadcrumb-item") {
+			if bn, bt := headingParts(n); len(bn) == 1 && bn[0] == num[0] {
+				title = bt
+			}
+		}
+		return true
+	})
+	return title
+}
+
+func definitionFields(dl *html.Node, labels map[string]bool) []domain.Field {
+	var fields []domain.Field
+	for d := dl.FirstChild; d != nil; d = d.NextSibling {
+		if d.Type != html.ElementNode || d.Data != "dt" {
+			continue
+		}
+		label := dtLabel(d)
+		if !labels[domain.NormalizeLabel(label)] {
+			continue
+		}
+		dd := d.NextSibling
+		for dd != nil && (dd.Type != html.ElementNode || dd.Data != "dd") {
+			dd = dd.NextSibling
+		}
+		if dd != nil {
+			fields = append(fields, domain.Field{Label: domain.NormalizeLabel(label), Lines: webFieldLines(domain.NormalizeLabel(label), dd)})
+		} else {
+			fields = append(fields, domain.Field{Label: domain.NormalizeLabel(label)})
+		}
+	}
+	return fields
+}
+
+func webFieldLines(label string, n *html.Node) []string {
+	if domain.SyntaxLabels()[label] {
+		return rawLines(n)
+	}
+	return proseLines(n)
+}
+
+func (pg WebPage) headings(sec *html.Node) []domain.Heading {
+	var heads []domain.Heading
+
+	h := directHeading(sec)
+	if h == nil {
+		// 番号なし冊子の articleBody は複数のトップレベル節を包む。
+		for c := sec.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == html.ElementNode && c.Data == htmlSection {
+				heads = append(heads, pg.headings(c)...)
+			}
+		}
+		return heads
+	}
+	num, title := headingParts(h)
+	if len(num) == 0 && !pg.unnumbered {
+		return heads
+	}
+	r := domain.Ref{Path: pg.path, Anchor: anchorOf(sec)}
+	hd := domain.Heading{
+		Number:  numberString(num),
+		Title:   title,
+		Depth:   len(num),
+		Chapter: pg.number[0],
+		Section: pg.title,
+		Ref:     r,
+	}
+	if pg.unnumbered {
+		hd.Depth = int(h.Data[1] - '0')
+	}
+	content, subs := webSectionContent(sec, h)
+	hd.Blocks = contentBlocks(content, pg.path, r)
+	heads = append(heads, hd)
+	for _, s := range subs {
+		heads = append(heads, pg.headings(s)...)
+	}
+
+	return heads
+}
+
+type webBlocks struct {
+	blocks   []domain.Block
+	pagePath string
+	r        domain.Ref
+}
+
+func (b *webBlocks) addProse(lines []string) {
+	if len(lines) == 0 {
+		return
+	}
+	n := len(b.blocks)
+	if n > 0 && b.blocks[n-1].Kind == domain.BlockProse {
+		b.blocks[n-1].Lines = append(b.blocks[n-1].Lines, lines...)
+		return
+	}
+	b.blocks = append(b.blocks, domain.Block{Kind: domain.BlockProse, Ref: b.r, Lines: lines})
+}
+
+func (b *webBlocks) addFigure(n *html.Node) {
+	img := n
+	if n.Data == htmlFigure {
+		img = findNode(n, func(c *html.Node) bool { return c.Type == html.ElementNode && c.Data == htmlImg })
+	}
+	if img == nil {
+		return
+	}
+	rel := path.Join(path.Dir(b.pagePath), attr(img, "src"))
+	b.blocks = append(b.blocks, domain.Block{Kind: domain.BlockFigure, Ref: b.r, FigureSource: rel})
+	// figcaption があれば地の文として続ける
+	if captionNode := findNode(n, func(c *html.Node) bool { return c.Type == html.ElementNode && c.Data == "figcaption" }); captionNode != nil {
+		b.addProse([]string{domain.Collapse(nodeText(captionNode)), ""})
+	}
+}
+
+func (b *webBlocks) nestedFigures(n *html.Node) {
+	walk(n, func(c *html.Node) bool {
+		if c.Type == html.ElementNode && (c.Data == htmlFigure || c.Data == htmlImg) {
+			b.addFigure(c)
+			return false
+		}
+		return true
+	})
+}
+
+func (b *webBlocks) add(n *html.Node) {
+	if n.Type != html.ElementNode {
+		return
+	}
+	switch n.Data {
+	case "table":
+		b.blocks = append(b.blocks, domain.Block{Kind: domain.BlockTable, Ref: b.r, Rows: tableRows(n)})
+	case htmlFigure, htmlImg:
+		b.addFigure(n)
+	case htmlPre:
+		b.blocks = append(b.blocks, domain.Block{Kind: domain.BlockLayout, Ref: b.r, Lines: rawLines(n)})
+	case htmlDiv:
+		b.addDiv(n)
+	case "blockquote":
+		b.addContainer(n)
+	case "aside":
+		if strings.Contains(attr(n, "class"), "footnote-list") {
+			b.addContainer(n)
+		} else {
+			b.addText(n)
+		}
+	default:
+		b.addText(n)
+	}
+}
+
+func (b *webBlocks) addText(n *html.Node) {
+	b.addProse(proseLines(n))
+	b.nestedFigures(n)
+}
+
+func (b *webBlocks) addDiv(n *html.Node) {
+	class := attr(n, "class")
+	switch {
+	case strings.Contains(class, "line-block"):
+		b.addLineBlock(n)
+	case strings.Contains(class, "toctree-wrapper"): // 目次は本文ではない。
+	default:
+		b.addContainer(n)
+	}
+}
+
+func (b *webBlocks) addContainer(n *html.Node) {
+	if strings.Contains(attr(n, "class"), "admonition") {
+		b.addText(n)
+		return
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		b.add(c)
+	}
+}
+
+func (b *webBlocks) addLineBlock(n *html.Node) {
+	lines := rawLines(n)
+	prose := len(lines) > 0
+	for _, ln := range lines {
+		if classifyLine(ln) == lineLayout {
+			prose = false
+			break
+		}
+	}
+	if prose {
+		pl := make([]string, 0, 2*len(lines))
+		for _, ln := range lines {
+			pl = append(pl, ln, "")
+		}
+		b.addProse(pl)
+		return
+	}
+	b.blocks = append(b.blocks, domain.Block{Kind: domain.BlockLayout, Ref: b.r, Lines: lines})
+}
+
+func htmlTableRow(n *html.Node, pending map[[2]int]string, ri int) []string {
+	var row []string
+	col := 0
+	take := func() {
+		for {
+			v, ok := pending[[2]int{ri, col}]
+			if !ok {
+				return
+			}
+			delete(pending, [2]int{ri, col})
+			row = append(row, v)
+			col++
+		}
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type != html.ElementNode || (c.Data != "td" && c.Data != "th") {
+			continue
+		}
+		take()
+		text := cellText(c)
+		cs, _ := strconv.Atoi(attr(c, "colspan"))
+		rs, _ := strconv.Atoi(attr(c, "rowspan"))
+		cs, rs = max(cs, 1), max(rs, 1)
+		for range cs {
+			row = append(row, text)
+			for k := 1; k < rs; k++ {
+				pending[[2]int{ri + k, col}] = text
+			}
+			col++
+		}
+	}
+	take()
+	return row
+}
+
+func rawLineBlock(c *html.Node, depth int, lines *[]string) {
+	if c.Type == html.ElementNode && c.Data == htmlDiv {
+		class := attr(c, "class")
+		switch {
+		case strings.Contains(class, "line-block"):
+			for k := c.FirstChild; k != nil; k = k.NextSibling {
+				rawLineBlock(k, depth+1, lines)
+			}
+			return
+		case strings.Contains(class, "line"):
+			// 一番外の line-block が深さ 1。その中の入れ子から字下げする。
+			// ただし no で始まる行は入れ子にあっても no 形の頭とみなす
+			// (tunnel keepalive の項目で no 形が続きの深さに書かれている
+			// 原稿の誤り。続きの行が語 no で始まることはない)。
+			text := domain.Collapse(nodeText(c))
+			indent := ""
+			if depth > 1 && !strings.HasPrefix(text, "no ") {
+				indent = strings.Repeat("  ", depth-1)
+			}
+			*lines = append(*lines, indent+text)
+			return
+		}
+	}
+	for k := c.FirstChild; k != nil; k = k.NextSibling {
+		rawLineBlock(k, depth, lines)
+	}
+}
+
+type webProse struct{ lines []string }
+
+func (p *webProse) emit(s string) {
+	if s = strings.TrimRight(s, " "); strings.TrimSpace(s) != "" {
+		p.lines = append(p.lines, s, "")
+	}
+}
+
+func (p *webProse) visit(n *html.Node, indent string) {
+	if n.Type == html.TextNode {
+		p.emit(indent + domain.Collapse(n.Data))
+		return
+	}
+	if n.Type != html.ElementNode {
+		return
+	}
+	p.element(n, indent)
+}
+
+func (p *webProse) listItem(n *html.Node, indent string) {
+	// 箇条書きの本文 (最初の段落) と、入れ子のリスト
+	var own []string
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode && (c.Data == "ul" || c.Data == "ol") {
+			continue
+		}
+		if t := domain.Collapse(nodeText(c)); t != "" {
+			own = append(own, t)
+		}
+	}
+	p.emit(indent + "- " + strings.Join(own, " "))
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode && (c.Data == "ul" || c.Data == "ol") {
+			p.visit(c, indent+"  ")
+		}
+	}
+}
+
+func (p *webProse) table(n *html.Node, indent string) {
+	// 地の文の中の表は 1 行 1 段の縦線区切り。セル内の改行は " / " に畳む。
+	for _, row := range tableRows(n) {
+		cells := make([]string, len(row))
+		for i, c := range row {
+			cells[i] = strings.ReplaceAll(c, "\n", " / ")
+		}
+		p.emit(indent + "| " + strings.Join(cells, " | ") + " |")
+	}
+}
+
+func svgTextStyle(attrs []xml.Attr) svgText {
+	st := svgText{size: 12}
+	for _, a := range attrs {
+		switch a.Name.Local {
+		case "x":
+			st.x, _ = strconv.ParseFloat(strings.Fields(a.Value + " 0")[0], 64)
+		case "y":
+			st.y, _ = strconv.ParseFloat(strings.Fields(a.Value + " 0")[0], 64)
+		case "font-size":
+			if v, err := strconv.ParseFloat(strings.TrimSuffix(a.Value, "px"), 64); err == nil {
+				st.size = v
+			}
+		case "transform":
+			if m := svgMatrixRe.FindStringSubmatch(a.Value); m != nil {
+				st.x, _ = strconv.ParseFloat(m[5], 64)
+				st.y, _ = strconv.ParseFloat(m[6], 64)
+			}
+		}
+	}
+	return st
+}
+
+func svgTextLines(items []svgText) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	// 読み順: 上から下、左から右。同じ行かどうかは字の大きさの半分で見る。
+	sort.SliceStable(items, func(i, j int) bool {
+		if d := items[i].y - items[j].y; d < -items[i].size/2 || d > items[i].size/2 {
+			return items[i].y < items[j].y
+		}
+		return items[i].x < items[j].x
+	})
+
+	var lines []string
+	var ln strings.Builder
+	prev := items[0]
+	ln.WriteString(prev.s)
+	for _, it := range items[1:] {
+		sameLine := it.y-prev.y > -prev.size/2 && it.y-prev.y < prev.size/2
+		gap := it.x - (prev.x + svgTextWidth(prev))
+		switch {
+		case sameLine && gap < prev.size*0.5:
+			ln.WriteString(it.s) // 字送りで割れた同じ語
+		case sameLine:
+			ln.WriteString("  " + it.s)
+		default:
+			lines = append(lines, ln.String())
+			ln.Reset()
+			ln.WriteString(it.s)
+		}
+		prev = it
+	}
+	lines = append(lines, ln.String())
+	return lines
+}
+
+func webArticleHeading(doc *html.Node) (body, sec, h1 *html.Node) {
+	body = findNode(doc, func(n *html.Node) bool { return attr(n, "itemprop") == "articleBody" })
+	if body == nil {
+		return nil, nil, nil
+	}
+	sec = findNode(body, func(n *html.Node) bool { return n.Type == html.ElementNode && n.Data == htmlSection })
+	if sec == nil {
+		return nil, nil, nil
+	}
+	h1 = findNode(sec, func(n *html.Node) bool { return n.Type == html.ElementNode && n.Data == "h1" })
+	if h1 == nil {
+		return nil, nil, nil
+	}
+	return body, sec, h1
+}
+
+func directHeading(sec *html.Node) *html.Node {
+	var h *html.Node
+	for c := sec.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode && isHeadingTag(c.Data) {
+			h = c
+			break
+		}
+	}
+	return h
+}
+
+func webSectionContent(sec, h *html.Node) (content, subs []*html.Node) {
+	for c := sec.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type != html.ElementNode {
+			continue
+		}
+		switch {
+		case c.Data == htmlSection:
+			subs = append(subs, c)
+		case isHeadingTag(c.Data) && c == h:
+		default:
+			content = append(content, c)
+		}
+	}
+	return content, subs
+}
+
+func (p *webProse) aside(n *html.Node, indent string) {
+	class := attr(n, "class")
+	// 脚注 <aside class="footnote"> は "[1] 本文" の 1 行。footnote-list は入れ物。
+	if strings.Contains(class, "footnote") && !strings.Contains(class, "footnote-list") {
+		p.emit(indent + domain.Collapse(nodeText(n)))
+		return
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		p.visit(c, indent)
+	}
+}
+
+func (p *webProse) container(n *html.Node, indent string) {
+	class := attr(n, "class")
+	// Sphinx のページ内目次は nav の中に ul/li を持つ。入れ物ごと
+	// nodeText で畳まず、箇条書きの境界を保って読む。
+	if strings.Contains(class, "admonition-title") {
+		p.emit(indent + domain.Collapse(nodeText(n)) + ":")
+		return
+	}
+	if strings.Contains(class, "toctree-wrapper") {
+		return
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		p.visit(c, indent)
+	}
+}
+
+func (p *webProse) element(n *html.Node, indent string) {
+	switch n.Data {
+	case "p", "dt", "figcaption":
+		p.emit(indent + domain.Collapse(nodeText(n)))
+	case "aside":
+		p.aside(n, indent)
+	case "li":
+		p.listItem(n, indent)
+	case "ul", "ol", "dd", "dl", "blockquote", htmlDiv, htmlSection, htmlSpan, "nav":
+		p.container(n, indent)
+	case "table":
+		p.table(n, indent)
+	case htmlPre:
+		for _, ln := range rawLines(n) {
+			p.emit(indent + ln)
+		}
+	case htmlImg, htmlFigure:
+		// 地の文の中の図は落とす (節の直下にある図は contentBlocks が拾う)
+	default:
+		p.emit(indent + domain.Collapse(nodeText(n)))
+	}
+}
+
+func svgTextWidth(it svgText) float64 {
+	w := 0.0
+	for _, r := range it.s {
+		if r < 0x80 {
+			w += it.size * 0.55
+		} else {
+			w += it.size
+		}
+	}
+	return w
+}
+
+func readSVGTexts(r io.Reader) []svgText {
+	dec := xml.NewDecoder(r)
+	dec.Strict = false
+	var items []svgText
+	var stack []svgText // 入れ子の <text> / <tspan> に備える
+	var cur *svgText
+	var buf strings.Builder
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local != "text" {
+				continue
+			}
+			st := svgTextStyle(t.Attr)
+			stack = append(stack, st)
+			cur = &stack[len(stack)-1]
+			buf.Reset()
+		case xml.CharData:
+			if cur != nil {
+				buf.Write(t)
+			}
+		case xml.EndElement:
+			if t.Name.Local != "text" || cur == nil {
+				continue
+			}
+			items = appendSVGText(items, cur, buf.String())
+			stack = stack[:len(stack)-1]
+			cur = currentSVGText(stack)
+			buf.Reset()
+		}
+	}
+	return items
+}
+
+func currentSVGText(stack []svgText) *svgText {
+	if len(stack) > 0 {
+		return &stack[len(stack)-1]
+	} else {
+		return nil
+	}
+}
+
+func appendSVGText(items []svgText, cur *svgText, text string) []svgText {
+	if s := domain.Collapse(text); s != "" {
+		it := *cur
+		it.s = s
+		items = append(items, it)
+	}
+	return items
 }

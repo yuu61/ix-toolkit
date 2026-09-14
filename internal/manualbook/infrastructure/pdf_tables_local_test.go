@@ -1,26 +1,26 @@
 package infrastructure
 
 import (
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
+)
+
+const warnLevel = "warn"
+
+const (
+	debugLevel = "debug"
 )
 
 // 原本は手元だけに置く。画像の罫線とテキスト層を組み合わせる経路の回帰検証。
 func TestLocalPDFTables(t *testing.T) {
-	root := os.Getenv("IX_MANUALBOOK_PDF_ROOT")
-	if root == "" {
-		t.Skip("set IX_MANUALBOOK_PDF_ROOT to check local PDFs")
-	}
-	pdf := filepath.Join(root, "pdf/FD-ver10.11-1.1.pdf")
-	d, err := openDoc(pdf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer CloseDoc(pdf)
-	p, err := LoadProfile(filepath.Join(root, "profiles/nec-ix-fd.json"))
+	root := localPDFRoot(t)
+	pdf := filepath.Join(root, "pdf", "FD-ver10.11-1.1.pdf")
+	d := localPDFDoc(t, pdf)
+	p, err := LoadProfile(filepath.Join(root, "profiles", "nec-ix-fd.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,50 +35,20 @@ func TestLocalPDFTables(t *testing.T) {
 			t.Fatalf("p%d tables = %d, want %d", tc.page, len(tables), tc.tables)
 		}
 		if tc.page == 27 {
-			rows := tables[0].rows
-			if len(rows) != 15 || len(rows[0]) != 10 {
-				t.Fatalf("p27 dimensions = %dx%d", len(rows), len(rows[0]))
-			}
-			if !strings.Contains(rows[0][2], "IX2107") || rows[1][7] != "1000 ※1" || rows[2][7] != "8" || rows[1][0] != rows[2][0] {
-				t.Fatalf("p27 model columns, footnotes or merged cells changed: %#v", rows[:3])
-			}
+			checkLocalModelTable(t, tables[0].rows)
 		}
 		if len(tables) == 0 {
 			continue
 		}
-		lines, blocks := sectionTableLines(pg, tables, bodyCrop(p), tc.page)
-		combined := strings.Join(lines, "\n")
-		var combinedSb51 strings.Builder
-		for _, b := range blocks {
-			var combinedSb52 strings.Builder
-			for _, row := range b.Rows {
-				combinedSb52.WriteString(strings.Join(row, ""))
-			}
-			combinedSb51.WriteString(combinedSb52.String())
-		}
-		combined += combinedSb51.String()
-		counts := glyphCounts(combined)
-		for r, n := range glyphCounts(renderPage(pg, bodyCrop(p), true)) {
-			// 結合セルの展開で文字が増えることはあるが、表外の本文を含めて減らしてはいけない。
-			if counts[r] < n {
-				t.Errorf("p%d: glyph %q count = %d, want at least %d", tc.page, r, counts[r], n)
-			}
-		}
+		checkTableGlyphs(t, pg, tables, p, tc.page)
 	}
 }
 
 func TestLocalPDFTableContinuation(t *testing.T) {
-	root := os.Getenv("IX_MANUALBOOK_PDF_ROOT")
-	if root == "" {
-		t.Skip("local PDF")
-	}
-	pdf := filepath.Join(root, "pdf/FD-ver10.11-1.1.pdf")
-	d, err := openDoc(pdf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer CloseDoc(pdf)
-	p, err := LoadProfile(filepath.Join(root, "profiles/nec-ix-fd.json"))
+	root := localPDFRoot(t)
+	pdf := filepath.Join(root, "pdf", "FD-ver10.11-1.1.pdf")
+	d := localPDFDoc(t, pdf)
+	p, err := LoadProfile(filepath.Join(root, "profiles", "nec-ix-fd.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,27 +70,65 @@ func TestLocalPDFTableContinuation(t *testing.T) {
 				previous.headerPage = n
 				continue
 			}
-			current := tables[0]
-			original := current.rows
-			continuePDFTable(previous, &current, d.pages[n-2], d.pages[n-1], bodyCrop(p), n)
-			if tc.headerRows == 0 {
-				if current.headerPage != n || !reflect.DeepEqual(current.rows, original) || !strings.Contains(current.rows[0][0], "暗号／認証") {
-					t.Fatalf("p%d own heading changed: %#v", n, current)
-				}
-				continue
-			}
-			if current.headerPage != tc.previous {
-				t.Errorf("header not inherited: prev columns %v, bounds %v/%v; current columns %v, bounds %v/%v", previous.columns, previous.top, previous.bottom, current.columns, current.top, current.bottom)
-			}
-			if current.headerRows != tc.headerRows || !reflect.DeepEqual(current.rows[:tc.headerRows], previous.rows[:tc.headerRows]) || !reflect.DeepEqual(current.rows[tc.headerRows:], original) {
-				t.Fatalf("p%d header levels or data changed: %#v", n, current)
-			}
-			if n == 481 && !reflect.DeepEqual(current.rows[1][2:], []string{"error", "warn", "notice", "info", "debug"}) {
-				t.Fatalf("p481 lost log levels: %#v", current.rows[:2])
-			}
-			if n == 1142 && current.rows[0][0] != "オブジェクト名" {
-				t.Fatalf("p1142 unexpected header: %q", current.rows[0][0])
-			}
+			checkLocalTableContinuation(t, d, p, previous, tables[0], n, tc.previous, tc.headerRows)
 		}
+	}
+}
+
+func checkLocalModelTable(t *testing.T, rows [][]string) {
+	if len(rows) != 15 || len(rows[0]) != 10 {
+		t.Fatalf("p27 dimensions = %dx%d", len(rows), len(rows[0]))
+	}
+	if !strings.Contains(rows[0][2], "IX2107") || rows[1][7] != "1000 ※1" || rows[2][7] != "8" || rows[1][0] != rows[2][0] {
+		t.Fatalf("p27 model columns, footnotes or merged cells changed: %#v", rows[:3])
+	}
+}
+
+func checkTableGlyphs(t *testing.T, pg pdfPage, tables []pdfTable, p *domain.Profile, page int) {
+	lines, blocks := sectionTableLines(pg, tables, bodyCrop(p), page)
+	combined := strings.Join(lines, "\n")
+	var combinedSb51 strings.Builder
+	for k := range blocks {
+		b := blocks[k]
+		var combinedSb52 strings.Builder
+		for _, row := range b.Rows {
+			combinedSb52.WriteString(strings.Join(row, ""))
+		}
+		combinedSb51.WriteString(combinedSb52.String())
+	}
+	combined += combinedSb51.String()
+	counts := glyphCounts(combined)
+	for r, n := range glyphCounts(renderPage(pg, bodyCrop(p), true)) {
+		// 結合セルの展開で文字が増えることはあるが、表外の本文を含めて減らしてはいけない。
+		if counts[r] < n {
+			t.Errorf("p%d: glyph %q count = %d, want at least %d", page, r, counts[r], n)
+		}
+	}
+}
+
+func checkLocalTableContinuation(t *testing.T, d *pdfDoc, p *domain.Profile, previous, current pdfTable, n, previousPage, headerRows int) {
+	original := current.rows
+	continuePDFTable(previous, &current, d.pages[n-2], d.pages[n-1], bodyCrop(p), n)
+	if headerRows == 0 {
+		if current.headerPage != n || !reflect.DeepEqual(current.rows, original) || !strings.Contains(current.rows[0][0], "暗号／認証") {
+			t.Fatalf("p%d own heading changed: %#v", n, current)
+		}
+		return
+	}
+	if current.headerPage != previousPage {
+		t.Errorf("header not inherited: prev columns %v, bounds %v/%v; current columns %v, bounds %v/%v", previous.columns, previous.top, previous.bottom, current.columns, current.top, current.bottom)
+	}
+	if current.headerRows != headerRows || !reflect.DeepEqual(current.rows[:headerRows], previous.rows[:headerRows]) || !reflect.DeepEqual(current.rows[headerRows:], original) {
+		t.Fatalf("p%d header levels or data changed: %#v", n, current)
+	}
+	checkLocalTableHeaders(t, current, n)
+}
+
+func checkLocalTableHeaders(t *testing.T, current pdfTable, n int) {
+	if n == 481 && !reflect.DeepEqual(current.rows[1][2:], []string{"error", warnLevel, "notice", "info", debugLevel}) {
+		t.Fatalf("p481 lost log levels: %#v", current.rows[:2])
+	}
+	if n == 1142 && current.rows[0][0] != "オブジェクト名" {
+		t.Fatalf("p1142 unexpected header: %q", current.rows[0][0])
 	}
 }

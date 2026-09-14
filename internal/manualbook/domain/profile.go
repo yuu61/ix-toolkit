@@ -48,7 +48,7 @@ func DefaultProfile() *Profile {
 		FooterBand:   690,
 		EntryMarker:  "■",
 		FieldLabels: []string{
-			"入力形式", "パラメータ", "説明", "デフォルト値",
+			SyntaxLabel, "パラメータ", "説明", "デフォルト値",
 			"実行モード", "ユーザ権限", "入力例", "ノート",
 		},
 	}

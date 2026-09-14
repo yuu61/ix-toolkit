@@ -53,96 +53,28 @@ func Build(manifestPath, cacheDir, manualsDir string, force bool, only string) e
 	// マニフェストの中の相対パス (profile、手で導いた差分) はマニフェストの場所から解く。
 	// リポジトリ直下で流すのと、外から -manifest で指すのとで同じ意味になる。
 	manifestDir := filepath.Dir(manifestPath)
-	resolve := func(p string) string {
-		if p == "" || filepath.IsAbs(p) {
-			return p
-		}
-		return filepath.Join(manifestDir, p)
-	}
 
-	// 手元で済む資料 (PDF と、取得済みの Web) と、取得を裏で先に始める資料 (これから
-	// 取る Web) に分ける。[i/n] はマニフェストの順ではなくこの順で振る。
-	// 置き場を決められない資料は取りに行っても無駄なので、裏には回さず
-	// 表で CheckDoc の理由を出して終わる。
-	var local, web []domain.Doc
-	for i := range m.Docs {
-		d := &m.Docs[i]
-		if only != "" && d.Name != only {
-			continue
-		}
-		if d.Kind == "web" && domain.CheckDoc(*d) == nil && (force || !infrastructure.WebFetched(infrastructure.CachePath(cacheDir, *d), *d)) {
-			web = append(web, *d)
-		} else {
-			local = append(local, *d)
-		}
-	}
+	local, web := partitionBuildDocs(m, cacheDir, only, force)
 	if len(local)+len(web) == 0 {
 		return fmt.Errorf("マニフェストに name %q の資料がありません", only)
 	}
 
 	client := &http.Client{Timeout: 5 * time.Minute}
 
-	// Web の取得。1 つの goroutine で順に取る (同じサイトなので、並べて投げない)。
-	// 進捗は表の出力に混ざるので、行の頭に資料名を付けて見分けられるようにする。
-	fetched := make([]chan error, len(web))
+	fetched := startWebFetch(client, web, cacheDir, force, len(local) > 0)
+
+	n := len(local) + len(web)
+	b := buildProgress{total: n, manualsDir: manualsDir, cacheDir: cacheDir, manifestDir: manifestDir}
+	for k := range local {
+		d := &local[k]
+		b.step(*d, func() error { return fetchIfNeeded(os.Stdout, client, *d, cacheDir, force) })
+	}
 	for k := range web {
-		fetched[k] = make(chan error, 1)
-	}
-	go func() {
-		for k, d := range web {
-			w := &prefixWriter{prefix: d.Name + ": ", dst: os.Stdout}
-			fetched[k] <- infrastructure.FetchDoc(w, client, d, cacheDir, force, time.Second, infrastructure.DefaultUserAgent)
-		}
-	}()
-	if len(local) > 0 && len(web) > 0 {
-		names := make([]string, len(web))
-		for k, d := range web {
-			names[k] = d.Name
-		}
-		fmt.Printf("Web の取得は裏で先に始める: %s\n\n", strings.Join(names, ", "))
+		d := &web[k]
+		b.step(*d, func() error { return <-fetched[k] })
 	}
 
-	n, i, failed := len(local)+len(web), 0, 0
-	step := func(d domain.Doc, fetch func() error) {
-		i++
-		err := domain.CheckDoc(d)
-		if err == nil {
-			outDir := filepath.Join(manualsDir, d.Series, d.Book)
-			fmt.Printf("[%d/%d] %s (%s) → %s\n", i, n, d.Name, d.Kind, outDir)
-			if err = fetch(); err == nil {
-				err = convertDoc(d, cacheDir, outDir, resolve(d.Profile))
-			}
-		} else {
-			fmt.Printf("[%d/%d] %s (%s)\n", i, n, d.Name, d.Kind)
-		}
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "  ✗ %s: %s\n", d.Name, err)
-			failed++
-		}
-		fmt.Println()
-	}
-	for _, d := range local {
-		step(d, func() error { return fetchIfNeeded(os.Stdout, client, d, cacheDir, force) })
-	}
-	for k, d := range web {
-		step(d, func() error { return <-fetched[k] })
-	}
-
-	// 系列間の差分表。無印と IX-R の両方が揃ったときだけ作る。
-	ixDir, ixrDir := filepath.Join(manualsDir, "ix"), filepath.Join(manualsDir, "ix-r")
-	if missing := missingFiles(infrastructure.DiffInputs(ixDir, ixrDir)); len(missing) == 0 {
-		fmt.Println("diff.tsv (無印 → IX-R のコマンド対応表)")
-		derived := filepath.Join(manifestDir, "profiles", "ix-r-derived-diff.tsv")
-		if _, err := os.Stat(derived); err != nil {
-			derived = "" // Diff がカレントと実行ファイルの隣を探し、無ければ警告する
-		}
-		if err := Diff(ixDir, ixrDir, "", derived); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "  ✗ diff.tsv: %s\n", err)
-			failed++
-		}
-	} else {
-		fmt.Printf("diff.tsv は作らない (両系列が揃っていない: %s が無い)\n", missing[0])
-	}
+	failed := b.failed + buildDiff(manualsDir, manifestDir)
 
 	fmt.Printf("\n完了: %d 件中 %d 件 → %s\n", n, n-failed, manualsDir)
 	if created, invPath, err := infrastructure.InitInventory(); err != nil {
@@ -160,7 +92,7 @@ func Build(manifestPath, cacheDir, manualsDir string, force bool, only string) e
 // fetchIfNeeded は取得済みなら取りに行かない FetchDoc。PDF は実体の有無 (fetchOne が
 // 見る)、Web は取り切った印 (.manualbook.json の版) で決める。-force ならどちらも取り直す。
 func fetchIfNeeded(w io.Writer, client *http.Client, d domain.Doc, cacheDir string, force bool) error {
-	if d.Kind == "web" && !force && infrastructure.WebFetched(infrastructure.CachePath(cacheDir, d), d) {
+	if d.Kind == domain.KindWeb && !force && infrastructure.WebFetched(infrastructure.CachePath(cacheDir, d), d) {
 		_, _ = fmt.Fprintf(w, "  = %s (取得済み)\n", d.Name)
 		return nil
 	}
@@ -185,21 +117,12 @@ func convertDoc(d domain.Doc, cacheDir, outDir, profilePath string) error {
 	// ページ画像が要るのは PDF の機能説明書・設定事例集。コマンド辞書として読む資料では
 	// 誰も参照しない (md の側で -figures を断る条件と同じ)。
 	input := infrastructure.CachePath(cacheDir, d)
-	if d.Kind == "pdf" {
+	if d.Kind == domain.KindPDF {
 		defer infrastructure.CloseDoc(input)
 	}
-	if d.Kind == "pdf" && !p.HasCommandEntries() {
-		if infrastructure.FiguresDone(outDir, input, buildFigureDPI) {
-			fmt.Printf("ページ画像: 焼いてある (%s)\n", filepath.Join(outDir, "figures"))
-		} else {
-			n, err := infrastructure.RenderFigures(input, outDir, buildFigureDPI, "")
-			if err != nil {
-				return err
-			}
-			fmt.Printf("ページ画像: %d 枚を焼きました\n", n)
-			if err := infrastructure.WriteFiguresMark(outDir, input, buildFigureDPI, n); err != nil {
-				return err
-			}
+	if d.Kind == domain.KindPDF && !p.HasCommandEntries() {
+		if err := renderBuildFigures(input, outDir); err != nil {
+			return err
 		}
 	}
 
@@ -207,7 +130,7 @@ func convertDoc(d domain.Doc, cacheDir, outDir, profilePath string) error {
 		Input: input, OutDir: outDir, ProfilePath: profilePath,
 		Title: d.Title, Series: d.Series, Version: d.Version,
 	}
-	if d.Kind == "pdf" {
+	if d.Kind == domain.KindPDF {
 		return convertPDF(o)
 	}
 	return Convert(o)
@@ -264,4 +187,117 @@ func missingFiles(paths []string) []string {
 		}
 	}
 	return out
+}
+
+func renderBuildFigures(input, outDir string) error {
+	if infrastructure.FiguresDone(outDir, input, buildFigureDPI) {
+		fmt.Printf("ページ画像: 焼いてある (%s)\n", filepath.Join(outDir, "figures"))
+	} else {
+		n, err := infrastructure.RenderFigures(input, outDir, buildFigureDPI, "")
+		if err != nil {
+			return err
+		}
+		fmt.Printf("ページ画像: %d 枚を焼きました\n", n)
+		if err := infrastructure.WriteFiguresMark(outDir, input, buildFigureDPI, n); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func buildDiff(manualsDir, manifestDir string) int {
+	failed := 0
+	// 系列間の差分表。無印と IX-R の両方が揃ったときだけ作る。
+	ixDir, ixrDir := filepath.Join(manualsDir, "ix"), filepath.Join(manualsDir, "ix-r")
+	if missing := missingFiles(infrastructure.DiffInputs(ixDir, ixrDir)); len(missing) == 0 {
+		fmt.Println("diff.tsv (無印 → IX-R のコマンド対応表)")
+		derived := filepath.Join(manifestDir, "profiles", "ix-r-derived-diff.tsv")
+		if _, err := os.Stat(derived); err != nil {
+			derived = "" // Diff がカレントと実行ファイルの隣を探し、無ければ警告する
+		}
+		if err := Diff(ixDir, ixrDir, "", derived); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "  ✗ diff.tsv: %s\n", err)
+			failed++
+		}
+	} else {
+		fmt.Printf("diff.tsv は作らない (両系列が揃っていない: %s が無い)\n", missing[0])
+	}
+
+	return failed
+}
+
+func partitionBuildDocs(m domain.Manifest, cacheDir, only string, force bool) (local, web []domain.Doc) {
+	// 手元で済む資料 (PDF と、取得済みの Web) と、取得を裏で先に始める資料 (これから
+	// 取る Web) に分ける。[i/n] はマニフェストの順ではなくこの順で振る。
+	// 置き場を決められない資料は取りに行っても無駄なので、裏には回さず
+	// 表で CheckDoc の理由を出して終わる。
+	for i := range m.Docs {
+		d := &m.Docs[i]
+		if only != "" && d.Name != only {
+			continue
+		}
+		if d.Kind == domain.KindWeb && domain.CheckDoc(*d) == nil && (force || !infrastructure.WebFetched(infrastructure.CachePath(cacheDir, *d), *d)) {
+			web = append(web, *d)
+		} else {
+			local = append(local, *d)
+		}
+	}
+	return local, web
+}
+
+func resolveManifestPath(manifestDir, p string) string {
+	if p == "" || filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(manifestDir, p)
+}
+
+type buildProgress struct {
+	manualsDir, cacheDir, manifestDir string
+	total, completed, failed          int
+}
+
+func (b *buildProgress) step(d domain.Doc, fetch func() error) {
+	b.completed++
+	err := domain.CheckDoc(d)
+	if err == nil {
+		outDir := filepath.Join(b.manualsDir, d.Series, d.Book)
+		fmt.Printf("[%d/%d] %s (%s) → %s\n", b.completed, b.total, d.Name, d.Kind, outDir)
+		if err = fetch(); err == nil {
+			err = convertDoc(d, b.cacheDir, outDir, resolveManifestPath(b.manifestDir, d.Profile))
+		}
+	} else {
+		fmt.Printf("[%d/%d] %s (%s)\n", b.completed, b.total, d.Name, d.Kind)
+	}
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "  ✗ %s: %s\n", d.Name, err)
+		b.failed++
+	}
+	fmt.Println()
+}
+
+func startWebFetch(client *http.Client, web []domain.Doc, cacheDir string, force, hasLocal bool) []chan error {
+	// Web の取得。1 つの goroutine で順に取る (同じサイトなので、並べて投げない)。
+	// 進捗は表の出力に混ざるので、行の頭に資料名を付けて見分けられるようにする。
+	fetched := make([]chan error, len(web))
+	for k := range web {
+		fetched[k] = make(chan error, 1)
+	}
+	go func() {
+		for k := range web {
+			d := &web[k]
+			w := &prefixWriter{prefix: d.Name + ": ", dst: os.Stdout}
+			fetched[k] <- infrastructure.FetchDoc(w, client, *d, cacheDir, force, time.Second, infrastructure.DefaultUserAgent)
+		}
+	}()
+	if hasLocal && len(web) > 0 {
+		names := make([]string, len(web))
+		for k := range web {
+			d := &web[k]
+			names[k] = d.Name
+		}
+		fmt.Printf("Web の取得は裏で先に始める: %s\n\n", strings.Join(names, ", "))
+	}
+
+	return fetched
 }

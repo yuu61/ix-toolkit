@@ -6,6 +6,11 @@ import (
 	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 )
 
+const (
+	examplePath = "cli/example.html"
+	oldCommand  = "ip old-example enable"
+)
+
 func TestReferencePreservesSourceLocation(t *testing.T) {
 	for _, tc := range []struct {
 		want string
@@ -14,8 +19,8 @@ func TestReferencePreservesSourceLocation(t *testing.T) {
 	}{
 		{ref: domain.Ref{}, want: "", web: false},
 		{ref: domain.Ref{Page: 1057}, want: "p1057", web: false},
-		{ref: domain.Ref{Path: "cli/example.html", Anchor: "example-enable"}, want: "cli/example.html#example-enable", web: true},
-		{ref: domain.Ref{Path: "cli/example.html"}, want: "cli/example.html", web: true},
+		{ref: domain.Ref{Path: examplePath, Anchor: "example-enable"}, want: "cli/example.html#example-enable", web: true},
+		{ref: domain.Ref{Path: examplePath}, want: examplePath, web: true},
 	} {
 		if got := tc.ref.String(); got != tc.want {
 			t.Errorf("%+v: source = %q, want %q", tc.ref, got, tc.want)
@@ -29,13 +34,13 @@ func TestReferencePreservesSourceLocation(t *testing.T) {
 // SyntaxLabels と CommandsOf は揃えたあとの綴りで見出し語を見る。揃える先がそれらと
 // 食い違うと、構文の欄が地の文として整形され、索引が空になる。
 func TestLabelSpellingKeepsSyntaxLabelsReachable(t *testing.T) {
-	for l := range domain.SyntaxLabels {
+	for l := range domain.SyntaxLabels() {
 		if got := domain.NormalizeLabel(l); got != l {
 			t.Errorf("LabelSpelling が SyntaxLabels の %q を %q に写している", l, got)
 		}
 	}
-	for from, to := range domain.LabelSpelling {
-		if domain.SyntaxLabels[from] && !domain.SyntaxLabels[to] {
+	for from, to := range domain.LabelSpelling() {
+		if domain.SyntaxLabels()[from] && !domain.SyntaxLabels()[to] {
 			t.Errorf("LabelSpelling: %q → %q で構文の欄の判定が外れる", from, to)
 		}
 	}
@@ -102,12 +107,12 @@ func TestCommandProfileDoesNotRequirePDFMarker(t *testing.T) {
 func TestSetDiffPrefersDocumentedDifferencesAndExistingPrefixes(t *testing.T) {
 	ix := []domain.IndexedCommand{
 		{Cmd: "sample-agent [ NAME ]", Source: "p1"},
-		{Cmd: "ip old-example enable", Source: "p2"},
+		{Cmd: oldCommand, Source: "p2"},
 		{Cmd: "ip missing-example enable", Source: "p3"},
 		{Cmd: "ip missing-example disable", Source: "p4"},
 	}
 	ixr := []domain.IndexedCommand{{Cmd: "sample-agent ip enable"}}
-	known := []domain.DiffRow{{IX: "ip old-example enable", Kind: "renamed", Source: "ch8"}}
+	known := []domain.DiffRow{{IX: oldCommand, Kind: "renamed", Source: "ch8"}}
 	rows := domain.SetDiff(ix, ixr, known)
 	if len(rows) != 1 {
 		t.Fatalf("got %+v; only the undocumented missing family should remain", rows)
@@ -123,7 +128,7 @@ func TestChapterDifferenceExpandsAlternativesAndKeepsReferences(t *testing.T) {
 		{"例", "[ ip | ipv6 ] old-example enable", "ip new-example enable\nipv6 new-example enable", "確認"},
 	}
 	index := []domain.IndexedCommand{
-		{Cmd: "ip old-example enable", Source: "p10"},
+		{Cmd: oldCommand, Source: "p10"},
 		{Cmd: "ipv6 old-example enable", Source: "p11"},
 	}
 	rows := domain.Ch8Rows("renamed", "example.html#change", table, index)

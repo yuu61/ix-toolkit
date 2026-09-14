@@ -32,21 +32,25 @@ func Main() {
 		os.Exit(1)
 	}
 
-	switch cmd := os.Args[1]; cmd {
+	runCommand(os.Args[1], os.Args[2:])
+}
+
+func runCommand(cmd string, args []string) {
+	switch cmd {
 	case "build":
-		runBuild(os.Args[2:])
+		runBuild(args)
 	case "fetch":
-		runFetch(os.Args[2:])
+		runFetch(args)
 	case "probe":
-		runProbe(os.Args[2:])
+		runProbe(args)
 	case "md":
-		runMD(os.Args[2:])
+		runMD(args)
 	case "diff":
-		runDiff(os.Args[2:])
+		runDiff(args)
 	case "figures":
-		runFigures(os.Args[2:])
+		runFigures(args)
 	case "scan":
-		runScan(os.Args[2:])
+		runScan(args)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:

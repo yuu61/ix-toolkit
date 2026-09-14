@@ -93,41 +93,68 @@ func TestLocalPDF(t *testing.T) {
 				if stats.Two != 629 || stats.One != 223 {
 					t.Fatalf("column classification changed: %+v", stats)
 				}
-				entries := ParseEntries(p, pages)
-				if n := len(entries); n != 2039 {
-					t.Fatalf("entries = %d, want 2039", n)
-				}
-				var rendered strings.Builder
-				for i := range entries {
-					renderEntry(&rendered, &entries[i])
-				}
-				if !strings.Contains(rendered.String(), "- set ip/ipv6 default next-hop\n\n上から順に") {
-					t.Error("p635: prose after route-map list joined to last bullet")
-				}
-				if !strings.Contains(rendered.String(), "- IPv4 アドレス\n\nPORT ...") {
-					t.Error("p736: next parameter joined to single bullet")
-				}
+				checkLocalCRMEntries(t, p, pages)
 			} else if len(d.pages) != 1208 {
 				t.Fatalf("FD pages = %d, want 1208", len(d.pages))
 			}
-			for i, pg := range d.pages {
-				want := map[rune]int{}
-				for _, g := range pg.glyphs {
-					if bodyCrop(p).keep(g, pg.width, pg.height) && !unicode.IsSpace(g.r) {
-						want[g.r]++
-					}
-				}
-				var text string
-				if len(pages) > 0 {
-					text = strings.Join(pages[i].lines, "\n")
-				} else {
-					text = renderPage(pg, bodyCrop(p), true)
-				}
-				if !reflect.DeepEqual(glyphCounts(text), want) {
-					t.Errorf("p%d: body glyphs were lost or duplicated", i+1)
-				}
-			}
+			checkPageGlyphCounts(t, d, p, pages)
 			t.Logf("verified glyph counts on %d pages", len(d.pages))
 		})
+	}
+}
+
+func localPDFRoot(t *testing.T) string {
+	t.Helper()
+	root := os.Getenv("IX_MANUALBOOK_PDF_ROOT")
+	if root == "" {
+		t.Skip("set IX_MANUALBOOK_PDF_ROOT to check local PDFs")
+	}
+	return root
+}
+
+func localPDFDoc(t *testing.T, pdf string) *pdfDoc {
+	t.Helper()
+	d, err := openDoc(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { CloseDoc(pdf) })
+	return d
+}
+
+func checkPageGlyphCounts(t *testing.T, d *pdfDoc, p *domain.Profile, pages []Page) {
+	for i, pg := range d.pages {
+		want := map[rune]int{}
+		for _, g := range pg.glyphs {
+			if bodyCrop(p).keep(g, pg.width, pg.height) && !unicode.IsSpace(g.r) {
+				want[g.r]++
+			}
+		}
+		var text string
+		if len(pages) > 0 {
+			text = strings.Join(pages[i].lines, "\n")
+		} else {
+			text = renderPage(pg, bodyCrop(p), true)
+		}
+		if !reflect.DeepEqual(glyphCounts(text), want) {
+			t.Errorf("p%d: body glyphs were lost or duplicated", i+1)
+		}
+	}
+}
+
+func checkLocalCRMEntries(t *testing.T, p *domain.Profile, pages []Page) {
+	entries := ParseEntries(p, pages)
+	if n := len(entries); n != 2039 {
+		t.Fatalf("entries = %d, want 2039", n)
+	}
+	var rendered strings.Builder
+	for i := range entries {
+		renderEntry(&rendered, &entries[i])
+	}
+	if !strings.Contains(rendered.String(), "- set ip/ipv6 default next-hop\n\n上から順に") {
+		t.Error("p635: prose after route-map list joined to last bullet")
+	}
+	if !strings.Contains(rendered.String(), "- IPv4 アドレス\n\nPORT ...") {
+		t.Error("p736: next parameter joined to single bullet")
 	}
 }

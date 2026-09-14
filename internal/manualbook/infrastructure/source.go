@@ -23,7 +23,7 @@ type Source struct {
 // writeOrigin は README の「生成条件」のうち、出どころに依る行を書く。
 func (s Source) writeOrigin(b *strings.Builder) {
 	switch s.Kind {
-	case "web":
+	case domain.KindWeb:
 		fmt.Fprintf(b, "- 元資料: %s\n", s.BaseURL)
 		if s.Fetched != "" {
 			fmt.Fprintf(b, "- 取得日: %s\n", s.Fetched)
@@ -42,7 +42,7 @@ func (s Source) writeOrigin(b *strings.Builder) {
 	}
 	p := s.Profile
 	switch {
-	case s.Kind == "web":
+	case s.Kind == domain.KindWeb:
 		fmt.Fprintf(b, "- プロファイル: `%s`\n", p.Name)
 	case p.HasCommandEntries():
 		fmt.Fprintf(b, "- プロファイル: `%s` (%d 段組み, 天地マージン %.0f/%.0f pt)\n",
@@ -55,7 +55,7 @@ func (s Source) writeOrigin(b *strings.Builder) {
 
 // route は README の「変換経路」。
 func (s Source) route() string {
-	if s.Kind == "web" {
+	if s.Kind == domain.KindWeb {
 		return "Sphinx が出した HTML を節と項目の構造どおりに読んだもの (表は Markdown の表、図は SVG のまま)"
 	}
 	if s.Profile.HasCommandEntries() {
@@ -66,7 +66,7 @@ func (s Source) route() string {
 
 // sourceColumnNote は索引の source 列の読み方。
 func (s Source) sourceColumnNote() string {
-	if s.Kind == "web" {
+	if s.Kind == domain.KindWeb {
 		return fmt.Sprintf("`source` は元のページと節のアンカー (`cli/….html#…`)。`%s` に続ければ URL になる。",
 			strings.TrimSuffix(s.BaseURL, "/")+"/")
 	}

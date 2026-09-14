@@ -22,7 +22,7 @@ type pdfTable struct {
 	headerRows int
 }
 
-func (t pdfTable) contains(g glyph) bool {
+func (t *pdfTable) contains(g glyph) bool {
 	return g.centerX() >= t.left && g.centerX() <= t.right && g.centerY() >= t.bottom && g.centerY() <= t.top
 }
 
@@ -82,18 +82,7 @@ func (s cellSets) join(a, b int) { s[s.root(a)] = s.root(b) }
 
 func findPDFTables(pg pdfPage, rules []pdfRule) []pdfTable {
 	rules = mergeRules(rules)
-	sets := newCellSets(len(rules))
-	for i, a := range rules {
-		for j := i + 1; j < len(rules); j++ {
-			b := rules[j]
-			if a.vertical == b.vertical {
-				continue
-			}
-			if a.pos >= b.lo-ruleTolerance && a.pos <= b.hi+ruleTolerance && b.pos >= a.lo-ruleTolerance && b.pos <= a.hi+ruleTolerance {
-				sets.join(i, j)
-			}
-		}
-	}
+	sets := connectedRules(rules)
 	groups := map[int][]pdfRule{}
 	var order []int
 	for i, r := range rules {
@@ -109,21 +98,8 @@ func findPDFTables(pg pdfPage, rules []pdfRule) []pdfTable {
 			tables = append(tables, table)
 		}
 	}
-	// 入れ子の枠などが複数の表候補になった場合、文字を重複させず元の版面へ戻す。
-	var disjoint []pdfTable
-	for i, a := range tables {
-		overlap := false
-		for j, b := range tables {
-			if i != j && math.Min(a.right, b.right) > math.Max(a.left, b.left) && math.Min(a.top, b.top) > math.Max(a.bottom, b.bottom) {
-				overlap = true
-				break
-			}
-		}
-		if !overlap {
-			disjoint = append(disjoint, a)
-		}
-	}
-	tables = disjoint
+
+	tables = disjointTables(tables)
 	sort.Slice(tables, func(i, j int) bool {
 		if tables[i].top == tables[j].top {
 			return tables[i].left < tables[j].left
@@ -155,31 +131,9 @@ func ruleCoverage(rules []pdfRule, vertical bool, pos, lo, hi float64) int {
 }
 
 func tableFromRules(pg pdfPage, rules []pdfRule) (pdfTable, bool) {
-	var xs, ys []float64
-	for _, r := range rules {
-		if r.vertical {
-			xs = append(xs, r.pos)
-		} else {
-			ys = append(ys, r.pos)
-		}
-	}
-	unique := func(v []float64) []float64 {
-		sort.Float64s(v)
-		var out []float64
-		for _, x := range v {
-			if len(out) == 0 || x-out[len(out)-1] > ruleTolerance {
-				out = append(out, x)
-			}
-		}
-		return out
-	}
-	xs, ys = unique(xs), unique(ys)
+	xs, ys := tableAxes(rules)
 	if len(xs) < 3 || len(ys) < 3 {
 		return pdfTable{}, false
-	}
-	// 上から下へ行を並べる。
-	for i, j := 0, len(ys)-1; i < j; i, j = i+1, j-1 {
-		ys[i], ys[j] = ys[j], ys[i]
 	}
 	nr, nc := len(ys)-1, len(xs)-1
 	if nr*nc > 20000 {
@@ -190,135 +144,23 @@ func tableFromRules(pg pdfPage, rules []pdfRule) (pdfTable, bool) {
 	if table.right-table.left < 24 || table.top-table.bottom < 16 {
 		return pdfTable{}, false
 	}
-	for _, x := range []float64{xs[0], xs[nc]} {
-		if ruleCoverage(rules, true, x, ys[nr], ys[0]) != 1 {
-			return pdfTable{}, false
-		}
-	}
-	for _, y := range []float64{ys[0], ys[nr]} {
-		if ruleCoverage(rules, false, y, xs[0], xs[nc]) != 1 {
-			return pdfTable{}, false
-		}
-	}
-	sets := newCellSets(nr * nc)
-	for r := range nr {
-		for c := range nc {
-			if c+1 < nc {
-				switch ruleCoverage(rules, true, xs[c+1], ys[r+1], ys[r]) {
-				case -1:
-					return pdfTable{}, false
-				case 0:
-					sets.join(r*nc+c, r*nc+c+1)
-				}
-			}
-			if r+1 < nr {
-				switch ruleCoverage(rules, false, ys[r+1], xs[c], xs[c+1]) {
-				case -1:
-					return pdfTable{}, false
-				case 0:
-					sets.join(r*nc+c, (r+1)*nc+c)
-				}
-			}
-		}
-	}
-	// 結合後の領域は長方形で、四辺が閉じている場合だけセルとして採る。
-	type span struct{ r0, r1, c0, c1, n int }
-	spans := map[int]span{}
-	for r := range nr {
-		for c := range nc {
-			k := sets.root(r*nc + c)
-			s, ok := spans[k]
-			if !ok {
-				s = span{r, r, c, c, 0}
-			}
-			s.r0 = min(s.r0, r)
-			s.r1 = max(s.r1, r)
-			s.c0 = min(s.c0, c)
-			s.c1 = max(s.c1, c)
-			s.n++
-			spans[k] = s
-		}
-	}
-	if len(spans) < 4 {
+	if !closedTableBounds(rules, table) {
 		return pdfTable{}, false
 	}
-	for _, s := range spans {
-		if (s.r1-s.r0+1)*(s.c1-s.c0+1) != s.n {
-			return pdfTable{}, false
-		}
-		for _, x := range []float64{xs[s.c0], xs[s.c1+1]} {
-			if ruleCoverage(rules, true, x, ys[s.r1+1], ys[s.r0]) != 1 {
-				return pdfTable{}, false
-			}
-		}
-		for _, y := range []float64{ys[s.r0], ys[s.r1+1]} {
-			if ruleCoverage(rules, false, y, xs[s.c0], xs[s.c1+1]) != 1 {
-				return pdfTable{}, false
-			}
-		}
-	}
-	cellGlyphs := map[int][]glyph{}
-	for _, g := range pg.glyphs {
-		if !table.contains(g) {
-			continue
-		}
-		c := sort.Search(len(xs), func(i int) bool { return xs[i] > g.centerX() }) - 1
-		r := sort.Search(len(ys), func(i int) bool { return ys[i] < g.centerY() }) - 1
-		if c < 0 || c >= nc || r < 0 || r >= nr {
-			return pdfTable{}, false
-		}
-		k := sets.root(r*nc + c)
-		s := spans[k]
-		// 境界を跨ぐ文字があれば、図の線や下線をセル境界と誤認した可能性がある。
-		if g.left < xs[s.c0]-ruleTolerance || g.right > xs[s.c1+1]+ruleTolerance || g.top > ys[s.r0]+ruleTolerance || g.bottom < ys[s.r1+1]-ruleTolerance {
-			return pdfTable{}, false
-		}
-		cellGlyphs[k] = append(cellGlyphs[k], g)
-	}
-	if len(cellGlyphs) < 4 || len(cellGlyphs)*2 < len(spans) {
+	sets, ok := tableCellSets(rules, xs, ys)
+	if !ok {
 		return pdfTable{}, false
 	}
-	texts := map[int]string{}
-	for k, gs := range cellGlyphs {
-		cell := pg
-		cell.glyphs = gs
-		var lines []string
-		for line := range strings.SplitSeq(renderPage(cell, crop{}, false), "\n") {
-			if t := strings.TrimSpace(line); t != "" {
-				lines = append(lines, t)
-			}
-		}
-		texts[k] = strings.Join(lines, "\n")
+	spans, ok := tableSpans(rules, xs, ys, sets)
+	if !ok {
+		return pdfTable{}, false
 	}
-	table.rows = make([][]string, nr)
-	for r := range nr {
-		table.rows[r] = make([]string, nc)
-		for c := range nc {
-			table.rows[r][c] = texts[sets.root(r*nc+c)]
-		}
+	cellGlyphs, ok := tableGlyphs(pg, table, xs, ys, sets, spans)
+	if !ok {
+		return pdfTable{}, false
 	}
-	// 上段の結合セルと、その下位の列名を一緒に保持する。
-	// 全幅の結合セルは表題なので、その次のデータ行までは含めない。
-	table.headerRows = 1
-	table.mergedRows = make([]bool, nr)
-	for _, s := range spans {
-		if s.n > 1 {
-			for r := s.r0; r <= s.r1; r++ {
-				table.mergedRows[r] = true
-			}
-		}
-	}
-	for r := 0; r < table.headerRows && r < nr; r++ {
-		for _, s := range spans {
-			if s.r0 != r {
-				continue
-			}
-			table.headerRows = max(table.headerRows, s.r1+1)
-			if s.c1 > s.c0 && s.c1-s.c0+1 < nc {
-				table.headerRows = max(table.headerRows, s.r1+2)
-			}
-		}
-	}
+	table.rows = tableRowsFromGlyphs(pg, cellGlyphs, sets, nr, nc)
+	table.setHeaders(spans, nr, nc)
 	return table, true
 }
 
@@ -326,24 +168,8 @@ func tableFromRules(pg pdfPage, rules []pdfRule) (pdfTable, bool) {
 // 行の空白幅や文末記号で表を分断せず、元ページの位置を保持する。
 func sectionTableLines(pg pdfPage, tables []pdfTable, body crop, page int) ([]string, map[int]domain.Block) {
 	blocks := map[int]domain.Block{}
-	var lines []string
-	remaining := pg
-	remaining.glyphs = nil
-	for _, g := range pg.glyphs {
-		if !body.keep(g, pg.width, pg.height) {
-			continue
-		}
-		inside := false
-		for _, table := range tables {
-			if table.contains(g) {
-				inside = true
-				break
-			}
-		}
-		if !inside {
-			remaining.glyphs = append(remaining.glyphs, g)
-		}
-	}
+	lines := make([]string, 0, len(tables))
+	remaining := pageOutsideTables(pg, tables, body)
 	for _, table := range tables {
 		above, below := remaining, remaining
 		above.glyphs = nil
@@ -376,21 +202,8 @@ func continuePDFTable(previous pdfTable, current *pdfTable, prevPage, page pdfPa
 	if len(previous.rows) == 0 || len(current.rows) == 0 || len(previous.columns) != len(current.columns) {
 		return
 	}
-	for i, x := range previous.columns {
-		// 見開きの左右ページで余白が変わるので、表の左端からの相対位置を比べる。
-		if math.Abs((x-previous.left)-(current.columns[i]-current.left)) > ruleTolerance {
-			return
-		}
-	}
-	for _, g := range prevPage.glyphs {
-		if body.keep(g, prevPage.width, prevPage.height) && g.centerY() < previous.bottom {
-			return
-		}
-	}
-	for _, g := range page.glyphs {
-		if body.keep(g, page.width, page.height) && g.centerY() > current.top {
-			return
-		}
+	if !tableGeometryContinues(previous, *current, prevPage, page, body) {
+		return
 	}
 	if !tableDataContinues(previous, *current) {
 		return
@@ -414,27 +227,292 @@ func tableDataContinues(previous, current pdfTable) bool {
 	if h < 1 || h >= len(previous.rows) || len(current.rows) == 0 || len(current.mergedRows) == 0 || current.mergedRows[0] {
 		return false
 	}
-	key := func(s string) string { return strings.Join(strings.Fields(s), "") }
 	for c := range previous.rows[0] {
-		header := map[string]bool{}
-		for _, row := range previous.rows[:h] {
-			header[key(row[c])] = true
-		}
-		values := map[string]int{}
-		for _, row := range previous.rows[h:] {
-			values[key(row[c])]++
-		}
-		matches := true
-		for _, row := range current.rows[:min(3, len(current.rows))] {
-			v := key(row[c])
-			if v == "" || header[v] || values[v] < 2 {
-				matches = false
-				break
-			}
-		}
+		matches := tableColumnContinues(previous, current, c)
 		if matches {
 			return true
 		}
 	}
 	return false
+}
+
+func connectedRules(rules []pdfRule) cellSets {
+	sets := newCellSets(len(rules))
+	for i, a := range rules {
+		for j := i + 1; j < len(rules); j++ {
+			b := rules[j]
+			if a.vertical == b.vertical {
+				continue
+			}
+			if a.pos >= b.lo-ruleTolerance && a.pos <= b.hi+ruleTolerance && b.pos >= a.lo-ruleTolerance && b.pos <= a.hi+ruleTolerance {
+				sets.join(i, j)
+			}
+		}
+	}
+	return sets
+}
+
+func disjointTables(tables []pdfTable) []pdfTable {
+	// 入れ子の枠などが複数の表候補になった場合、文字を重複させず元の版面へ戻す。
+	var disjoint []pdfTable
+	for i, a := range tables {
+		overlap := false
+		for j, b := range tables {
+			if i != j && math.Min(a.right, b.right) > math.Max(a.left, b.left) && math.Min(a.top, b.top) > math.Max(a.bottom, b.bottom) {
+				overlap = true
+				break
+			}
+		}
+		if !overlap {
+			disjoint = append(disjoint, a)
+		}
+	}
+	return disjoint
+}
+
+func uniqueRulePositions(v []float64) []float64 {
+	sort.Float64s(v)
+	var out []float64
+	for _, x := range v {
+		if len(out) == 0 || x-out[len(out)-1] > ruleTolerance {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func closedTableBounds(rules []pdfRule, table pdfTable) bool {
+	for _, x := range []float64{table.left, table.right} {
+		if ruleCoverage(rules, true, x, table.bottom, table.top) != 1 {
+			return false
+		}
+	}
+	for _, y := range []float64{table.top, table.bottom} {
+		if ruleCoverage(rules, false, y, table.left, table.right) != 1 {
+			return false
+		}
+	}
+	return true
+}
+
+func tableCellSets(rules []pdfRule, xs, ys []float64) (cellSets, bool) {
+	nr, nc := len(ys)-1, len(xs)-1
+	sets := newCellSets(nr * nc)
+	for r := range nr {
+		for c := range nc {
+			if c+1 < nc {
+				switch ruleCoverage(rules, true, xs[c+1], ys[r+1], ys[r]) {
+				case -1:
+					return nil, false
+				case 0:
+					sets.join(r*nc+c, r*nc+c+1)
+				}
+			}
+			if r+1 < nr {
+				switch ruleCoverage(rules, false, ys[r+1], xs[c], xs[c+1]) {
+				case -1:
+					return nil, false
+				case 0:
+					sets.join(r*nc+c, (r+1)*nc+c)
+				}
+			}
+		}
+	}
+	return sets, true
+}
+
+func tableSpans(rules []pdfRule, xs, ys []float64, sets cellSets) (map[int]cellSpan, bool) {
+	nr, nc := len(ys)-1, len(xs)-1
+	// 結合後の領域は長方形で、四辺が閉じている場合だけセルとして採る。
+	spans := map[int]cellSpan{}
+	for r := range nr {
+		for c := range nc {
+			k := sets.root(r*nc + c)
+			s, ok := spans[k]
+			if !ok {
+				s = cellSpan{r, r, c, c, 0}
+			}
+			s.r0 = min(s.r0, r)
+			s.r1 = max(s.r1, r)
+			s.c0 = min(s.c0, c)
+			s.c1 = max(s.c1, c)
+			s.n++
+			spans[k] = s
+		}
+	}
+	if len(spans) < 4 {
+		return nil, false
+	}
+	for _, s := range spans {
+		if (s.r1-s.r0+1)*(s.c1-s.c0+1) != s.n {
+			return nil, false
+		}
+		if !closedTableBounds(rules, pdfTable{left: xs[s.c0], right: xs[s.c1+1], top: ys[s.r0], bottom: ys[s.r1+1]}) {
+			return nil, false
+		}
+	}
+	return spans, true
+}
+
+func tableGlyphs(pg pdfPage, table pdfTable, xs, ys []float64, sets cellSets, spans map[int]cellSpan) (map[int][]glyph, bool) {
+	nr, nc := len(ys)-1, len(xs)-1
+	cellGlyphs := map[int][]glyph{}
+	for _, g := range pg.glyphs {
+		if !table.contains(g) {
+			continue
+		}
+		c := sort.Search(len(xs), func(i int) bool { return xs[i] > g.centerX() }) - 1
+		r := sort.Search(len(ys), func(i int) bool { return ys[i] < g.centerY() }) - 1
+		if c < 0 || c >= nc || r < 0 || r >= nr {
+			return nil, false
+		}
+		k := sets.root(r*nc + c)
+		s := spans[k]
+		// 境界を跨ぐ文字があれば、図の線や下線をセル境界と誤認した可能性がある。
+		if glyphCrossesCell(g, s, xs, ys) {
+			return nil, false
+		}
+		cellGlyphs[k] = append(cellGlyphs[k], g)
+	}
+	if len(cellGlyphs) < 4 || len(cellGlyphs)*2 < len(spans) {
+		return nil, false
+	}
+	return cellGlyphs, true
+}
+
+func tableRowsFromGlyphs(pg pdfPage, cellGlyphs map[int][]glyph, sets cellSets, nr, nc int) [][]string {
+	texts := map[int]string{}
+	for k, gs := range cellGlyphs {
+		cell := pg
+		cell.glyphs = gs
+		var lines []string
+		for line := range strings.SplitSeq(renderPage(cell, crop{}, false), "\n") {
+			if t := strings.TrimSpace(line); t != "" {
+				lines = append(lines, t)
+			}
+		}
+		texts[k] = strings.Join(lines, "\n")
+	}
+	rows := make([][]string, nr)
+	for r := range nr {
+		rows[r] = make([]string, nc)
+		for c := range nc {
+			rows[r][c] = texts[sets.root(r*nc+c)]
+		}
+	}
+	return rows
+}
+
+func (table *pdfTable) setHeaders(spans map[int]cellSpan, nr, nc int) {
+	// 上段の結合セルと、その下位の列名を一緒に保持する。
+	// 全幅の結合セルは表題なので、その次のデータ行までは含めない。
+	table.headerRows = 1
+	table.mergedRows = make([]bool, nr)
+	for _, s := range spans {
+		if s.n > 1 {
+			for r := s.r0; r <= s.r1; r++ {
+				table.mergedRows[r] = true
+			}
+		}
+	}
+	for r := 0; r < table.headerRows && r < nr; r++ {
+		for _, s := range spans {
+			if s.r0 != r {
+				continue
+			}
+			table.headerRows = max(table.headerRows, s.r1+1)
+			if s.c1 > s.c0 && s.c1-s.c0+1 < nc {
+				table.headerRows = max(table.headerRows, s.r1+2)
+			}
+		}
+	}
+}
+
+type cellSpan struct{ r0, r1, c0, c1, n int }
+
+func pageOutsideTables(pg pdfPage, tables []pdfTable, body crop) pdfPage {
+	remaining := pg
+	remaining.glyphs = nil
+	for _, g := range pg.glyphs {
+		if !body.keep(g, pg.width, pg.height) {
+			continue
+		}
+		inside := false
+		for _, table := range tables {
+			if table.contains(g) {
+				inside = true
+				break
+			}
+		}
+		if !inside {
+			remaining.glyphs = append(remaining.glyphs, g)
+		}
+	}
+	return remaining
+}
+
+func tableGeometryContinues(previous, current pdfTable, prevPage, page pdfPage, body crop) bool {
+	for i, x := range previous.columns {
+		// 見開きの左右ページで余白が変わるので、表の左端からの相対位置を比べる。
+		if math.Abs((x-previous.left)-(current.columns[i]-current.left)) > ruleTolerance {
+			return false
+		}
+	}
+	for _, g := range prevPage.glyphs {
+		if body.keep(g, prevPage.width, prevPage.height) && g.centerY() < previous.bottom {
+			return false
+		}
+	}
+	for _, g := range page.glyphs {
+		if body.keep(g, page.width, page.height) && g.centerY() > current.top {
+			return false
+		}
+	}
+	return true
+}
+
+func tableColumnContinues(previous, current pdfTable, c int) bool {
+	h := previous.headerRows
+	key := func(s string) string { return strings.Join(strings.Fields(s), "") }
+	header := map[string]bool{}
+	for _, row := range previous.rows[:h] {
+		header[key(row[c])] = true
+	}
+	values := map[string]int{}
+	for _, row := range previous.rows[h:] {
+		values[key(row[c])]++
+	}
+	matches := true
+	for _, row := range current.rows[:min(3, len(current.rows))] {
+		v := key(row[c])
+		if v == "" || header[v] || values[v] < 2 {
+			matches = false
+			break
+		}
+	}
+	return matches
+}
+
+func tableAxes(rules []pdfRule) (xs, ys []float64) {
+	for _, r := range rules {
+		if r.vertical {
+			xs = append(xs, r.pos)
+		} else {
+			ys = append(ys, r.pos)
+		}
+	}
+
+	xs, ys = uniqueRulePositions(xs), uniqueRulePositions(ys)
+	if len(xs) < 3 || len(ys) < 3 {
+		return nil, nil
+	}
+	// 上から下へ行を並べる。
+	for i, j := 0, len(ys)-1; i < j; i, j = i+1, j-1 {
+		ys[i], ys[j] = ys[j], ys[i]
+	}
+	return xs, ys
+}
+
+func glyphCrossesCell(g glyph, s cellSpan, xs, ys []float64) bool {
+	return g.left < xs[s.c0]-ruleTolerance || g.right > xs[s.c1+1]+ruleTolerance || g.top > ys[s.r0]+ruleTolerance || g.bottom < ys[s.r1+1]-ruleTolerance
 }

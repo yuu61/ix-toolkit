@@ -50,11 +50,7 @@ func RenderFigures(pdf, outDir string, dpi int, pageSpec string) (int, error) {
 // parsePageSpec は "1050-1060,1100" の形を展開する。空なら全ページ。
 func parsePageSpec(spec string, nPages int) ([]int, error) {
 	if strings.TrimSpace(spec) == "" {
-		all := make([]int, nPages)
-		for i := range all {
-			all[i] = i + 1
-		}
-		return all, nil
+		return allPageNumbers(nPages), nil
 	}
 
 	seen := map[int]bool{}
@@ -70,21 +66,12 @@ func parsePageSpec(spec string, nPages int) ([]int, error) {
 		if part == "" {
 			continue
 		}
-		lo, hi, ok := strings.Cut(part, "-")
-		if !ok {
-			n, err := strconv.Atoi(part)
-			if err != nil {
-				return nil, fmt.Errorf("ページ指定を読めません: %q", part)
-			}
-			add(n)
-			continue
+		a, b, err := pageRange(part)
+		if err != nil {
+			return nil, err
 		}
-		a, err1 := strconv.Atoi(strings.TrimSpace(lo))
-		b, err2 := strconv.Atoi(strings.TrimSpace(hi))
-		if err1 != nil || err2 != nil || a > b {
-			return nil, fmt.Errorf("ページ範囲を読めません: %q", part)
-		}
-		for n := a; n <= b; n++ {
+
+		for n := max(a, 1); n <= min(b, nPages); n++ {
 			add(n)
 		}
 	}
@@ -92,4 +79,29 @@ func parsePageSpec(spec string, nPages int) ([]int, error) {
 		return nil, fmt.Errorf("焼くページがありません: %q", spec)
 	}
 	return out, nil
+}
+
+func pageRange(part string) (int, int, error) {
+	lo, hi, ok := strings.Cut(part, "-")
+	if !ok {
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			return 0, 0, fmt.Errorf("ページ指定を読めません: %q", part)
+		}
+		return n, n, nil
+	}
+	a, err1 := strconv.Atoi(strings.TrimSpace(lo))
+	b, err2 := strconv.Atoi(strings.TrimSpace(hi))
+	if err1 != nil || err2 != nil || a > b {
+		return 0, 0, fmt.Errorf("ページ範囲を読めません: %q", part)
+	}
+	return a, b, nil
+}
+
+func allPageNumbers(nPages int) []int {
+	all := make([]int, nPages)
+	for i := range all {
+		all[i] = i + 1
+	}
+	return all
 }

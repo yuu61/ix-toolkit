@@ -11,6 +11,15 @@ import (
 	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 )
 
+const levelHeader = "Level"
+
+const (
+	multilineCell = "B\nC"
+	tablePDF      = "manual.pdf"
+	integerType   = "Integer"
+	itemHeader    = "Item"
+)
+
 func sampleTable() (pdfPage, []pdfRule) {
 	rules := []pdfRule{
 		{false, 120, 10, 130},
@@ -38,7 +47,7 @@ func TestPDFTableMergedCells(t *testing.T) {
 	if len(tables) != 1 {
 		t.Fatalf("tables = %d", len(tables))
 	}
-	want := [][]string{{"A", "B\nC", "B\nC"}, {"D", "E", "F"}, {"G", "H", "I"}, {"G", "", "J"}}
+	want := [][]string{{"A", multilineCell, multilineCell}, {"D", "E", "F"}, {"G", "H", "I"}, {"G", "", "J"}}
 	if !reflect.DeepEqual(tables[0].rows, want) {
 		t.Fatalf("rows = %#v", tables[0].rows)
 	}
@@ -59,7 +68,7 @@ func TestPDFTableRasterRules(t *testing.T) {
 		draw.Draw(img, box.Add(img.Bounds().Min), image.NewUniform(color.Black), image.Point{}, draw.Src)
 	}
 	tables := findPDFTables(pg, imageRules(img, pg.width, pg.height))
-	if len(tables) != 1 || tables[0].rows[3][0] != "G" || tables[0].rows[0][2] != "B\nC" {
+	if len(tables) != 1 || tables[0].rows[3][0] != "G" || tables[0].rows[0][2] != multilineCell {
 		t.Fatalf("raster table = %#v", tables)
 	}
 }
@@ -68,6 +77,7 @@ func TestPDFTableRejectsUncertainCells(t *testing.T) {
 	for _, tc := range []string{"open border", "partial boundary", "nonrectangular merge", "crossing text", "single box"} {
 		t.Run(tc, func(t *testing.T) {
 			pg, rules := sampleTable()
+
 			switch tc {
 			case "open border":
 				rules = rules[:len(rules)-1]
@@ -111,7 +121,7 @@ func TestPDFTableStaysBetweenProseAndKeepsSource(t *testing.T) {
 		t.Fatalf("headings = %d", len(heads))
 	}
 	var output strings.Builder
-	renderHeading(&output, &heads[0], links{pdf: "manual.pdf", figs: figureSet{27: "p27.png"}, base: "../figures"})
+	renderHeading(&output, &heads[0], links{pdf: tablePDF, figs: figureSet{27: "p27.png"}, base: "../figures"})
 	for _, want := range []string{"| A | B<br>C | B<br>C |", "説明です。", "2.3 別の節ではない", "manual.pdf#page=27", "../figures/p27.png"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("missing %q in %s", want, output.String())
@@ -122,7 +132,7 @@ func TestPDFTableStaysBetweenProseAndKeepsSource(t *testing.T) {
 func TestPDFTableContinuation(t *testing.T) {
 	pg, rules := sampleTable()
 	table := findPDFTables(pg, rules)[0]
-	table.rows = [][]string{{"Name", "Type", "Access"}, {"one", "Integer", "RO"}, {"two", "String", "RO"}, {"three", "Integer", "RO"}}
+	table.rows = [][]string{{"Name", "Type", "Access"}, {"one", integerType, "RO"}, {"two", "String", "RO"}, {"three", integerType, "RO"}}
 	table.headerRows = 1
 	table.mergedRows = make([]bool, len(table.rows))
 	table.headerPage = 27
@@ -146,40 +156,13 @@ func TestPDFTableContinuation(t *testing.T) {
 	}
 	_, blocks := sectionTableLines(pg, []pdfTable{current}, crop{}, 28)
 	var output strings.Builder
-	renderTableBlock(&output, blocks[0], links{pdf: "manual.pdf"})
+	renderTableBlock(&output, blocks[0], links{pdf: tablePDF})
 	if !strings.Contains(output.String(), "[列見出し: 元 PDF p27](manual.pdf#page=27)") || !strings.Contains(output.String(), "[元 PDF p28]") {
 		t.Fatalf("source = %s", output.String())
 	}
 	for _, tc := range []string{"prose before", "prose after", "different columns", "repeated header", "new merged heading", "new flat heading", "unknown data", "no source header"} {
 		t.Run(tc, func(t *testing.T) {
-			prevPage, page := pg, pg
-			current := table
-			current.rows = table.rows[1:]
-			current.columns = append([]float64(nil), table.columns...)
-			previous := table
-			switch tc {
-			case "prose before":
-				page.glyphs = append(append([]glyph(nil), pg.glyphs...), testGlyph('P', 20, 135))
-			case "prose after":
-				prevPage.glyphs = append(append([]glyph(nil), pg.glyphs...), testGlyph('Q', 20, 25))
-			case "different columns":
-				current.columns[1] += 5
-			case "repeated header":
-				current.rows = table.rows
-			case "new merged heading":
-				current.mergedRows = []bool{true, false, false}
-			case "new flat heading":
-				current.rows = [][]string{{"Other", "Labels", "Permissions"}, {"four", "Integer", "RO"}}
-			case "unknown data":
-				current.rows = [][]string{{"four", "Other", "RW"}}
-			case "no source header":
-				previous.headerRows = 0
-			}
-			want := len(current.rows)
-			continuePDFTable(previous, &current, prevPage, page, crop{}, 28)
-			if len(current.rows) != want || current.headerPage != 28 {
-				t.Fatal("new table or repeated header was extended")
-			}
+			checkRejectedContinuation(t, tc, pg, table)
 		})
 	}
 }
@@ -190,13 +173,13 @@ func TestPDFTableMultirowHeaderContinuation(t *testing.T) {
 	if previous.headerRows != 2 {
 		t.Fatalf("header rows = %d, want 2", previous.headerRows)
 	}
-	previous.rows = [][]string{{"Item", "Level", "Level"}, {"Item", "warn", "debug"}, {"a", "×", "○"}, {"b", "×", "○"}}
+	previous.rows = [][]string{{itemHeader, levelHeader, levelHeader}, {itemHeader, "warn", "debug"}, {"a", "×", "○"}, {"b", "×", "○"}}
 	previous.headerPage = 27
 	current := previous
 	current.rows = [][]string{{"c", "×", "○"}, {"d", "×", "○"}}
 	current.mergedRows = []bool{false, false}
 	continuePDFTable(previous, &current, pg, pg, crop{}, 28)
-	want := [][]string{{"Item", "Level", "Level"}, {"Item", "warn", "debug"}, {"c", "×", "○"}, {"d", "×", "○"}}
+	want := [][]string{{itemHeader, levelHeader, levelHeader}, {itemHeader, "warn", "debug"}, {"c", "×", "○"}, {"d", "×", "○"}}
 	if !reflect.DeepEqual(current.rows, want) || current.headerPage != 27 || current.headerRows != 2 {
 		t.Fatalf("multirow continuation = %#v", current)
 	}
@@ -208,15 +191,50 @@ func TestPDFTableMultirowHeaderContinuation(t *testing.T) {
 		t.Fatalf("third page lost header levels or source: %#v", next)
 	}
 	current.rows[0][0] = "changed"
-	if previous.rows[0][0] != "Item" || next.rows[0][0] != "Item" {
+	if previous.rows[0][0] != itemHeader || next.rows[0][0] != itemHeader {
 		t.Fatal("inherited header aliases another page")
 	}
 }
 
 func TestTablePreservesLiteralMarkup(t *testing.T) {
 	var output strings.Builder
-	renderTableBlock(&output, domain.Block{Rows: [][]string{{"項目", "内容"}, {"a|b", "<ARG> & value\n次の行"}}}, links{pdf: "manual.pdf"})
+	renderTableBlock(&output, domain.Block{Rows: [][]string{{"項目", "内容"}, {"a|b", "<ARG> & value\n次の行"}}}, links{pdf: tablePDF})
 	if !strings.Contains(output.String(), `| a\|b | &lt;ARG&gt; &amp; value<br>次の行 |`) {
 		t.Fatalf("markup = %s", output.String())
+	}
+}
+
+func checkRejectedContinuation(t *testing.T, tc string, pg pdfPage, table pdfTable) {
+	prevPage, page := pg, pg
+	current := table
+	current.rows = table.rows[1:]
+	current.columns = append([]float64(nil), table.columns...)
+	previous := table
+	alterContinuation(tc, pg, table, &previous, &current, &prevPage, &page)
+	want := len(current.rows)
+	continuePDFTable(previous, &current, prevPage, page, crop{}, 28)
+	if len(current.rows) != want || current.headerPage != 28 {
+		t.Fatal("new table or repeated header was extended")
+	}
+}
+
+func alterContinuation(tc string, pg pdfPage, table pdfTable, previous, current *pdfTable, prevPage, page *pdfPage) {
+	switch tc {
+	case "prose before":
+		page.glyphs = append(append([]glyph(nil), pg.glyphs...), testGlyph('P', 20, 135))
+	case "prose after":
+		prevPage.glyphs = append(append([]glyph(nil), pg.glyphs...), testGlyph('Q', 20, 25))
+	case "different columns":
+		current.columns[1] += 5
+	case "repeated header":
+		current.rows = table.rows
+	case "new merged heading":
+		current.mergedRows = []bool{true, false, false}
+	case "new flat heading":
+		current.rows = [][]string{{"Other", "Labels", "Permissions"}, {"four", integerType, "RO"}}
+	case "unknown data":
+		current.rows = [][]string{{"four", "Other", "RW"}}
+	case "no source header":
+		previous.headerRows = 0
 	}
 }

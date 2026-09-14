@@ -168,67 +168,15 @@ func loadPNG(path string) (image.Image, error) {
 func isCenterStripeAllWhite(img image.Image, centerStart, centerEnd, yOffset, height int, threshold byte) bool {
 	switch m := img.(type) {
 	case *image.NRGBA:
-		for y := range height {
-			off := (yOffset+y)*m.Stride + centerStart*4
-			for x := centerStart; x < centerEnd; x++ {
-				if m.Pix[off] < threshold || m.Pix[off+1] < threshold || m.Pix[off+2] < threshold {
-					return false
-				}
-				off += 4
-			}
-		}
-		return true
+		return rgbaStripeWhite(m.Pix, m.Stride, centerStart, centerEnd, yOffset, height, threshold)
 	case *image.RGBA:
-		for y := range height {
-			off := (yOffset+y)*m.Stride + centerStart*4
-			for x := centerStart; x < centerEnd; x++ {
-				if m.Pix[off] < threshold || m.Pix[off+1] < threshold || m.Pix[off+2] < threshold {
-					return false
-				}
-				off += 4
-			}
-		}
-		return true
+		return rgbaStripeWhite(m.Pix, m.Stride, centerStart, centerEnd, yOffset, height, threshold)
 	case *image.Gray:
-		for y := range height {
-			off := (yOffset+y)*m.Stride + centerStart
-			for x := centerStart; x < centerEnd; x++ {
-				if m.Pix[off] < threshold {
-					return false
-				}
-				off++
-			}
-		}
-		return true
+		return grayStripeWhite(m, centerStart, centerEnd, yOffset, height, threshold)
 	case *image.Paletted:
-		// パレット事前評価で高速化
-		isWhite := make([]bool, len(m.Palette))
-		threshold16 := uint32(threshold) * 257
-		for i, c := range m.Palette {
-			r, g, b, a := c.RGBA()
-			isWhite[i] = r >= threshold16 && g >= threshold16 && b >= threshold16 && a >= threshold16
-		}
-		for y := range height {
-			off := (yOffset+y)*m.Stride + centerStart
-			for x := centerStart; x < centerEnd; x++ {
-				if !isWhite[m.Pix[off]] {
-					return false
-				}
-				off++
-			}
-		}
-		return true
+		return paletteStripeWhite(m, centerStart, centerEnd, yOffset, height, threshold)
 	default:
-		threshold16 := uint32(threshold) * 257
-		for y := yOffset; y < yOffset+height; y++ {
-			for x := centerStart; x < centerEnd; x++ {
-				r, g, b, _ := img.At(x, y).RGBA()
-				if r < threshold16 || g < threshold16 || b < threshold16 {
-					return false
-				}
-			}
-		}
-		return true
+		return genericStripeWhite(img, centerStart, centerEnd, yOffset, height, threshold)
 	}
 }
 
@@ -269,4 +217,63 @@ func savePNG(path string, img image.Image) (retErr error) {
 		return err
 	}
 	return w.Flush()
+}
+
+func rgbaStripeWhite(pix []byte, stride, centerStart, centerEnd, yOffset, height int, threshold byte) bool {
+	for y := range height {
+		off := (yOffset+y)*stride + centerStart*4
+		for x := centerStart; x < centerEnd; x++ {
+			if pix[off] < threshold || pix[off+1] < threshold || pix[off+2] < threshold {
+				return false
+			}
+			off += 4
+		}
+	}
+	return true
+}
+
+func grayStripeWhite(m *image.Gray, centerStart, centerEnd, yOffset, height int, threshold byte) bool {
+	for y := range height {
+		off := (yOffset+y)*m.Stride + centerStart
+		for x := centerStart; x < centerEnd; x++ {
+			if m.Pix[off] < threshold {
+				return false
+			}
+			off++
+		}
+	}
+	return true
+}
+
+func paletteStripeWhite(m *image.Paletted, centerStart, centerEnd, yOffset, height int, threshold byte) bool {
+	// パレット事前評価で高速化
+	isWhite := make([]bool, len(m.Palette))
+	threshold16 := uint32(threshold) * 257
+	for i, c := range m.Palette {
+		r, g, b, a := c.RGBA()
+		isWhite[i] = r >= threshold16 && g >= threshold16 && b >= threshold16 && a >= threshold16
+	}
+	for y := range height {
+		off := (yOffset+y)*m.Stride + centerStart
+		for x := centerStart; x < centerEnd; x++ {
+			if !isWhite[m.Pix[off]] {
+				return false
+			}
+			off++
+		}
+	}
+	return true
+}
+
+func genericStripeWhite(img image.Image, centerStart, centerEnd, yOffset, height int, threshold byte) bool {
+	threshold16 := uint32(threshold) * 257
+	for y := yOffset; y < yOffset+height; y++ {
+		for x := centerStart; x < centerEnd; x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			if r < threshold16 || g < threshold16 || b < threshold16 {
+				return false
+			}
+		}
+	}
+	return true
 }

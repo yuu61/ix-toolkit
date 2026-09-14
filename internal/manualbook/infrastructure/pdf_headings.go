@@ -46,13 +46,8 @@ func pdfHeadingLines(pg pdfPage, body crop, bodySize, minSize float64) map[strin
 		if !headingRe.MatchString(s) || tocLeaderRe.MatchString(s) {
 			continue
 		}
-		for _, g := range ln.glyphs {
-			if g.r >= '0' && g.r <= '9' || g.r >= '０' && g.r <= '９' {
-				if bodySize > 0 && g.fontSize > bodySize*1.02 && g.fontSize >= minSize {
-					out[headingTextKey(s)] = true
-				}
-				break
-			}
+		if largeHeadingNumber(ln.glyphs, bodySize, minSize) {
+			out[headingTextKey(s)] = true
 		}
 	}
 	return out
@@ -65,4 +60,16 @@ func isPageHeading(pg Page, text, number string) bool {
 		return false
 	}
 	return pg.headings == nil || pg.headings[headingTextKey(text)]
+}
+
+func largeHeadingNumber(gs []glyph, bodySize, minSize float64) bool {
+	for _, g := range gs {
+		if g.r >= '0' && g.r <= '9' || g.r >= '０' && g.r <= '９' {
+			if bodySize > 0 && g.fontSize > bodySize*1.02 && g.fontSize >= minSize {
+				return true
+			}
+			break
+		}
+	}
+	return false
 }

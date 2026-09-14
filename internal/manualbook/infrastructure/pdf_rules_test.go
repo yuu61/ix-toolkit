@@ -13,7 +13,7 @@ type genericImage struct{ image.RGBA64Image }
 
 func TestImageRulesRGBA(t *testing.T) {
 	img := image.NewRGBA(image.Rect(-3, 5, 157, 145))
-	rng := rand.New(rand.NewPCG(1, 2))
+	rng := rand.New(rand.NewPCG(1, 2)) // #nosec G404 -- 画像処理の比較用に同じ入力を再現する。
 	for i := range img.Pix {
 		img.Pix[i] = uint8(rng.Uint32())
 	}
@@ -27,19 +27,17 @@ func TestImageRulesRGBA(t *testing.T) {
 			img.SetRGBA(x, y, color.RGBA{c, c, c, 255})
 		}
 	}
-	colors := image.NewRGBA(image.Rect(0, 0, 160, 256))
-	for y := range 256 {
-		c := color.RGBA{uint8(rng.Uint32()), uint8(rng.Uint32()), uint8(rng.Uint32()), uint8(rng.Uint32())}
-		for x := range 160 {
-			colors.SetRGBA(x, y, c)
-		}
+	colors := randomColorImage(rng)
+	subimage, ok := img.SubImage(image.Rect(1, 11, 148, 139)).(*image.RGBA)
+	if !ok {
+		t.Fatal("RGBA subimage has unexpected type")
 	}
 	for _, tc := range []struct {
 		img  *image.RGBA
 		name string
 	}{
 		{name: "full", img: img},
-		{name: "subimage", img: img.SubImage(image.Rect(1, 11, 148, 139)).(*image.RGBA)},
+		{name: "subimage", img: subimage},
 		{name: "colors", img: colors},
 		{name: "empty", img: image.NewRGBA(image.Rectangle{})},
 	} {
@@ -74,4 +72,15 @@ func BenchmarkImageRules(b *testing.B) {
 			}
 		})
 	}
+}
+
+func randomColorImage(rng *rand.Rand) *image.RGBA {
+	colors := image.NewRGBA(image.Rect(0, 0, 160, 256))
+	for y := range 256 {
+		c := color.RGBA{uint8(rng.Uint32()), uint8(rng.Uint32()), uint8(rng.Uint32()), uint8(rng.Uint32())}
+		for x := range 160 {
+			colors.SetRGBA(x, y, c)
+		}
+	}
+	return colors
 }

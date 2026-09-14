@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/yuu61/ix-toolkit/internal/manualbook/application"
+	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 	"github.com/yuu61/ix-toolkit/internal/manualbook/infrastructure"
 )
 
@@ -50,11 +51,7 @@ func TestWebHeadingParsingDoesNotReadOrWriteFigures(t *testing.T) {
 	if len(heads) != 1 || len(heads[0].Blocks) != 2 {
 		t.Fatalf("headings = %+v", heads)
 	}
-	for _, b := range heads[0].Blocks {
-		if b.FigureSource != "diagram.svg" || b.Figure != "" || len(b.Lines) != 0 {
-			t.Fatalf("parser must return only the figure reference: %+v", b)
-		}
-	}
+	checkFigureReferences(t, heads)
 	if entries, err := os.ReadDir(o.OutDir); err != nil || len(entries) != 0 {
 		t.Fatalf("parser wrote output: %v, %v", entries, err)
 	}
@@ -74,10 +71,7 @@ func TestWebFiguresKeepLinksAndLabels(t *testing.T) {
 		t.Fatal(err)
 	}
 	columns := strings.Split(strings.Split(strings.TrimSpace(string(index)), "\n")[1], "\t")
-	body, err := os.ReadFile(filepath.Join(o.OutDir, filepath.FromSlash(columns[2])))
-	if err != nil {
-		t.Fatal(err)
-	}
+	body := readIndexBody(t, o.OutDir, columns[2])
 	if strings.Count(string(body), "diagram.svg") != 2 || strings.Count(string(body), "Router") != 2 {
 		t.Fatalf("figure links or labels lost: %s", body)
 	}
@@ -118,7 +112,7 @@ func TestWebUnnumberedHeadings(t *testing.T) {
 	if err != nil || len(pages) != 0 {
 		t.Fatalf("numbered mode included unnumbered pages: %d, %v", len(pages), err)
 	}
-	if err := application.Convert(application.MDOptions{Input: cache, OutDir: out, ProfilePath: profile}); err != nil {
+	if err = application.Convert(application.MDOptions{Input: cache, OutDir: out, ProfilePath: profile}); err != nil {
 		t.Fatal(err)
 	}
 	index, err := os.ReadFile(filepath.Join(out, "sections.tsv"))
@@ -130,39 +124,7 @@ func TestWebUnnumberedHeadings(t *testing.T) {
 		t.Fatalf("index headings lost or duplicated: %s", index)
 	}
 	for _, row := range rows[1:] {
-		cols := strings.Split(row, "\t")
-		if len(cols) != 5 {
-			t.Fatalf("bad index row: %s", row)
-		}
-		body, err := os.ReadFile(filepath.Join(out, filepath.FromSlash(cols[2])))
-		if err != nil {
-			t.Fatal(err)
-		}
-		line, err := strconv.Atoi(cols[3])
-		lines := strings.Split(string(body), "\n")
-		if err != nil || line < 1 || line > len(lines) || !strings.HasSuffix(strings.ReplaceAll(lines[line-1], "`", ""), " "+cols[1]) {
-			t.Fatalf("index does not point to heading: %s", row)
-		}
-		if cols[0] == "format" && !strings.Contains(string(body), "APP-NAME MSGID MSG") {
-			t.Fatal("cover explanation lost")
-		}
-		if cols[0] == "sample-001" {
-			list := "- sample - 001 - Event `<PEER>`\n- sample - 002 - Next event\n"
-			if !strings.Contains(string(body), list) {
-				t.Fatalf("local contents must preserve one list item per line: %s", body)
-			}
-			if !strings.Contains(lines[line-1], "`<PEER>`") {
-				t.Fatal("heading parameter would be interpreted as an HTML tag")
-			}
-			if cols[1] != "sample - 001 - Event <PEER>" || cols[4] != "log_sample.html#sample-001" {
-				t.Fatalf("message or source lost: %s", row)
-			}
-			for _, want := range []string{"Level", "notice", "Meaning", "Example event.", "Parameters", "<PEER>", "peer name"} {
-				if !strings.Contains(string(body), want) {
-					t.Errorf("log body missing %q: %s", want, body)
-				}
-			}
-		}
+		checkUnnumberedIndexRow(t, out, row)
 	}
 	if !strings.Contains(string(index), "sample-001\t") {
 		t.Fatal("log entry anchor missing")
@@ -174,4 +136,64 @@ func writeWebFile(t *testing.T, path, text string) {
 	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func checkFigureReferences(t *testing.T, heads []domain.Heading) {
+	for i := range heads[0].Blocks {
+		b := &heads[0].Blocks[i]
+		if b.FigureSource != "diagram.svg" || b.Figure != "" || len(b.Lines) != 0 {
+			t.Fatalf("parser must return only the figure reference: %+v", b)
+		}
+	}
+}
+
+func checkUnnumberedIndexRow(t *testing.T, out, row string) {
+	cols := strings.Split(row, "\t")
+	if len(cols) != 5 {
+		t.Fatalf("bad index row: %s", row)
+	}
+	body := readIndexBody(t, out, cols[2])
+	line, err := strconv.Atoi(cols[3])
+	lines := strings.Split(string(body), "\n")
+	if err != nil || line < 1 || line > len(lines) || !strings.HasSuffix(strings.ReplaceAll(lines[line-1], "`", ""), " "+cols[1]) {
+		t.Fatalf("index does not point to heading: %s", row)
+	}
+	if cols[0] == "format" && !strings.Contains(string(body), "APP-NAME MSGID MSG") {
+		t.Fatal("cover explanation lost")
+	}
+	if cols[0] == "sample-001" {
+		checkLogIndexRow(t, row, cols, lines, body, line)
+	}
+}
+
+func checkLogIndexRow(t *testing.T, row string, cols, lines []string, body []byte, line int) {
+	list := "- sample - 001 - Event `<PEER>`\n- sample - 002 - Next event\n"
+	if !strings.Contains(string(body), list) {
+		t.Fatalf("local contents must preserve one list item per line: %s", body)
+	}
+	if !strings.Contains(lines[line-1], "`<PEER>`") {
+		t.Fatal("heading parameter would be interpreted as an HTML tag")
+	}
+	if cols[1] != "sample - 001 - Event <PEER>" || cols[4] != "log_sample.html#sample-001" {
+		t.Fatalf("message or source lost: %s", row)
+	}
+	for _, want := range []string{"Level", "notice", "Meaning", "Example event.", "Parameters", "<PEER>", "peer name"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("log body missing %q: %s", want, body)
+		}
+	}
+}
+
+func readIndexBody(t *testing.T, dir, rel string) []byte {
+	t.Helper()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	body, err := root.ReadFile(filepath.FromSlash(rel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
 }
