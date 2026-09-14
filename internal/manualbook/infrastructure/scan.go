@@ -158,7 +158,7 @@ func loadPNG(path string) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return png.Decode(bufio.NewReaderSize(f, 1<<16))
 }
 
@@ -259,7 +259,7 @@ func savePNG(path string, img image.Image) (retErr error) {
 			retErr = cerr
 		}
 		if retErr != nil {
-			os.Remove(path)
+			_ = os.Remove(path)
 		}
 	}()
 

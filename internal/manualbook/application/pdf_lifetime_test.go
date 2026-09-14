@@ -19,14 +19,14 @@ func TestPDFReleasedAfterBuildFigureFailure(t *testing.T) {
 			writeSyntheticPDF(t, pdf)
 			t.Cleanup(func() { infrastructure.CloseDoc(pdf) })
 			profile := filepath.Join(t.TempDir(), "profile.json")
-			if err := os.WriteFile(profile, []byte(`{"name":"test-fd","columns":1,"pageWidth":40,"pageHeight":40,"fieldLabels":[]}`), 0600); err != nil {
+			if err := os.WriteFile(profile, []byte(`{"name":"test-fd","columns":1,"pageWidth":40,"pageHeight":40,"fieldLabels":[]}`), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			block := "p1.png"
 			if failure == "mark" {
 				block = ".manualbook.json"
 			}
-			if err := os.MkdirAll(filepath.Join(out, "figures", block), 0700); err != nil {
+			if err := os.MkdirAll(filepath.Join(out, "figures", block), 0o700); err != nil {
 				t.Fatal(err)
 			}
 			err := convertDoc(domain.Doc{Name: "sample", Kind: "pdf"}, cache, out, profile)
@@ -96,7 +96,7 @@ func writeSyntheticPDF(t *testing.T, path string) {
 		fmt.Fprintf(&b, "%010d 00000 n \n", offset)
 	}
 	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
-	if err := os.WriteFile(path, []byte(b.String()), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -38,7 +38,7 @@ func RenderFigures(pdf, outDir string, dpi int, pageSpec string) (int, error) {
 			return 0, err
 		}
 		err = png.Encode(f, img)
-		f.Close()
+		_ = f.Close()
 		cleanup() // WebAssembly では画像の裏のメモリをここで返す
 		if err != nil {
 			return 0, fmt.Errorf("%s の書き出しに失敗: %w", path, err)

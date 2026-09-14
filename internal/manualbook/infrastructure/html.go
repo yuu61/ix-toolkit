@@ -126,7 +126,7 @@ func readWebPage(file, rel string, unnumbered bool) (WebPage, bool, error) {
 	if err != nil {
 		return WebPage{}, false, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	doc, err := html.Parse(f)
 	if err != nil {
 		return WebPage{}, false, err
@@ -337,7 +337,7 @@ func entryFields(sec *html.Node, labels map[string]bool) []domain.Field {
 					continue
 				}
 				dd := d.NextSibling
-				for dd != nil && !(dd.Type == html.ElementNode && dd.Data == "dd") {
+				for dd != nil && (dd.Type != html.ElementNode || dd.Data != "dd") {
 					dd = dd.NextSibling
 				}
 				if dd != nil {
@@ -419,13 +419,13 @@ func copyFile(from, to string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 	out, err := os.Create(to)
 	if err != nil {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+		_ = out.Close()
 		return err
 	}
 	return out.Close()
@@ -840,7 +840,7 @@ func svgLabels(file string) []string {
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	dec := xml.NewDecoder(f)
 	dec.Strict = false
 	var items []svgText
@@ -982,15 +982,6 @@ func findNode(n *html.Node, pred func(*html.Node) bool) *html.Node {
 		return true
 	})
 	return found
-}
-
-func childElement(n *html.Node, tag string) *html.Node {
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if c.Type == html.ElementNode && c.Data == tag {
-			return c
-		}
-	}
-	return nil
 }
 
 // nodeText は節点以下のテキストを繋ぐ。

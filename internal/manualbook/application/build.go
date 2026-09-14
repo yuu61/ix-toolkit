@@ -114,7 +114,7 @@ func Build(manifestPath, cacheDir, manualsDir string, force bool, only string) e
 			fmt.Printf("[%d/%d] %s (%s)\n", i, n, d.Name, d.Kind)
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  ✗ %s: %s\n", d.Name, err)
+			_, _ = fmt.Fprintf(os.Stderr, "  ✗ %s: %s\n", d.Name, err)
 			failed++
 		}
 		fmt.Println()
@@ -135,7 +135,7 @@ func Build(manifestPath, cacheDir, manualsDir string, force bool, only string) e
 			derived = "" // Diff がカレントと実行ファイルの隣を探し、無ければ警告する
 		}
 		if err := Diff(ixDir, ixrDir, "", derived); err != nil {
-			fmt.Fprintf(os.Stderr, "  ✗ diff.tsv: %s\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "  ✗ diff.tsv: %s\n", err)
 			failed++
 		}
 	} else {
@@ -153,7 +153,7 @@ func Build(manifestPath, cacheDir, manualsDir string, force bool, only string) e
 // 見る)、Web は取り切った印 (.manualbook.json の版) で決める。-force ならどちらも取り直す。
 func fetchIfNeeded(w io.Writer, client *http.Client, d domain.Doc, cacheDir string, force bool) error {
 	if d.Kind == "web" && !force && infrastructure.WebFetched(infrastructure.CachePath(cacheDir, d), d) {
-		fmt.Fprintf(w, "  = %s (取得済み)\n", d.Name)
+		_, _ = fmt.Fprintf(w, "  = %s (取得済み)\n", d.Name)
 		return nil
 	}
 	return infrastructure.FetchDoc(w, client, d, cacheDir, force, time.Second, infrastructure.DefaultUserAgent)

@@ -50,9 +50,10 @@ func ReadManifest(path string) (domain.Manifest, error) {
 	for i := range m.Docs {
 		d := &m.Docs[i]
 		if d.Kind == "" {
-			if d.Series == "ix" {
+			switch d.Series {
+			case "ix":
 				d.Kind = "pdf"
-			} else if d.Series == "ix-r" {
+			case "ix-r":
 				d.Kind = "web"
 			}
 		}
@@ -153,7 +154,7 @@ func fetchOne(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 	// url が空でも、別の経路で手に入れた PDF が置いてあれば取得済みとして扱う。
 	if !force {
 		if _, err := os.Stat(dst); err == nil {
-			fmt.Fprintf(w, "  = %s (取得済み)\n", d.Name)
+			_, _ = fmt.Fprintf(w, "  = %s (取得済み)\n", d.Name)
 			return nil
 		}
 	}
@@ -161,12 +162,12 @@ func fetchOne(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 		return fmt.Errorf("url が空。配布ページを見て転記するか、手元にある PDF を %s に置く", dst)
 	}
 
-	fmt.Fprintf(w, "  → %s\n", d.URL)
+	_, _ = fmt.Fprintf(w, "  → %s\n", d.URL)
 	resp, err := client.Get(d.URL)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %s", resp.Status)
 	}
@@ -183,16 +184,16 @@ func fetchOne(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 		err = cerr
 	}
 	if err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return err
 	}
 
 	if err := os.Rename(tmp, dst); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return err
 	}
 
-	fmt.Fprintf(w, "  ✓ %s (%.1f MB)\n", dst, float64(n)/(1<<20))
+	_, _ = fmt.Fprintf(w, "  ✓ %s (%.1f MB)\n", dst, float64(n)/(1<<20))
 	return nil
 }
 
@@ -286,7 +287,7 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 		if err != nil {
 			return nil, err
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("%s: HTTP %s", rel, resp.Status)
 		}
@@ -294,7 +295,7 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 	}
 
 	// 1. index の指定箇所で版を確かめる。違えば取らずに止まる。
-	fmt.Fprintf(w, "  → %s\n", base)
+	_, _ = fmt.Fprintf(w, "  → %s\n", base)
 	index, err := readAll("")
 	if err != nil {
 		return err
@@ -307,7 +308,7 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 		return fmt.Errorf("版が合わない\n    マニフェスト: %s\n    サイトの版の記載: %s\n"+
 			"    配布ページを確かめて manifest の version と url を更新する", d.Version, versionText)
 	}
-	fmt.Fprintf(w, "    版 %s: %s\n", d.Version, versionText)
+	_, _ = fmt.Fprintf(w, "    版 %s: %s\n", d.Version, versionText)
 
 	// 2. searchindex.js からページの一覧を取る。これで取る対象が確定する。
 	si, err := readAll("searchindex.js")
@@ -322,7 +323,7 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 	if err := json.Unmarshal(m[1], &docnames); err != nil {
 		return fmt.Errorf("docnames: %w", err)
 	}
-	fmt.Fprintf(w, "    ページ: %d\n", len(docnames))
+	_, _ = fmt.Fprintf(w, "    ページ: %d\n", len(docnames))
 
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
@@ -373,7 +374,7 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 		if err != nil {
 			return false, nil, err
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		switch resp.StatusCode {
 		case http.StatusNotModified:
 			if force || cacheErr != nil || (tag.ETag == "" && tag.LastModified == "") {
@@ -418,10 +419,10 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 			images[path.Join(path.Dir(rel), src)] = true
 		}
 		if (i+1)%20 == 0 {
-			fmt.Fprintf(w, "    %d/%d ページ\n", i+1, len(docnames))
+			_, _ = fmt.Fprintf(w, "    %d/%d ページ\n", i+1, len(docnames))
 		}
 	}
-	fmt.Fprintf(w, "    ページ: 取得 %d / 変化なし %d\n", fetched, unchanged)
+	_, _ = fmt.Fprintf(w, "    ページ: 取得 %d / 変化なし %d\n", fetched, unchanged)
 
 	// 4. 画像。_static (CSS/JS) は要らない。
 	imgFetched, imgUnchanged := 0, 0
@@ -436,7 +437,7 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 			imgUnchanged++
 		}
 	}
-	fmt.Fprintf(w, "    画像: 取得 %d / 変化なし %d\n", imgFetched, imgUnchanged)
+	_, _ = fmt.Fprintf(w, "    画像: 取得 %d / 変化なし %d\n", imgFetched, imgUnchanged)
 
 	// 5. 変換が読む覚え書きと、次回の条件付き GET 用の ETag。
 	meta := WebMeta{
@@ -460,7 +461,7 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 	if err := publishWebCache(stage, dst, previous); err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "  ✓ %s\n", dst)
+	_, _ = fmt.Fprintf(w, "  ✓ %s\n", dst)
 	return nil
 }
 

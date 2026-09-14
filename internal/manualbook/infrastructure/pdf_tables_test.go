@@ -13,8 +13,15 @@ import (
 
 func sampleTable() (pdfPage, []pdfRule) {
 	rules := []pdfRule{
-		{false, 120, 10, 130}, {false, 100, 10, 130}, {false, 80, 10, 130}, {false, 60, 50, 130}, {false, 40, 10, 130},
-		{true, 10, 40, 120}, {true, 50, 40, 120}, {true, 90, 40, 100}, {true, 130, 40, 120},
+		{false, 120, 10, 130},
+		{false, 100, 10, 130},
+		{false, 80, 10, 130},
+		{false, 60, 50, 130},
+		{false, 40, 10, 130},
+		{true, 10, 40, 120},
+		{true, 50, 40, 120},
+		{true, 90, 40, 100},
+		{true, 130, 40, 120},
 	}
 	pg := pdfPage{width: 160, height: 150, glyphs: []glyph{
 		testGlyph('A', 25, 110), testGlyph('B', 65, 115), testGlyph('C', 65, 105),

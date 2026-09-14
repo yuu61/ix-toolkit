@@ -67,6 +67,7 @@ func newCellSets(n int) cellSets {
 	}
 	return s
 }
+
 func (s cellSets) root(i int) int {
 	for s[i] != i {
 		s[i] = s[s[i]]

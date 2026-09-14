@@ -76,7 +76,7 @@ func ReadCommandIndex(path string) ([]domain.IndexedCommand, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var cmds []domain.IndexedCommand
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
@@ -185,7 +185,7 @@ func readSectionIndex(path string) ([]indexedSection, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var secs []indexedSection
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
@@ -240,7 +240,7 @@ func ReadDerived(path string) ([]domain.DiffRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var rows []domain.DiffRow
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)

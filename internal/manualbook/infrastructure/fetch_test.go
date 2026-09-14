@@ -276,10 +276,10 @@ func TestFetchWebRejectsNamesOutsideDocumentCache(t *testing.T) {
 func TestPublishWebCacheRestoresOnFailure(t *testing.T) {
 	root := t.TempDir()
 	dst, previous := filepath.Join(root, "cache"), filepath.Join(root, "previous")
-	if err := os.Mkdir(dst, 0700); err != nil {
+	if err := os.Mkdir(dst, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dst, "page.html"), []byte("old"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dst, "page.html"), []byte("old"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := publishWebCache(filepath.Join(root, "missing"), dst, previous); err == nil {

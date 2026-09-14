@@ -40,8 +40,10 @@ func TestPDFHeadingsRequireChapterAndLargerNumber(t *testing.T) {
 		}
 		pg.glyphs = append(pg.glyphs, structureLine(s, 45, float64(700-i*25), size)...)
 	}
-	page := Page{num: 10, chapter: 2, section: "章・設定", lines: texts,
-		headings: pdfHeadingLines(pg, crop{}, 10.56, 0)}
+	page := Page{
+		num: 10, chapter: 2, section: "章・設定", lines: texts,
+		headings: pdfHeadingLines(pg, crop{}, 10.56, 0),
+	}
 	heads, _ := ParseHeadings(&domain.Profile{ChapterSep: "・"}, []Page{page})
 	var got []string
 	for _, h := range heads {

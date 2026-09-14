@@ -34,7 +34,7 @@ func Calibrate(w io.Writer, pdf, name string, windows, winSize int) (*domain.Pro
 	if err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(w, "テキスト層: 先頭 20 ページで %d 文字\n", glyphs)
+	_, _ = fmt.Fprintf(w, "テキスト層: 先頭 20 ページで %d 文字\n", glyphs)
 	if glyphs < 200 {
 		return nil, ErrNoTextLayer
 	}
@@ -43,7 +43,7 @@ func Calibrate(w io.Writer, pdf, name string, windows, winSize int) (*domain.Pro
 	if err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(w, "ページ数: %d\n", len(all))
+	_, _ = fmt.Fprintf(w, "ページ数: %d\n", len(all))
 
 	p := domain.DefaultProfile()
 	p.Name = name
@@ -55,7 +55,7 @@ func Calibrate(w io.Writer, pdf, name string, windows, winSize int) (*domain.Pro
 	if len(sample) == 0 {
 		return nil, errors.New("本文のあるページが見つかりません")
 	}
-	fmt.Fprintf(w, "サンプル: %s\n\n", describe(sample))
+	_, _ = fmt.Fprintf(w, "サンプル: %s\n\n", describe(sample))
 
 	// --- 2. ページ寸法 ---
 	width, height, err := pageSize(pdf)
@@ -63,17 +63,17 @@ func Calibrate(w io.Writer, pdf, name string, windows, winSize int) (*domain.Pro
 		return nil, err
 	}
 	p.PageWidth, p.PageHeight = math.Round(width*100)/100, math.Round(height*100)/100
-	fmt.Fprintf(w, "ページ寸法  : %.0f x %.0f pt\n", p.PageWidth, p.PageHeight)
+	_, _ = fmt.Fprintf(w, "ページ寸法  : %.0f x %.0f pt\n", p.PageWidth, p.PageHeight)
 
 	// --- 3. ヘッダ・フッタ帯 ---
 	p.MarginTop, p.HeaderBand = findRunningBand(pdf, sample, true, p.PageHeight)
 	p.MarginBottom, p.FooterBand = findRunningBand(pdf, sample, false, p.PageHeight)
 	report := func(what string, body, band float64) {
 		if band == 0 {
-			fmt.Fprintf(w, "%s: 検出されず\n", what)
+			_, _ = fmt.Fprintf(w, "%s: 検出されず\n", what)
 			return
 		}
-		fmt.Fprintf(w, "%s: 本文マージン %.0f pt / 帯の切り出し %.0f pt\n", what, body, band)
+		_, _ = fmt.Fprintf(w, "%s: 本文マージン %.0f pt / 帯の切り出し %.0f pt\n", what, body, band)
 	}
 	report("ヘッダ      ", p.MarginTop, p.HeaderBand)
 	report("フッタ      ", p.MarginBottom, p.FooterBand)
@@ -82,10 +82,10 @@ func Calibrate(w io.Writer, pdf, name string, windows, winSize int) (*domain.Pro
 	gl, gr, cols, score, total := findGutter(p, pdf, sample)
 	p.Columns, p.GutterLeft, p.GutterRight = cols, gl, gr
 	if cols >= 2 {
-		fmt.Fprintf(w, "段組み      : %d 段 (左カラムは右端から %.0f / 右カラムは左端から %.0f を削る)\n", cols, gl, gr)
-		fmt.Fprintf(w, "段割り検証  : 取りこぼし・二重取り %d 文字 / %d 文字\n", score, total)
+		_, _ = fmt.Fprintf(w, "段組み      : %d 段 (左カラムは右端から %.0f / 右カラムは左端から %.0f を削る)\n", cols, gl, gr)
+		_, _ = fmt.Fprintf(w, "段割り検証  : 取りこぼし・二重取り %d 文字 / %d 文字\n", score, total)
 	} else {
-		fmt.Fprintf(w, "段組み      : 1 段 (最良の段割りでもずれ %d 文字 / %d 文字あり)\n", score, total)
+		_, _ = fmt.Fprintf(w, "段組み      : 1 段 (最良の段割りでもずれ %d 文字 / %d 文字あり)\n", score, total)
 	}
 	return p, nil
 }

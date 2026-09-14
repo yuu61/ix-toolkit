@@ -176,12 +176,12 @@ func (d *pdfDoc) forPages(f func(*pdfDoc, int) error) error {
 		if err != nil {
 			return fmt.Errorf("並列処理用 PDFium の取得に失敗: %w", err)
 		}
-		defer inst.Close()
+		defer func() { _ = inst.Close() }()
 		res, err := inst.OpenDocument(&requests.OpenDocument{File: &d.data})
 		if err != nil {
 			return fmt.Errorf("並列処理用 PDF を開けません (%s): %w", d.path, err)
 		}
-		defer inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: res.Document})
+		defer func() { _, _ = inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: res.Document}) }()
 		workers = append(workers, &pdfDoc{path: d.path, data: d.data, instance: inst, ref: res.Document, pages: d.pages})
 	}
 	var wg sync.WaitGroup

@@ -23,7 +23,7 @@ func TestWebFigureFailuresReachApplication(t *testing.T) {
 			case "figure directory":
 				writeWebFile(t, filepath.Join(o.OutDir, "figures"), "blocked")
 			case "image destination":
-				if err := os.MkdirAll(filepath.Join(o.OutDir, "figures", "diagram.svg"), 0700); err != nil {
+				if err := os.MkdirAll(filepath.Join(o.OutDir, "figures", "diagram.svg"), 0o700); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -171,7 +171,7 @@ func TestWebUnnumberedHeadings(t *testing.T) {
 
 func writeWebFile(t *testing.T, path, text string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(text), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

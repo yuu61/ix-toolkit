@@ -18,7 +18,7 @@ func TestScanReportsImageFailures(t *testing.T) {
 	for _, dryRun := range []bool{false, true} {
 		for _, mixed := range []bool{false, true} {
 			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, "page001.png"), []byte("broken PNG"), 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, "page001.png"), []byte("broken PNG"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if mixed {
@@ -49,7 +49,7 @@ func TestScanSuccessfulImage(t *testing.T) {
 func TestScanReportsOutputFailure(t *testing.T) {
 	dir, out := t.TempDir(), t.TempDir()
 	writeScanPNG(t, filepath.Join(dir, "page001.png"))
-	if err := os.Mkdir(filepath.Join(out, "page001.png"), 0700); err != nil {
+	if err := os.Mkdir(filepath.Join(out, "page001.png"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	err := application.Scan(dir, out, false)
@@ -90,7 +90,7 @@ func TestScanPreservesNumericOrderAndSplitGeometry(t *testing.T) {
 					t.Fatal(err)
 				}
 				img, err := png.Decode(f)
-				f.Close()
+				_ = f.Close()
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -123,7 +123,7 @@ func TestScanContinuesAfterSplitWriteFailure(t *testing.T) {
 	dir, out := t.TempDir(), t.TempDir()
 	writeScanSpread(t, filepath.Join(dir, "page001.png"))
 	writeScanPNG(t, filepath.Join(dir, "page002.png"))
-	if err := os.Mkdir(filepath.Join(out, "page002.png"), 0700); err != nil {
+	if err := os.Mkdir(filepath.Join(out, "page002.png"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	var reported application.ReportedError
