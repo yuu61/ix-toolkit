@@ -48,8 +48,7 @@ Usage:
     # clean output without "===== cmd =====" headers (for redirection):
     ix-ssh -d home-ix3315 --raw "show running-config" > ix.conf
 
-Inventory (JSON, default ~/.ix-toolkit/devices.json; ~/.claude/ix-devices.json is
-still read for setups that predate the agent-neutral path. Override with
+Inventory (JSON, default ~/.ix-toolkit/devices.json. Override with
 $IX_INVENTORY or --inventory). Keys starting with "_" are ignored, so they can
 hold comments:
 

@@ -9,11 +9,10 @@ from ..domain import UsageError, parse_inventory
 
 INVENTORY_ENV = "IX_INVENTORY"
 INVENTORY_CANDIDATES = (
-    # Agent-neutral location first: the skills run under Claude Code, Codex and
+    # Agent-neutral location: the skills run under Claude Code, Codex and
     # anything else that reads SKILL.md, so the inventory cannot live under one
-    # agent's home. The ~/.claude path stays for setups that predate this.
+    # agent's home.
     Path.home() / ".ix-toolkit" / "devices.json",
-    Path.home() / ".claude" / "ix-devices.json",
 )
 
 
