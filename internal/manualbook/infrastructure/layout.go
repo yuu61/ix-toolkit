@@ -387,7 +387,7 @@ func renderGridLine(ln textLine, originX, unit, lineU float64, startCol int) str
 // 送りよりずっと狭く、隙間で測ると語の中で割れる ("1 0 . 0 . 0 .254")。
 func splitWords(gs []glyph, unit float64) [][]glyph {
 	var words [][]glyph
-	var cur []glyph
+	cur := make([]glyph, 0, len(gs))
 	for i, g := range gs {
 		split := i == 0 || g.spaceBefore
 		if i > 0 && !split {

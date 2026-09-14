@@ -45,7 +45,7 @@ func TestPDFHeadingsRequireChapterAndLargerNumber(t *testing.T) {
 		headings: pdfHeadingLines(pg, crop{}, 10.56, 0),
 	}
 	heads, _ := ParseHeadings(&domain.Profile{ChapterSep: "・"}, []Page{page})
-	var got []string
+	got := make([]string, 0, len(heads))
 	for _, h := range heads {
 		got = append(got, h.Number)
 	}
@@ -85,7 +85,8 @@ func TestPDFExampleHeadingsAndAlternatingFooters(t *testing.T) {
 		if section != "IPv4 設定" || chapterOf(printed) != 1 {
 			t.Fatalf("footer = %q, %q", section, printed)
 		}
-		texts := []string{"１．１　２つのLANを接続する", "１．2 経路を設定する", "１．３ 目次 · · · · · · · · · 1-5", "２．１ 別章", "192.168.0.1 Router", "Router(config)# ip route default 192.0.2.1", "1.1 項と同じ設定です。", "１．４ 目次の長い題 1-6"}
+		texts := make([]string, 0, 9)
+		texts = append(texts, "１．１　２つのLANを接続する", "１．2 経路を設定する", "１．３ 目次 · · · · · · · · · 1-5", "２．１ 別章", "192.168.0.1 Router", "Router(config)# ip route default 192.0.2.1", "1.1 項と同じ設定です。", "１．４ 目次の長い題 1-6")
 		pg := pdfPage{width: 600, height: 800}
 		for i, s := range texts {
 			size := 12.0

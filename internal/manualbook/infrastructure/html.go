@@ -521,8 +521,8 @@ func contentBlocks(nodes []*html.Node, pagePath string, r domain.Ref) []domain.B
 		rel := path.Join(path.Dir(pagePath), attr(img, "src"))
 		blocks = append(blocks, domain.Block{Kind: domain.BlockFigure, Ref: r, FigureSource: rel})
 		// figcaption があれば地の文として続ける
-		if cap := findNode(n, func(c *html.Node) bool { return c.Type == html.ElementNode && c.Data == "figcaption" }); cap != nil {
-			addProse([]string{domain.Collapse(nodeText(cap)), ""})
+		if captionNode := findNode(n, func(c *html.Node) bool { return c.Type == html.ElementNode && c.Data == "figcaption" }); captionNode != nil {
+			addProse([]string{domain.Collapse(nodeText(captionNode)), ""})
 		}
 	}
 	// nestedFigures は箇条書きなどの中に埋まった図を拾う。地の文の塊には図を

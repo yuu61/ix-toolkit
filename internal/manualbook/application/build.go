@@ -64,14 +64,15 @@ func Build(manifestPath, cacheDir, manualsDir string, force bool, only string) e
 	// 置き場を決められない資料は取りに行っても無駄なので、裏には回さず
 	// 表で CheckDoc の理由を出して終わる。
 	var local, web []domain.Doc
-	for _, d := range m.Docs {
+	for i := range m.Docs {
+		d := &m.Docs[i]
 		if only != "" && d.Name != only {
 			continue
 		}
-		if d.Kind == "web" && domain.CheckDoc(d) == nil && (force || !infrastructure.WebFetched(infrastructure.CachePath(cacheDir, d), d)) {
-			web = append(web, d)
+		if d.Kind == "web" && domain.CheckDoc(*d) == nil && (force || !infrastructure.WebFetched(infrastructure.CachePath(cacheDir, *d), *d)) {
+			web = append(web, *d)
 		} else {
-			local = append(local, d)
+			local = append(local, *d)
 		}
 	}
 	if len(local)+len(web) == 0 {

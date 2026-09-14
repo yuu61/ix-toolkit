@@ -73,7 +73,7 @@ var (
 	engineOnce  sync.Once
 	engine      pdfium.Pdfium
 	enginePools [maxPDFWorkers]pdfium.Pool
-	engineErr   error
+	errEngine   error
 
 	docsMu sync.Mutex
 	docs   = map[string]*pdfDoc{}
@@ -90,15 +90,15 @@ func engineInstance() (pdfium.Pdfium, error) {
 			MinIdle: 1, MaxIdle: 1, MaxTotal: 1,
 		})
 		if err != nil {
-			engineErr = fmt.Errorf("PDFium の初期化に失敗: %w", err)
+			errEngine = fmt.Errorf("PDFium の初期化に失敗: %w", err)
 			return
 		}
 		enginePools[0] = pool
 		if engine, err = pool.GetInstance(30 * time.Second); err != nil {
-			engineErr = fmt.Errorf("PDFium の取得に失敗: %w", err)
+			errEngine = fmt.Errorf("PDFium の取得に失敗: %w", err)
 		}
 	})
-	return engine, engineErr
+	return engine, errEngine
 }
 
 // openDoc は PDF を開く。同じパスなら開き直さず使い回す。
@@ -162,6 +162,13 @@ func (d *pdfDoc) forPages(f func(*pdfDoc, int) error) error {
 		}
 		return nil
 	}
+	var cleanups []func()
+	defer func() {
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			cleanups[i]()
+		}
+	}()
+
 	workers := []*pdfDoc{d}
 	for len(workers) < n {
 		k := len(workers)
@@ -176,12 +183,12 @@ func (d *pdfDoc) forPages(f func(*pdfDoc, int) error) error {
 		if err != nil {
 			return fmt.Errorf("並列処理用 PDFium の取得に失敗: %w", err)
 		}
-		defer func() { _ = inst.Close() }()
+		cleanups = append(cleanups, func() { _ = inst.Close() })
 		res, err := inst.OpenDocument(&requests.OpenDocument{File: &d.data})
 		if err != nil {
 			return fmt.Errorf("並列処理用 PDF を開けません (%s): %w", d.path, err)
 		}
-		defer func() { _, _ = inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: res.Document}) }()
+		cleanups = append(cleanups, func() { _, _ = inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: res.Document}) })
 		workers = append(workers, &pdfDoc{path: d.path, data: d.data, instance: inst, ref: res.Document, pages: d.pages})
 	}
 	var wg sync.WaitGroup

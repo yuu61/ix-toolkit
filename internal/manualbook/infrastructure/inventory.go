@@ -10,16 +10,16 @@ import (
 func InitInventory() (bool, string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return false, "", nil
+		return false, "", err
 	}
 	toolkitDir := filepath.Join(home, ".ix-toolkit")
 	if err := os.MkdirAll(toolkitDir, 0o755); err != nil {
-		return false, "", fmt.Errorf("インベントリのディレクトリを作れません: %v", err)
+		return false, "", fmt.Errorf("インベントリのディレクトリを作れません: %w", err)
 	}
 	invPath := filepath.Join(toolkitDir, "devices.json")
 	if _, err := os.Stat(invPath); os.IsNotExist(err) {
 		if err := os.WriteFile(invPath, []byte("{\n  \"devices\": {}\n}\n"), 0o644); err != nil {
-			return false, "", fmt.Errorf("インベントリファイルを作れません: %v", err)
+			return false, "", fmt.Errorf("インベントリファイルを作れません: %w", err)
 		}
 		return true, invPath, nil
 	}

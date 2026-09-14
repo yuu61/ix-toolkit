@@ -54,7 +54,8 @@ func Diff(ixDir, ixrDir, out, derived string) error {
 	sd := domain.SetDiff(ixCmds, ixrCmds, known)
 	fmt.Printf("setdiff: %d 族 (無印にあって IX-R の索引に無いコマンド群)\n", len(sd))
 
-	rows := append(known, sd...)
+	rows := append([]domain.DiffRow{}, known...)
+	rows = append(rows, sd...)
 	if err := infrastructure.WriteDiffTSV(out, rows); err != nil {
 		return err
 	}

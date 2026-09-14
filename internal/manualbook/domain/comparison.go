@@ -309,7 +309,7 @@ func SetDiff(ixCmds, ixrCmds []IndexedCommand, known []DiffRow) []DiffRow {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	var rows []DiffRow
+	rows := make([]DiffRow, 0, len(keys))
 	for _, k := range keys {
 		f := fams[k]
 		rows = append(rows, DiffRow{
