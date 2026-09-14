@@ -539,6 +539,15 @@ func renderEntry(b *strings.Builder, e *domain.Entry) {
 		if len(joined) == 0 {
 			continue
 		}
+
+		// "なし" などのみで構成される項目は省き、LLM のコンテキストを節約する
+		if len(joined) == 1 {
+			t := strings.TrimSpace(joined[0])
+			if t == "なし" || t == "なし。" || t == "特になし" || t == "特になし。" || t == "－" || t == "-" || t == "省略可能" || t == "省略可能。" {
+				continue
+			}
+		}
+
 		// デフォルト値・実行モード・ユーザ権限のように 1 行で済む項目は
 		// 見出し語と同じ行に置く。3 行が 1 行になる。
 		if len(joined) == 1 {
