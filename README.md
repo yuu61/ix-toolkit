@@ -1,79 +1,40 @@
 # ix-toolkit
 
-NEC IX を Claude Codeから運用するための skill 一式と、その参照マニュアルを作る PDF / Web → Markdown 変換ツール。
-IX2000/IX3000（無印）と IX-R/IX-V の 2 系列を扱う。
-skill は SKILL.md 形式なので、Codexなど同じ形式を読むエージェントでもそのまま動く。
+NEC IX を Claude Code 等から運用するための skill 一式と、その参照マニュアルを作る PDF / Web → Markdown 変換ツールです。
+IX2000/IX3000（無印）と IX-R/IX-V の 2 系列を扱います。skill は SKILL.md 形式なので、Codexなど同じ形式を読むエージェントでもそのまま動きます。
 
 ---
 
-## skills
+## 1. 運用スキル (`ix-ssh` / skills)
+
+LLM が IX ルータの状態確認や設定変更を行うためのツール群です。
 
 | skill | 用途 | 種別 |
 |---|---|---|
 | `ix-show` | show コマンドで状態確認 | 読み取り専用 |
-| `ix-manual` | コマンドリファレンス・機能説明書・設定事例集・syslog リファレンスを引く | 読み取り専用・機器に接続しない |
+| `ix-manual` | コマンドリファレンス・機能説明書などを検索 | 読み取り専用・機器接続なし |
 | `ix-backup` | running-config をファイルに退避 | 読み取り専用 |
-| `ix-configure` | 設定を投入 | **破壊的**・実行前に確認必須 |
-| `ix-save` | `write memory` で永続化 | **破壊的** |
+| `ix-configure` | 設定を投入 | **破壊的**・実行前確認必須 |
+| `ix-save` | 設定を保存 (`write memory`) | **破壊的** |
 
-### インストール (Claude Code)
+### インストール
 
-リポジトリをクローンして、[uv](https://docs.astral.sh/uv/) でその中の `ix-ssh` を PATH に載せる。
+[uv](https://docs.astral.sh/uv/) を使用して、リポジトリ内の `ix-ssh` コマンドを PATH にインストールします。
 
+**Claude Code の場合:**
 ```console
 $ git clone https://github.com/yuu61/ix-toolkit $HOME/.claude/skills/ix-toolkit
 $ uv tool install -e $HOME/.claude/skills/ix-toolkit
 ```
+※ **`gh skill install` は使わないでください**（ソースコードが含まれないため動作しません）。
+※ アップデートは `git pull` のみで反映されます。
 
-- `.claude-plugin/plugin.json` があるので plugin として読まれ、`/ix-toolkit:ix-show` になる
-  (衝突しなければ `/ix-show` でも引ける)。
-- skill が呼ぶ SSH クライアント `ix-ssh` は `uv tool install` が `~/.local/bin/` に置く
-  (PATH に無ければ `uv tool update-shell`)。依存の netmiko / paramiko は uv が専用の環境に入れるので、
-  手元の Python に何も入れない。
-- `-e` はクローンのソースをそのまま使わせるため。更新は `git pull` だけで効き、依存が変わったときだけ
-  `uv tool install -e … --reinstall`。`-e` を省くとクローン側の変更が `ix-ssh` に効かない。
-- **`gh skill install` は使わない。** skill のディレクトリしか複製せず、`src/` と `pyproject.toml` が
-  付いてこないので `ix-ssh` が無い skill になる。
-- 消すときは `uv tool uninstall ix-toolkit` してクローンを消す。
+**Codex などの他のエージェントの場合:**
+クローン先を対象エージェントの skill ディレクトリ（例: `~/.codex/skills/ix-toolkit`）に変更し、同様に `uv tool install -e $HOME/.codex/skills/ix-toolkit` を実行してください。
 
-<details>
-<summary>以前の入れ方 (gh skill install) からの移行</summary>
+### 接続先 (インベントリ)
 
-- `~/.claude/skills/ix-show/` のように skill 単位で置いたものと、その隣の `ix-ssh.py` は消す
-  (残すと同じ skill が二重に並ぶ)。Codex 側は `~/.codex/skills/ix-*/` と `~/.agents/skills/ix-*/` も同様。
-- `uv tool install git+https://github.com/yuu61/ix-toolkit` で入れた `ix-ssh` は GitHub の版なので、
-  上の `uv tool install -e` で入れ直す (クローンの版に置き換わる)。
-- インベントリ (`~/.ix-toolkit/devices.json`) と変換済みマニュアル (`~/.ix-toolkit/manuals/`) は
-  そのまま。
-
-</details>
-
-### インストール (Codex)
-
-クローン先を `~/.codex/skills/` の下にする。
-
-```console
-$ git clone https://github.com/yuu61/ix-toolkit $HOME/.codex/skills/ix-toolkit
-$ uv tool install -e $HOME/.codex/skills/ix-toolkit
-```
-
-- Codex は skill ディレクトリを入れ子まで辿るので、クローンしたままの `skills/ix-*/SKILL.md` が
-  5 つとも載る。`~/.agents/skills/` に置いても同じように読まれる。
-- Claude Code はこの場所を読まない (`~/.claude/skills/` と plugin だけ)。両方で使うなら両方に
-  クローンし、`uv tool install -e` はどちらか片方に向ける (`git pull` で揃えていれば同じ)。
-- frontmatter の `argument-hint` / `allowed-tools` / `compatibility` / `license` は Claude Code
-  向けで、Codex は `name` と `description` だけを読んで残りは無視する。
-- 更新は `git pull`。
-
-### インストール (その他のエージェント)
-
-SKILL.md を読むエージェントなら、クローンをそのエージェントの skill ディレクトリへ置けば動く
-(skill は `skills/ix-*/` の下)。skill は PATH の `ix-ssh` を呼ぶだけなので、`uv tool install -e` は
-上と同じ。
-
-### 接続先
-
-インベントリ `~/.ix-toolkit/devices.json` を作って定義する。
+`~/.ix-toolkit/devices.json` を作成して対象機器を定義します。
 
 ```json
 {
@@ -88,243 +49,56 @@ SKILL.md を読むエージェントなら、クローンをそのエージェ�
   }
 }
 ```
+- `host` は IP アドレスや `~/.ssh/config` のエイリアスが使用可能です（`ProxyJump` 等も自動で辿ります）。
+- 意図しない機器への設定投入を防ぐため、既定の機器は設定できません。エージェントが会話から判断するかユーザーに尋ねます。
+- 動作確認は手動で `ix-ssh --list` を実行してください。
 
-- `host` は IP でも `~/.ssh/config` のエイリアスでもよい。`ProxyJump` の踏み台も自動で辿る。
-- `model`, `note`は任意。ただし `model` は skill がどの系列のマニュアルを引くかを決める手がかりになる
-  （`IX-R…` / `IX-V…` なら IX-R/IX-V、`IX2…` / `IX3…` なら無印）。無くても止まらず、エージェントが
-  会話から判断するかユーザーに尋ねる。
-- 置き場所は `$IX_INVENTORY` → `~/.ix-toolkit/devices.json` → `~/.claude/ix-devices.json` の順に
-  探す。実際に読んだファイルは `ix-ssh --list` の 1 行目に出る。
-- 既定機器は無く、`--device` を省略するとエラーになる。意図しない機器へ設定が流れ込む事故を防ぐ
-  ためで、skill 側でも機器名の推測を禁じている。
+### コンフィグモードについて
 
-手で確かめるなら skill を通さず直接叩く。
-
-```console
-$ ix-ssh --list
-```
-
-### コンフィグモードへの入り方
-
-通常は `enable-config` で入る。他のユーザーがコンフィグモードを使用中なら、理由を表示して
-終了コード 1 で終了する。自動的に強制取得へ切り替えることはない。
-
-強制取得を明示する場合は `--force-config` を付ける。
-
-```console
-$ ix-ssh -d home "show version"
-$ ix-ssh -d home --force-config "show version"
-```
-
-`--force-config` は `svintr-config` を使い、それまでコンフィグモードにいた他ユーザーを
-オペレーション／EXEC モードへ戻す（IX2000/IX3000、IX-R/IX-V とも Administrator 権限が必要）。
-接続初期化と、その実行中の show・backup・config・save の各モード移行に適用される。
-設定済みのサブモードからグローバルへ戻る場合は、どちらでも `configure` を使う。
-この指定は実行ごとの CLI オプションで、インベントリや環境変数では有効にしない。
-
-操作 skill では、ユーザーが対象機器への強制取得を明示したときだけ `--force-config` を付ける。
-単に「接続して」「設定して」という依頼や、使用中エラーだけを理由に付けない。
+通常は `enable-config` で入ります。他のユーザーが使用中の場合はエラーになります。
+強制取得を明示する場合は `--force-config` を付けて実行します。skill は、ユーザーから「強制的に設定して」など明示された場合のみこのオプションを付与します。
 
 ---
 
-## manualbook
+## 2. マニュアル変換ツール (`manualbook`)
 
-NEC のマニュアルを取得して、`ix-manual` が引く Markdown と索引に変換するツール。
+NEC の公式マニュアル（PDF / Web）を取得し、`ix-manual` skill が読める Markdown と索引に変換する Go 製のツールです。
 
-コードは機器運用 (`src/ix_ssh/`、Python) とマニュアル整備 (`internal/manualbook/`、Go) に分かれ、
-どちらも同じ 4 層に切ってある。規則は `domain` (manualbook なら資料・本文・出典・系列間対応、
-ix-ssh ならインベントリの読み方・設定の優先順位・パスワードの探し方・ProxyJump の平坦化)、
-手順は `application`、外部との入出力 (HTTP・PDFium・HTML、あるいは ssh_config・netmiko・ファイル) は
-`infrastructure`、引数解析と終了コードは `cli`。`cmd/manualbook/main.go` は CLI を起動する。
-
-`domain` は外部入出力に依存せず、`infrastructure` は `domain`、`application` はその両方を使い、
-`cli` は `application` だけを呼ぶ。`go test ./...` はドメイン規則 (索引のキーの抜き方、系列間の
-対応、出典の書き方) を、`python -m unittest` は ix-ssh の規則と、paramiko で立てた偽の IX に対する
-ProxyJump 込みの一連の操作を検証する。ビルド方法、サブコマンド、生成ファイルの形式は以下のとおり。
+### 使い方
 
 ```console
 $ go build -ldflags="-s -w" -o manualbook ./cmd/manualbook
 $ ./manualbook build
 ```
+※ Windows Defender の誤検知を避けるため `-ldflags="-s -w"` を推奨します。
 
-windows Defender の`Trojan:Win32/Bearfoos.A!ml` の誤検知に引っ掛かるため、`-ldflags="-s -w"` は必須
+- `manifest.json` の定義に従い、取得 → 変換 → 差分表の作成までを1回で作ります。
+- マニュアルの変換結果は `~/.ix-toolkit/manuals/` 以下に出力されます。
+- PDF 版マニュアル（無印の設定事例集など）が手元にある場合は `pdf/` ディレクトリに配置しておくと、ダウンロードをスキップして変換します。
+- 2回目以降の実行では、取得済みの資料は再取得せずに変換のみを行います。
 
-`build` は `manifest.json` を読んで、取得 → 変換 → 系列間の差分表まで 1 回で作る。指定はすべて
-`manifest.json` にあるので、フラグは要らない。
+### 変換結果の構成
 
-1. 無印の設定事例集は `pdf/IX1-3K-EX-10.11a.pdf` に置いておく（`manifest.json` の `url` は空）。
-   他の PDF も手元にあれば `pdf/<name>.pdf` に置ける。無ければ manifest の URL から取得する。
-   URL と手元の PDF の両方が無い冊子だけ失敗し、残りは作られる。
-2. `manualbook build`。IX-R/IX-V (Web) はページ・画像を1ファイル1秒の間隔でサイトから取る。
-   Web の取得は裏で先に始め、その間に PDF の3冊を変換する。機能説明書と設定事例集は
-   ページ画像も焼き、罫線の検出のため変換時にも全ページを描画する。
-3. `~/.ix-toolkit/manuals/<系列>/<冊子>/` に本文と索引、`~/.ix-toolkit/manuals/ix-r/diff.tsv` に
-   系列間のコマンド対応表ができる。
+出力されたデータは以下の構造で配置され、エージェントが自己解決のために参照します。
 
-- 取得済みの資料は取りに行かない（PDF は実体の有無、Web はキャッシュに残る版と取得一覧のファイルの有無で判定）。2 回目以降は
-  再取得せずに変換する。PDF の罫線検出は毎回行う。
-- Web の再取得は一時ディレクトリで揃えてから置き換える。途中で失敗した場合は以前の本文を残し、
-  完了印を外して次の `build` で再試行する。HTML や画像が欠けている場合も再取得する。
-- PDF の文字抽出と表の解析は、独立した PDFium インスタンスで最大 4 ページを並列処理する。
-  ページ順とページをまたぐ表の結合は維持する。メモリ使用量を抑える場合は環境変数 `GOMAXPROCS=1`
-  で逐次処理にできる（PowerShell では `$env:GOMAXPROCS = '1'`）。
-- PDF の機能説明書と設定事例集はページ画像も焼く（焼いてあれば飛ばす）。図の向きや構成を
-  エージェントに見せるのに要る（[後述](#図とページ画像-pdf)）。
-- 定期的に取りに行く仕組みは無い。NEC の更新情報を見て版が上がっていたら、`manifest.json` の
-  `version` / `url`（Web は `name` も）を直して `build` を流す（Web は版が違うと取得せずに止まる）。
-  同じ版を取り直すなら `-force`（Web は全ページ・画像を落とし直すので初回と同じ時間が掛かる）。
-- 置き場を変えるなら `-manuals <dir>`（`$IX_MANUALS` があればそれが既定）。1 冊だけなら `-only <name>`。
+- **`ix/`** (IX2000/IX3000系): `crm` (コマンドリファレンス), `fd` (機能説明書), `ex` (設定事例集)
+- **`ix-r/`** (IX-R/IX-V系): `crm`, `fd`, `ex`, `slog` (syslog リファレンス)
+- **`ix-r/diff.tsv`**: 無印と IX-R のコマンド対応表
 
-### 資料と置き場所
+PDF由来の図表はテキスト構造として復元されるか、必要に応じてページごと画像（PNG）として保存され、Markdown内に埋め込まれます。
 
-| 系列 | 機種 | 資料 | `manifest.json` の `kind` |
-|---|---|---|---|
-| `ix` | IX2000/IX3000 | PDF（CRM / FD 10.11-1.1、EX 10.11a） | `pdf` |
-| `ix-r` | IX-R/IX-V | Web（Sphinx HTML、CRM / FD 1.5a、EX 1.5、SLOG 1.5.24） | `web` |
-
-冊子は `manifest.json` の `book` で、`crm`（コマンドリファレンス）、`fd`（機能説明書）、
-`ex`（設定事例集）、`slog`（syslog リファレンス）の4種類。`slog` の資料・保存先は IX-R/IX-V 用だが、
-無印のログ調査でも同じ `ix-r/slog/` を参照する。
-変換結果は `~/.ix-toolkit/manuals/<系列>/<冊子>/` に置く。`ix-manual` は `$IX_MANUALS` →
-`~/.ix-toolkit/manuals/` → `~/.claude/ix-manuals/` の順に探し、その下を `<系列>/<冊子>/` として読む。
-
+### 個別実行 (開発・デバッグ用)
+変換処理の一部だけをやり直す場合は、以下のサブコマンドを使用できます。
 ```
-~/.ix-toolkit/manuals/
-├── ix/
-│   ├── crm/            commands.tsv  index.md  README.md  ch03-インタフェース編/NGN.md …
-│   ├── fd/             sections.tsv  index.md  README.md  figures/  ch02-ルータの設定/…
-│   └── ex/             sections.tsv  index.md  README.md  figures/  ch01-IPv4 設定/…
-└── ix-r/
-    ├── crm/            commands.tsv  …
-    ├── fd/             sections.tsv  figures/*.svg  …
-    ├── ex/             sections.tsv  figures/  …
-    ├── slog/           sections.tsv  index.md  README.md  …
-    └── diff.tsv        無印 → IX-R のコマンド対応表
+manualbook fetch   資料をまとめて取得する (PDF / Web)
+manualbook probe   段組み等の自動較正・プロファイル作成 (PDF)
+manualbook md      取得済みデータを Markdown に変換
+manualbook diff    無印と IX-R のコマンド対応表を作成
+manualbook figures PDF のページを PNG に画像化する
+manualbook scan    見開き画像を1ページずつに分割
 ```
 
-どちらの系列・冊子も索引は同じ形で、
-
-- `commands.tsv` は `command / entry / file / line / source`、`sections.tsv` は
-  `section / title / file / line / source`。
-- `line` は本文ファイル中の見出し行番号。crm は30行程度、fd / ex / slog は60行程度から読み始め、
-  項目の終わりまで広げる。設定事例は複数ページに続くことがある。
-- slog は見出しに節番号がないため、`section` 列に出典アンカーを入れる。`title` 列の function 名と
-  syslog ID・メッセージで検索する。`chNN` は変換時の整理番号で、原文の章番号ではない。
-- 無印のログは slog の `function名` の表にある「IX2000/IX3000シリーズの名称(参考)」列から
-  対応する function 名を探す（例: `eth` → `ether`、`ike` / `key` → `ikev1`）。
-  その function の項目でメッセージ・パラメータを照合する。名称の対応だけでログ ID・レベル・書式まで
-  同じとは扱わず、回答には IX-R/IX-V の資料を参考にしたことと参照版・出典を添える。
-- `source` は元資料上の位置。PDF 由来なら物理ページ `p1057`（PDF ビューアの `#page=` にそのまま
-  渡せる）、Web 由来なら元のページと節のアンカー `cli/interface/cli_ngn.html#ngn-ip-enable`
-  （冊子の `README.md` にある URL に続ければ開く）。
-- 見出し語は両系列で同じ綴りに揃えてある（無印 PDF の「ユーザ権限」は「ユーザー権限」で出る）。
-
-### 変換の中身
-
-#### 無印 (PDF)
-
-- 文字はテキスト層から読む（OCR 不使用）。機能説明書・設定事例集の表はページ画像を 144dpi で描画して
-  水平・垂直の罫線を検出し、文字の座標をセルへ割り当てる。画像として埋め込まれた罫線にも対応する。
-- 出力は無損失ではない。段間に掛かった数文字が落ちるページがある
-- 設定事例集は専用プロファイル `nec-ix-ex.json` を使う。全角の節番号は索引で半角に揃え、
-  左右ページで順序が入れ替わるフッタの章名・ページ番号を読む。目次のリーダ罫は索引に含めない。
-- 罫線から閉じたセル群を復元できた表は、IX-R と同じ Markdown の表になる。結合セルの値は
-  覆う行・列へ繰り返し、セル内の複数行は `<br>` で残す。ページをまたぐ表はページごとに出力する。
-  前ページと同じ節・列配置で間に本文が無い場合、省略された列見出しを補い、その出典も付ける。
-- 罫線が無い表、セルを確定できない表、図、コンソール出力は従来の固定幅テキストで残す。
-  表と固定幅ブロックの直後には元 PDF のページと、置いてあればページ画像へのリンクが付く。
-- 合成した罫線・文字による回帰テストは `go test ./...`。手元の原本も検証する場合は
-  `IX_MANUALBOOK_PDF_ROOT` にこのリポジトリの絶対パスを指定する。原本をテスト用データとして配布しない。
-
-#### IX-R/IX-V (Web)
-
-- 取得は 1 ページずつ間隔を置き、`searchindex.js` にあるページだけを取る（サイトを這わない）。
-  索引ページの題に `version` が独立した値として含まれるかで版を確かめてから取る。
-  設定事例集は題に版数が無いので `versionSource: "edition"` を指定し、本文の「版数」直下の
-  段落と照合する。無指定または `"title"` は従来どおり題を読む。対象箇所の欠落・版違いでは取得しない。
-- syslog リファレンスはタイトルの対象ソフトウェア版 `1.5.24` で照合する。本文の更新情報には
-  第1.5a版と記載されており、冊子の版と対象ソフトウェア版は異なる。
-  プロファイルの `webUnnumberedHeadings: true` で番号なしの見出しを読み、表紙の書式・function 名・
-  レベルの説明も残す。既存冊子は番号付き見出しを読む従来の設定のまま。
-- サイトはブラウザ以外の User-Agent に 403 を返すので、既定でブラウザの UA を名乗る
-  （`fetch -user-agent` で変えられる）。
-- 表は Markdown の表になる（結合セルは覆う範囲に値を繰り返す）。図は SVG / PNG など元の形式で
-  `figures/` に置き、`[図]` リンクを付ける。SVG の文字ラベルは ` ```text ` にも残す。
-- 図の読み込みや保存に失敗した場合は、その冊子の変換をエラーにする。本文と索引の書き出しは
-  図の保存がすべて成功してから進める。
-- 出典は索引の `source` 列に記録する。冊子の `README.md` にある基底 URL と合わせて元の節を辿れる。
-
-#### 系列間の差分 (diff.tsv)
-
-`kind / ix / ix-r / source / ref_ix / ref_ixr / note` のタブ区切り。行の出どころが `source` 列で分かる。
-
-- `ch8` — IX-R 機能説明書 8 章「IXシリーズとの差分」の表の書き起こし（一次情報）。`kind` は
-  `removed` / `renamed` / `moved` / `range` / `changed`。
-- `derived` — 両系列の制限事項を読み比べて導いた差（`limit`）。`profiles/ix-r-derived-diff.tsv` に
-  手で書いてあり、ファイル頭に前提の版の組が書いてある。版が上がったら読み直す。
-- `setdiff` — 両索引の集合差から機械的に出した、族ごと無いコマンド（`absent`、`ip pim *` など）。目安。
-
-### 図とページ画像 (PDF)
-
-- PDF の図は変換しない。図のラベル（機器名・インタフェース名）はテキストとして囲みの中に残るが、
-  矢印の向き・包含関係・順序は失われる。構成や流れを答えるにはページそのものを見るしかない。
-- 囲みの直後の PDF リンクを辿れるのは PDF ビューアを開ける人だけ。`ix-manual` を動かすエージェントは
-  `#page=1057` を辿れないが、PNG なら `Read` で開ける。
-- `build` が機能説明書と設定事例集の全ページを PNG に焼き、囲みの直後に `[ページ画像]` を付ける。
-  変換と同じ PDFium が描くので、別の道具は要らない。コマンドリファレンスと Web 由来の冊子は
-  焼かない（Web は元の画像形式で図を残す）。
-- 焼いてあれば飛ばす（`figures/.manualbook.json` に残る元 PDF の名前と dpi で判定。版が上がって
-  PDF が入れ替われば焼き直す）。焼き直したいときは `figures/` を消して `build` を流す（+72 秒）。
-  `-force` は取得の話で、ここには効かない。
-
-```
-<sup>[元 PDF p1057](<変換時の PDF の場所への相対パス>/FD-ver10.11-1.1.pdf#page=1057) / [ページ画像](../figures/p1057.png)</sup>
-```
-
-- 全ページ焼いてよい。焼き漏らしても、そのページが今までどおり PDF リンクだけになるだけで壊れ
-  はしない。FD 全 1208 ページで 72 秒・404 MB（150dpi の PNG が 1 ページ平均 340 KB）。
-- ファイル名は `figures/p<ページ番号>.png`。外の道具で焼いたゼロ詰めの名前
-  (`p-1057.png` / `p-001057.png`) や手で置いた `.jpg` も拾う。
-- ページ画像は本文テキストより直接的な複製物なので、`.gitignore` と同じく手元限りで扱う。
-
-### 1 冊ずつ手で流す
-
-`build` がしていることは、次のサブコマンドを順に流すのと同じ（違いは Web の取得を裏で先に
-始めることだけ）。プロファイルを較正し直す、ページ画像を一部だけ焼く、といったときはこちらを使う。
-
-```
-manualbook fetch   マニフェストに書いた資料をまとめて取得する (PDF / Web)
-manualbook probe   段組み・ヘッダ位置を自動較正してプロファイルを作る (PDF)
-manualbook md      PDF か Web の取得キャッシュを構造つき Markdown に変換する
-manualbook diff    無印と IX-R の変換結果から系列間のコマンド対応表 diff.tsv を作る
-manualbook figures ページを PNG に焼く (PDF の図のページを画像で引けるようにする)
-manualbook scan    見開きスキャン画像を 1 ページずつに分割する (テキスト層が無い場合)
-```
-
-```console
-$ manualbook fetch -manifest manifest.json -out pdf/
-$ manualbook md pdf/CRM-ver10.11-1.1.pdf -profile profiles/nec-ix-crm.json -series ix -version 10.11-1.1 -out ~/.ix-toolkit/manuals/ix/crm
-$ manualbook md pdf/FD-ver10.11-1.1.pdf  -profile profiles/nec-ix-fd.json  -series ix -version 10.11-1.1 -out ~/.ix-toolkit/manuals/ix/fd -figures
-$ manualbook build -only IX1-3K-EX-10.11a
-$ manualbook build -only IX-R-EX-1.5
-$ manualbook build -only IX-R-SLOG-1.5.24
-$ manualbook md pdf/IX-R-CRM-1.5a -out ~/.ix-toolkit/manuals/ix-r/crm
-$ manualbook md pdf/IX-R-FD-1.5a  -out ~/.ix-toolkit/manuals/ix-r/fd
-$ manualbook diff ~/.ix-toolkit/manuals/ix ~/.ix-toolkit/manuals/ix-r
-```
-
-- `fetch` は取得済みの Web も `ETag` / `Last-Modified` で 1 ページずつ問い合わせ、変わったページだけ
-  取り直す（同じ版のまま直されたページを拾う軽い更新の口。全ページ問い合わせるので数分掛かる）。
-- Web の `md` は題・版・系列・プロファイルをキャッシュ内の `.manualbook.json` から読むので、フラグは
-  `-out` だけ。PDF は `-series` / `-version` を渡す（変換結果の `README.md` に載り、`ix-manual` が
-  回答に系列と版を添えるために読む）。
-- `diff` の `derived` 行はリポジトリ直下で流せば `profiles/ix-r-derived-diff.tsv` を自動で読む。外から
-  流すなら `-derived <リポジトリ>/profiles/ix-r-derived-diff.tsv` を付ける（無いと警告して 0 行になる）。
-- ページ画像をあとから焼き足すなら `manualbook figures <pdf> -out ~/.ix-toolkit/manuals/ix/fd` を流し、
-  `md` をもう一度流す。囲みに `[ページ画像]` を付けるかは変換時に `figures/` を見て決めるので、
-  この順序が要る（変換は `figures/` を消さない）。区切るなら `md -figure-pages 1050-1060`
-  （`figures` サブコマンドでは `-pages`）。解像度は 150dpi でよい (`-figure-dpi`)。100dpi でも
-  読めるが線が痩せる。
+---
 
 ## ライセンス
 
