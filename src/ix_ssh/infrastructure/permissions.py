@@ -1,8 +1,57 @@
-"""Strict permission checking for sensitive files."""
+"""Strict permission checking for sensitive files, and making them private."""
 
 import os
 import stat
+import subprocess
 from pathlib import Path
+
+# Upper bound for icacls when the file sits on a hung network share.
+ICACLS_TIMEOUT = 10
+
+
+def restrict_to_owner(path: Path) -> bool:
+    """Best effort: make `path` readable and writable by the current user only
+    (chmod 600 on POSIX, an owner-only DACL on Windows). Returns False instead of
+    raising when the platform or filesystem will not allow it (vfat, some CIFS
+    mounts, icacls missing): the caller has already written the file, so this is
+    never a write failure."""
+    try:
+        if os.name != "nt":
+            os.chmod(path, 0o600)
+            return True
+        user = _current_windows_user()
+        if not user:
+            # icacls happily grants ":F" to the BUILTIN domain and strips every
+            # other ACE, locking the owner out; refuse rather than guess.
+            return False
+        proc = subprocess.run(
+            ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
+            capture_output=True,
+            check=False,
+            timeout=ICACLS_TIMEOUT,
+        )
+        return proc.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def fix_command(path: Path) -> str:
+    """The command an operator can paste into any shell to make `path` private.
+    The user name is resolved here rather than written as %USERNAME%, which only
+    cmd.exe expands (PowerShell hands icacls the literal string, which fails)."""
+    if os.name != "nt":
+        return f'chmod 600 "{path.absolute()}"'
+    user = _current_windows_user() or "%USERNAME%"
+    return f'icacls "{path.absolute()}" /inheritance:r /grant:r "{user}:F"'
+
+
+def _current_windows_user() -> str:
+    """The account the process actually runs as (GetUserNameW), falling back to
+    $USERNAME; empty when neither is available."""
+    try:
+        return os.getlogin()
+    except OSError:
+        return os.environ.get("USERNAME", "")
 
 
 def is_secure_file(path: Path) -> bool:

@@ -113,8 +113,10 @@ def execute(
             dest = default_backup_path(target.slug(), now())
         else:
             dest = Path(req.backup)
-        infrastructure.write_backup(dest, text)
+        private = infrastructure.write_backup(dest, text)
         output.backup_saved(target.label, dest, len(text.splitlines()))
+        if not private:
+            output.backup_not_private(dest, infrastructure.fix_command(dest))
 
     if req.config_lines:
         output.header("config")
