@@ -45,7 +45,7 @@ func convertWeb(o MDOptions) error {
 		version = meta.Version
 	}
 	if meta.URL == "" {
-		fmt.Fprintln(os.Stderr, "⚠ 取得元 URL が分かりません (.manualbook.json が無い)。出典リンクは相対パスだけになります。")
+		fmt.Fprintln(os.Stderr, "⚠ 取得元 URL が分かりません (.manualbook.json が無い)。出典は索引の相対パスとアンカーだけになります。")
 	}
 	src := infrastructure.Source{
 		Kind: "web", BaseURL: meta.URL, CacheDir: dir, Label: o.SourceLabel,

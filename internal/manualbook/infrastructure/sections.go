@@ -613,9 +613,6 @@ func renderHeading(b *strings.Builder, h *domain.Heading, lk links) {
 			continue
 		}
 		renderBody(b, joined)
-		if lk.src.Kind == "web" {
-			renderRef(b, blk.Ref, lk, "")
-		}
 	}
 }
 
@@ -650,21 +647,24 @@ func renderLayoutBlock(b *strings.Builder, blk domain.Block, lk links) {
 
 // renderRef は塊の直後に出所を書く。
 //
-// PDF なら元 PDF のページと、置いてあればページ画像。Web なら元のページと節の
-// URL。extra は図のように出所より先に並べたいリンク (無ければ空)。
+// PDF なら元 PDF のページと、置いてあればページ画像。Web の出典は索引に集約する。
+// extra は図のように出所より先に並べたいリンク (無ければ空)。
 func renderRef(b *strings.Builder, r domain.Ref, lk links, extra string) {
+	if lk.src.Kind == "web" {
+		if extra != "" {
+			fmt.Fprintf(b, "<sup>%s</sup>\n", extra)
+		}
+		b.WriteString("\n")
+		return
+	}
 	b.WriteString("<sup>")
 	if extra != "" {
 		b.WriteString(extra + " / ")
 	}
-	if lk.src.Kind == "web" {
-		fmt.Fprintf(b, "[出典](%s)", mdLinkDest(lk.src.urlOf(r)))
-	} else {
-		fmt.Fprintf(b, "[元 PDF p%d](%s)", r.Page,
-			mdLinkDest(fmt.Sprintf("%s#page=%d", lk.pdf, r.Page)))
-		if img := lk.image(r.Page); img != "" {
-			fmt.Fprintf(b, " / [ページ画像](%s)", mdLinkDest(img))
-		}
+	fmt.Fprintf(b, "[元 PDF p%d](%s)", r.Page,
+		mdLinkDest(fmt.Sprintf("%s#page=%d", lk.pdf, r.Page)))
+	if img := lk.image(r.Page); img != "" {
+		fmt.Fprintf(b, " / [ページ画像](%s)", mdLinkDest(img))
 	}
 	b.WriteString("</sup>\n\n")
 }
@@ -815,8 +815,6 @@ func writeSectionReadme(outDir, docTitle string, src Source,
 		fmt.Fprintln(&b, "節を探し当てる手がかりにはなるが、**矢印の向き・包含関係はファイルを開かないと")
 		fmt.Fprintln(&b, "分からない。** SVG は XML なので、箱の座標 (`<rect>`) と矢印 (`<path>`) を")
 		fmt.Fprintln(&b, "読めば「どの箱からどの箱へ」は辿れる。ラベルの囲みから構成を推測しない。")
-		fmt.Fprintln(&b)
-		fmt.Fprintln(&b, "各ブロックの直後の `[出典]` は元の Web ページの該当節への URL。")
 		return os.WriteFile(filepath.Join(outDir, "README.md"), []byte(b.String()), 0o644)
 	}
 

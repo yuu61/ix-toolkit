@@ -20,14 +20,6 @@ type Source struct {
 	Profile  *domain.Profile
 }
 
-// urlOf は ref を辿れる URL にする。web でなければ空。
-func (s Source) urlOf(r domain.Ref) string {
-	if s.Kind != "web" || !r.IsWeb() {
-		return ""
-	}
-	return strings.TrimSuffix(s.BaseURL, "/") + "/" + r.String()
-}
-
 // writeOrigin は README の「生成条件」のうち、出どころに依る行を書く。
 func (s Source) writeOrigin(b *strings.Builder) {
 	switch s.Kind {

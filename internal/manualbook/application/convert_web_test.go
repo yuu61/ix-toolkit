@@ -157,7 +157,7 @@ func TestWebUnnumberedHeadings(t *testing.T) {
 			if cols[1] != "sample - 001 - Event <PEER>" || cols[4] != "log_sample.html#sample-001" {
 				t.Fatalf("message or source lost: %s", row)
 			}
-			for _, want := range []string{"Level", "notice", "Meaning", "Example event.", "Parameters", "<PEER>", "peer name", "https://example.invalid/slog/log_sample.html#sample-001"} {
+			for _, want := range []string{"Level", "notice", "Meaning", "Example event.", "Parameters", "<PEER>", "peer name"} {
 				if !strings.Contains(string(body), want) {
 					t.Errorf("log body missing %q: %s", want, body)
 				}
