@@ -21,6 +21,7 @@ linters:
     - gosmopolitan
     
     # プロジェクトの性質（小規模CLI、画像処理など）に合わないもの
+    - exhaustruct          # deprecated (replaced by exhaustruct_v5)
     - exhaustruct_v5       # 構造体の全フィールド初期化強制は冗長
     - varnamelen           # 短い変数名 (x, y等) を許容する
     - ireturn              # interface返却を許容
@@ -33,7 +34,10 @@ linters:
     
     # フォーマッタに任せる、またはスタイルとして過剰なもの
     - lll                  # 行長制限はフォーマッタに任せる
+    - wsl                  # deprecated (replaced by wsl_v5)
     - wsl_v5               # 空行のスタイル制限は過剰
+    - gomodguard           # deprecated (replaced by gomodguard_v2)
+    - gomodguard_v2
     - nlreturn
     - tagalign
     - tagliatelle
