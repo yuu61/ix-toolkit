@@ -781,7 +781,9 @@ func proseLines(n *html.Node) []string {
 					visit(c, indent+"  ")
 				}
 			}
-		case "ul", "ol", "dd", "dl", "blockquote", "div", "section", "span":
+		case "ul", "ol", "dd", "dl", "blockquote", "div", "section", "span", "nav":
+			// Sphinx のページ内目次は nav の中に ul/li を持つ。入れ物ごと
+			// nodeText で畳まず、箇条書きの境界を保って読む。
 			if strings.Contains(class, "admonition-title") {
 				emit(indent + domain.Collapse(nodeText(n)) + ":")
 				return

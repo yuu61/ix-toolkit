@@ -105,6 +105,10 @@ func TestWebUnnumberedHeadings(t *testing.T) {
 </article>`)
 	writeWebFile(t, filepath.Join(cache, "log_sample.html"), `<article itemprop="articleBody">
 <section id="sample"><h1>sample</h1><section id="events"><h2>Events</h2>
+<nav class="contents local"><ul class="simple">
+<li><p><a href="#sample-001-event">sample - 001 - Event &lt;PEER&gt;</a></p></li>
+<li><p><a href="#sample-002-event">sample - 002 - Next event</a></p></li>
+</ul></nav>
 <section id="sample-001-event"><span id="sample-001"></span><h3><a class="toc-backref" href="#toc">sample - 001 - Event &lt;PEER&gt;</a><a class="headerlink" href="#sample-001-event">link</a></h3>
 <dl class="field-list"><dt>Level:</dt><dd><p>notice</p></dd><dt>Meaning:</dt><dd><p>Example event.</p></dd><dt>Parameters:</dt><dd><p>&lt;PEER&gt;: peer name</p></dd></dl></section>
 </section></section></article>`)
@@ -143,6 +147,10 @@ func TestWebUnnumberedHeadings(t *testing.T) {
 			t.Fatal("cover explanation lost")
 		}
 		if cols[0] == "sample-001" {
+			list := "- sample - 001 - Event `<PEER>`\n- sample - 002 - Next event\n"
+			if !strings.Contains(string(body), list) {
+				t.Fatalf("local contents must preserve one list item per line: %s", body)
+			}
 			if !strings.Contains(lines[line-1], "`<PEER>`") {
 				t.Fatal("heading parameter would be interpreted as an HTML tag")
 			}
