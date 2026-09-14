@@ -143,6 +143,12 @@ func Build(manifestPath, cacheDir, manualsDir string, force bool, only string) e
 	}
 
 	fmt.Printf("\n完了: %d 件中 %d 件 → %s\n", n, n-failed, manualsDir)
+	if created, invPath, err := infrastructure.InitInventory(); err != nil {
+		fmt.Fprintf(os.Stderr, "  ✗ %s\n", err)
+	} else if created {
+		fmt.Printf("空のインベントリを作成しました: %s\n", invPath)
+	}
+
 	if failed > 0 {
 		return ReportedError(1)
 	}
