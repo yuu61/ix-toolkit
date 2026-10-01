@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -81,7 +82,8 @@ func parseFlags(fs *flag.FlagSet, args []string) []string {
 // fatal はエラーを表示して終了する。原因を表示し終えている失敗 (application.ReportedError)
 // は黙って終了コードだけ返す。
 func fatal(err error) {
-	if e, ok := err.(interface{ ExitCode() int }); ok {
+	var e interface{ ExitCode() int }
+	if errors.As(err, &e) {
 		os.Exit(e.ExitCode())
 	}
 	fmt.Fprintf(os.Stderr, "エラー: %s\n", err)
