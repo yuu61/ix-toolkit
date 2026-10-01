@@ -18,6 +18,8 @@
 !docs/**/*.jpg
 
 # --- Go ---
+# go build ./cmd/manualbook の出力 (Windows 以外は拡張子なし、Windows は *.exe)
+/manualbook
 *.exe
 *.exe~
 *.dll

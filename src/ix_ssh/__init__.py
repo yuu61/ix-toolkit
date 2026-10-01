@@ -1,4 +1,4 @@
-"""Run commands on a NEC IX router (IX OS 10.x) over SSH using netmiko's nec_ix driver.
+r"""Run commands on a NEC IX router (IX OS 10.x) over SSH using netmiko's nec_ix driver.
 
 Device-agnostic: no host, credential or model is baked into this package. Targets are
 resolved from an inventory file (default ~/.ix-toolkit/devices.json) via --device, or
@@ -107,13 +107,19 @@ so a leftover variable can never be sent to the wrong box):
 NEC IX specifics handled by the nec_ix netmiko driver:
     * enable mode == configuration mode; entered via `svintr-config` / `configure`
       (prompt becomes `<hostname>(config)#`). Most commands need it ("en" first).
-    * paging disabled on connect via `terminal length 0`.
+    * paging disabled on connect via `terminal length 0`, and the terminal
+      widened with `terminal width 512` (IX-R starts at 80 columns and folds the
+      echo of a longer config line, which netmiko then waits for until timeout).
+    * config lines are sent one at a time; a failure names the line by its
+      position ("config line 2 of 3") without printing the device's diagnostic,
+      since a line may carry a pre-shared key or password.
     * save == `write memory`.
     * `show running-config` / `startup-config` / `tech-support` / `ipsec` / `ike` /
       `logging` / `ntp` / `vrrp` ... are only valid inside config mode, so all
       shows run there. The EXEC-mode `show` set is a strict subset.
 
-Requires netmiko >= 4.6 (nec_ix driver; verified on 4.7.0) and paramiko; uv
+Requires netmiko >= 4.6 (nec_ix driver; verified on 4.7.0) and paramiko < 5
+(paramiko 5 cannot verify the ssh-rsa host key of IX2000/IX3000); uv
 installs both from pyproject.toml. They are imported only when a connection is
 opened, so --list and --help work without them (e.g. `python -m ix_ssh` in a
 bare checkout), and a missing one is reported with the interpreter path

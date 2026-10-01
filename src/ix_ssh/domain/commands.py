@@ -42,6 +42,24 @@ def check_command_output(command: str, output: str) -> str:
     return output
 
 
+def config_stopped_at(number: int, total: int) -> str:
+    """Names a failed config line by its position only. The line itself can carry a
+    secret (pre-shared key, password), so it never goes into an error message."""
+    return f"configuration stopped at config line {number} of {total}"
+
+
+def check_config_line_output(number: int, total: int, output: str) -> str:
+    """Reject config errors without displaying device text. A device can quote,
+    unquote, escape or truncate a secret; masking the original input cannot cover
+    every representation. Only the position and a fixed explanation are safe."""
+    if re.search(COMMAND_ERROR_PATTERN, output):
+        raise UsageError(
+            f"ERROR: {config_stopped_at(number, total)}: device rejected input; "
+            "earlier lines may already be applied"
+        )
+    return output
+
+
 def parse_config_lines(text: str) -> list[str]:
     """Config lines from a file: one per line, blank lines and # comments dropped,
     indentation kept (NEC IX accepts it and it keeps the file readable)."""

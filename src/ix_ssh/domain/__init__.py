@@ -10,6 +10,8 @@ hands the results in as plain values.
 from .commands import (
     COMMAND_ERROR_PATTERN,
     check_command_output,
+    check_config_line_output,
+    config_stopped_at,
     default_backup_path,
     is_show_command,
     parse_config_lines,
@@ -44,6 +46,8 @@ __all__ = [
     "TargetRequest",
     "UsageError",
     "check_command_output",
+    "check_config_line_output",
+    "config_stopped_at",
     "default_backup_path",
     "entry_host",
     "entry_user",

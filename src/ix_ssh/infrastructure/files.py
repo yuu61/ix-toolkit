@@ -1,15 +1,22 @@
 """Config files read from disk and backups written to it."""
 
+import contextlib
 import os
 from pathlib import Path
 
 from ..domain import UsageError, parse_config_lines
 from .permissions import restrict_to_owner
 
+# Files a person edits by hand are read as UTF-8 with an optional BOM: Windows
+# PowerShell 5.1 (`Set-Content -Encoding UTF8`, `Out-File`) and older Notepad
+# put one in front, and plain "utf-8" would keep it as U+FEFF at the start of
+# the first line (sent to the device, or failing the JSON / ssh_config parse).
+HAND_EDITED_ENCODING = "utf-8-sig"
+
 
 def read_config_file(path: str) -> list[str]:
     try:
-        text = Path(path).read_text(encoding="utf-8")
+        text = Path(path).read_text(encoding=HAND_EDITED_ENCODING)
     except (OSError, UnicodeError) as exc:
         raise UsageError(f"ERROR: cannot read config file {path}: {exc}") from exc
     return parse_config_lines(text)
@@ -22,21 +29,22 @@ def _private_opener(file, flags):
     running-config readable by others while it is being written)."""
     fd = os.open(file, flags, 0o600)
     if os.name != "nt":
-        try:
+        # Some filesystems (vfat, CIFS) cannot enforce POSIX modes; the caller
+        # checks the final permissions and reports that the backup is not private.
+        with contextlib.suppress(OSError):
             os.fchmod(fd, 0o600)
-        except OSError:
-            pass  # filesystem without POSIX modes (vfat, some CIFS): nothing to tighten
     return fd
 
 
 def write_backup(path: Path, text: str) -> bool:
-    """Write a running-config, creating parent directories, always UTF-8 with a
-    single trailing newline (so the skills need no mkdir or shell redirection).
+    """Write a running-config, creating parent directories, always UTF-8 with LF
+    line ends and a single trailing newline (so the skills need no mkdir or shell
+    redirection, and a backup diffs the same whichever OS took it).
     The file is private to the current user (0600 / owner-only ACL); returns
     False when that could not be enforced, which is not a write failure."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8", opener=_private_opener) as f:
+        with open(path, "w", encoding="utf-8", newline="\n", opener=_private_opener) as f:
             f.write(text.rstrip("\n") + "\n")
     except (OSError, UnicodeError) as exc:
         raise UsageError(f"ERROR: cannot write backup {path}: {exc}") from exc

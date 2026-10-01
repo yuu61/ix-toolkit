@@ -24,6 +24,7 @@ def imported_by(module: str) -> set[str]:
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     ).stdout
     return set(out.split())
 
@@ -57,10 +58,16 @@ sys.exit(main(sys.argv[1:]))
 """
         with tempfile.TemporaryDirectory() as tmp:
             inventory = Path(tmp) / "devices.json"
-            inventory.write_text('{"devices": {"home": {"host": "room1", "username": "admin"}}}')
+            inventory.write_text(
+                '{"devices": {"home": {"host": "room1", "username": "admin"}}}', encoding="utf-8"
+            )
             for args in (["--help"], ["--list", "--inventory", str(inventory)]):
                 res = subprocess.run(
-                    [sys.executable, "-c", code, *args], capture_output=True, text=True, check=False
+                    [sys.executable, "-c", code, *args],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    check=False,
                 )
                 self.assertEqual(res.returncode, 0, res.stderr)
             self.assertIn("home  admin@room1:22", res.stdout)

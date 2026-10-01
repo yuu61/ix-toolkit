@@ -3,6 +3,7 @@ package infrastructure
 import (
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -14,8 +15,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 	"golang.org/x/net/html"
+
+	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 )
 
 const (
@@ -92,7 +94,10 @@ func ReadWebPages(dir string, unnumbered bool) ([]WebPage, error) {
 		if d.IsDir() || !strings.HasSuffix(d.Name(), ".html") {
 			return nil
 		}
-		rel, _ := filepath.Rel(dir, p)
+		rel, relErr := filepath.Rel(dir, p)
+		if relErr != nil {
+			return relErr
+		}
 		pg, ok, err := readWebPage(p, filepath.ToSlash(rel), unnumbered)
 		if err != nil {
 			return fmt.Errorf("%s: %w", rel, err)
@@ -127,7 +132,7 @@ func readWebPage(file, rel string, unnumbered bool) (WebPage, bool, error) {
 	if err != nil {
 		return WebPage{}, false, err
 	}
-	defer func() { _ = f.Close() }()
+	defer func() { _ = f.Close() }() //nolint:errcheck // Read-only HTML; html.Parse reports read failures.
 	doc, err := html.Parse(f)
 	if err != nil {
 		return WebPage{}, false, err
@@ -402,14 +407,13 @@ func copyFile(from, to string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = in.Close() }()
+	defer func() { _ = in.Close() }() //nolint:errcheck // Read-only source; io.Copy reports read failures.
 	out, err := os.Create(to)
 	if err != nil {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return err
+		return errors.Join(err, out.Close())
 	}
 	return out.Close()
 }
@@ -546,7 +550,7 @@ func svgLabels(file string) []string {
 	if err != nil {
 		return nil
 	}
-	defer func() { _ = f.Close() }()
+	defer func() { _ = f.Close() }() //nolint:errcheck // Read-only SVG; parsing reports read failures.
 	items := readSVGTexts(f)
 	return svgTextLines(items)
 }
@@ -869,9 +873,8 @@ func htmlTableRow(n *html.Node, pending map[[2]int]string, ri int) []string {
 		}
 		take()
 		text := cellText(c)
-		cs, _ := strconv.Atoi(attr(c, "colspan"))
-		rs, _ := strconv.Atoi(attr(c, "rowspan"))
-		cs, rs = max(cs, 1), max(rs, 1)
+		cs := tableSpan(attr(c, "colspan"))
+		rs := tableSpan(attr(c, "rowspan"))
 		for range cs {
 			row = append(row, text)
 			for k := 1; k < rs; k++ {
@@ -882,6 +885,14 @@ func htmlTableRow(n *html.Node, pending map[[2]int]string, ri int) []string {
 	}
 	take()
 	return row
+}
+
+func tableSpan(value string) int {
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 1 {
+		return 1 // Missing or malformed HTML span is an ordinary single cell.
+	}
+	return n
 }
 
 func rawLineBlock(c *html.Node, depth int, lines *[]string) {
@@ -966,21 +977,29 @@ func svgTextStyle(attrs []xml.Attr) svgText {
 	for _, a := range attrs {
 		switch a.Name.Local {
 		case "x":
-			st.x, _ = strconv.ParseFloat(strings.Fields(a.Value + " 0")[0], 64)
+			st.x = svgCoordinate(strings.Fields(a.Value + " 0")[0])
 		case "y":
-			st.y, _ = strconv.ParseFloat(strings.Fields(a.Value + " 0")[0], 64)
+			st.y = svgCoordinate(strings.Fields(a.Value + " 0")[0])
 		case "font-size":
 			if v, err := strconv.ParseFloat(strings.TrimSuffix(a.Value, "px"), 64); err == nil {
 				st.size = v
 			}
 		case "transform":
 			if m := svgMatrixRe.FindStringSubmatch(a.Value); m != nil {
-				st.x, _ = strconv.ParseFloat(m[5], 64)
-				st.y, _ = strconv.ParseFloat(m[6], 64)
+				st.x = svgCoordinate(m[5])
+				st.y = svgCoordinate(m[6])
 			}
 		}
 	}
 	return st
+}
+
+func svgCoordinate(value string) float64 {
+	n, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0 // SVG positions default to the origin when no number is usable.
+	}
+	return n
 }
 
 func svgTextLines(items []svgText) []string {

@@ -102,8 +102,21 @@ def request_from(args: argparse.Namespace) -> Request:
     )
 
 
+def use_utf8(stream) -> None:
+    """Write `stream` as UTF-8 whatever the locale says. On Windows a pipe (an
+    agent capturing the output) gets the ANSI code page (cp932 on Japanese
+    systems), which cannot encode everything a device or a note may contain, and
+    the run dies mid-output with UnicodeEncodeError. Streams that cannot be
+    reconfigured (a StringIO under redirect_stdout) are left alone."""
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8", errors=stream.errors)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Console-script entry point (see [project.scripts] in pyproject.toml)."""
+    use_utf8(sys.stdout)
+    use_utf8(sys.stderr)
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
         run(request_from(args))

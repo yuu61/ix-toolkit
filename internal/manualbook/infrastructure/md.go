@@ -135,8 +135,9 @@ var printedRe = regexp.MustCompile(`^(\d+)-\d+$`)
 
 func chapterOf(printed string) int {
 	if m := printedRe.FindStringSubmatch(printed); m != nil {
-		n, _ := strconv.Atoi(m[1])
-		return n
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			return n
+		}
 	}
 	return 0
 }
@@ -160,7 +161,7 @@ func CollectChapterTitles(pages []Page) map[int]string {
 			if m == nil {
 				continue
 			}
-			if n, _ := strconv.Atoi(m[1]); n == pg.chapter {
+			if n, err := strconv.Atoi(m[1]); err == nil && n == pg.chapter {
 				out[n] = m[2]
 				break
 			}

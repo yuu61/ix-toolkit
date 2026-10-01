@@ -11,5 +11,5 @@ from ..domain import UsageError
 def missing_dependency(module: str) -> UsageError:
     return UsageError(
         f"ERROR: {module} is not installed for {sys.executable}\n"
-        "  run: pip install netmiko paramiko   (with that python; see README)"
+        '  run: pip install netmiko "paramiko<5"   (with that python; see README)'
     )

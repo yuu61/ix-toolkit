@@ -67,3 +67,18 @@ func checkWrittenDiff(t *testing.T, dir, command, note string, rows []domain.Dif
 		t.Fatalf("diff.tsv = %s", data)
 	}
 }
+
+func TestReadSectionIndexRejectsInvalidLineNumbers(t *testing.T) {
+	for _, line := range []string{"not-a-number", "0", "-1", "999999999999999999999999"} {
+		t.Run(line, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "sections.tsv")
+			index := "section\ttitle\tfile\tline\tsource\n8\ttitle\tch8.md\t" + line + "\tsource\n"
+			if err := os.WriteFile(path, []byte(index), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := readSectionIndex(path); err == nil {
+				t.Fatal("invalid line number was accepted")
+			}
+		})
+	}
+}

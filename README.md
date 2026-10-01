@@ -67,15 +67,17 @@ NEC の公式マニュアル（PDF / Web）を取得し、`ix-manual` skill が�
 ### 使い方
 
 ```console
-$ go build -ldflags="-s -w" -o manualbook ./cmd/manualbook
+$ go build -ldflags="-s -w" ./cmd/manualbook
 $ ./manualbook build
 ```
+※ Windows では `manualbook.exe` ができるので、PowerShell では `.\manualbook.exe build` と実行します（`-o manualbook` を付けると `.exe` が付かず、実行できません）。
 ※ Windows Defender の誤検知を避けるため `-ldflags="-s -w"` を推奨します。
 
 - `manifest.json` の定義に従い、取得 → 変換 → 差分表の作成までを1回で作ります。
 - マニュアルの変換結果は `~/.ix-toolkit/manuals/` 以下に出力されます。
 - PDF 版マニュアル（無印の設定事例集など）が手元にある場合は `pdf/` ディレクトリに配置しておくと、ダウンロードをスキップして変換します。
 - 2回目以降の実行では、取得済みの資料は再取得せずに変換のみを行います。
+- PDF のページ画像は、原本の SHA-256・DPI・全画像の存在を確認して再利用します。古い形式の生成済み印は初回に作り直します。
 
 ### 変換結果の構成
 
@@ -99,6 +101,31 @@ manualbook scan    見開き画像を1ページずつに分割
 ```
 
 ---
+
+## 開発時の検証
+
+```console
+$ uv sync --extra dev
+$ uv run ruff check src/ tests/
+$ uv run ruff format --check src/ tests/
+$ uv run python -m unittest
+$ golangci-lint run ./...
+$ go test ./...
+```
+
+Ruff は `pyproject.toml` で検査対象を明示し、0.16.7 以上・0.17 未満で実行します。プレビューの検査は個別に選び、Python 3.10 に対応する構文を基準にします。[公式ルール一覧](https://docs.astral.sh/ruff/rules/)を参照して追加・更新します。
+
+| 主なルール | 検出する問題 |
+| --- | --- |
+| `B` / `PL` / `RUF` / `C90` | 可変の既定引数、ループ変数の上書き、反復中の変更、複雑な処理 |
+| `S` / `BLE` / `TRY` | 秘密の直書き、危険な実行、広すぎる例外捕捉、例外処理の誤り |
+| `DTZ` / `PTH` / `PLW1514` | タイムゾーン・パス操作・`open()` の文字コード指定漏れ |
+| `I` / `UP` / `PERF` / `ARG` | import の整理、対応構文、非効率な書き方、未使用引数 |
+| `TID253` / `PGH` / `RUF100` | SSH ライブラリの早期 import、検査の一括抑制、不要な抑制 |
+
+unittest を pytest に変えるルール、型注釈・docstring の網羅、フォーマッターと競合するルールは選びません。偽の IX の資格情報・コールバック、依存注入の引数、Include の glob、既存のホスト鍵自動受け入れは、設定または該当箇所に理由を付けて例外にしています。新しい例外はルールと範囲を限定します。
+
+`pathlib` とテキストの `subprocess` にも文字コードを指定する規則は unittest で検査します。Go は出力ファイルの `Close()` を含め、無視したエラーを検出します。権限と画像キャッシュの正しさは回帰テストで確認します。
 
 ## ライセンス
 

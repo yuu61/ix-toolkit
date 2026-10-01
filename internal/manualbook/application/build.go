@@ -93,7 +93,7 @@ func Build(manifestPath, cacheDir, manualsDir string, force bool, only string) e
 // 見る)、Web は取り切った印 (.manualbook.json の版) で決める。-force ならどちらも取り直す。
 func fetchIfNeeded(w io.Writer, client *http.Client, d domain.Doc, cacheDir string, force bool) error {
 	if d.Kind == domain.KindWeb && !force && infrastructure.WebFetched(infrastructure.CachePath(cacheDir, d), d) {
-		_, _ = fmt.Fprintf(w, "  = %s (取得済み)\n", d.Name)
+		_, _ = fmt.Fprintf(w, "  = %s (取得済み)\n", d.Name) //nolint:errcheck // Best-effort progress output; never discard artifact write errors.
 		return nil
 	}
 	return infrastructure.FetchDoc(w, client, d, cacheDir, force, time.Second, infrastructure.DefaultUserAgent)

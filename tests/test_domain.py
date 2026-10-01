@@ -10,6 +10,7 @@ from ix_ssh.domain import (
     TargetRequest,
     UsageError,
     check_command_output,
+    check_config_line_output,
     default_backup_path,
     find_password,
     hop_specs,
@@ -310,6 +311,27 @@ class CommandsTest(unittest.TestCase):
     def test_default_backup_path(self):
         path = default_backup_path("home", datetime(2026, 9, 11, 1, 2, 3, tzinfo=timezone.utc))
         self.assertEqual(path.as_posix(), "backups/home-20260911-010203.conf")
+
+
+class ConfigDiagnosticTest(unittest.TestCase):
+    """Secrets remain hidden even when device diagnostics transform the input."""
+
+    def test_failure_names_the_line_by_position_only(self):
+        for diagnostic in (
+            "% ike preshared-key 0 secret-value -- Invalid command.",
+            "% Invalid input at 'secret-value'",
+            "% Invalid input at 'secret'",  # truncated
+            "% Invalid input at 'secret\\x2dvalue'",  # escaped
+        ):
+            with self.subTest(diagnostic=diagnostic), self.assertRaises(UsageError) as cm:
+                check_config_line_output(2, 3, diagnostic)
+            self.assertEqual(
+                str(cm.exception),
+                "ERROR: configuration stopped at config line 2 of 3: device rejected input; "
+                "earlier lines may already be applied",
+            )
+        ok = "ike preshared-key 0 secret-value\nrouter(config)#"
+        self.assertEqual(check_config_line_output(1, 1, ok), ok)
 
 
 if __name__ == "__main__":

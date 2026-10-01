@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/draw"
 	"image/png"
+	"io"
 	"iter"
 	"os"
 	"path/filepath"
@@ -144,7 +145,7 @@ func (s *Spread) save(paths []string) error {
 	for i, page := range s.pages {
 		if err := savePNG(paths[i], page); err != nil {
 			for _, path := range paths[:i] {
-				_ = os.Remove(path)
+				_ = os.Remove(path) //nolint:errcheck // Roll back earlier pages; preserve the save failure.
 			}
 			return err
 		}
@@ -159,7 +160,7 @@ func loadPNG(path string) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	defer func() { _ = f.Close() }() //nolint:errcheck // Read-only PNG; Decode reports read failures.
 	return png.Decode(bufio.NewReaderSize(f, 1<<16))
 }
 
@@ -198,25 +199,27 @@ func cropImage(src image.Image, x, y, w, h int) image.Image {
 
 // --- PNG保存（バッファ付き） ---
 
-func savePNG(path string, img image.Image) (retErr error) {
+func savePNG(path string, img image.Image) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if cerr := f.Close(); retErr == nil {
-			retErr = cerr
-		}
-		if retErr != nil {
-			_ = os.Remove(path)
-		}
-	}()
-
-	w := bufio.NewWriterSize(f, 1<<16)
-	if err := png.Encode(w, img); err != nil {
+	if err := writePNG(f, img); err != nil {
+		_ = os.Remove(path) //nolint:errcheck // Remove a partial output; preserve the write failure.
 		return err
 	}
-	return w.Flush()
+	return nil
+}
+
+// writePNG reports delayed errors from both the buffered writer and Close,
+// and closes even after an encoding failure. scan and figures share this path.
+func writePNG(file io.WriteCloser, img image.Image) error {
+	w := bufio.NewWriterSize(file, 1<<16)
+	err := png.Encode(w, img)
+	if err == nil {
+		err = w.Flush()
+	}
+	return errors.Join(err, file.Close())
 }
 
 func rgbaStripeWhite(pix []byte, stride, centerStart, centerEnd, yOffset, height int, threshold byte) bool {

@@ -87,7 +87,8 @@ def _local_now() -> datetime:
     return datetime.now(timezone.utc).astimezone()
 
 
-def execute(
+# Keep injected output streams and clock separate from operation data.
+def execute(  # noqa: PLR0913, PLR0917
     req: Request,
     target: Target,
     session: Session,
@@ -127,7 +128,8 @@ def execute(
         output.result(session.save())
 
 
-def run(
+# Explicit dependencies let tests replace prompts, I/O and the network boundary.
+def run(  # noqa: PLR0913, PLR0917
     req: Request,
     env: Mapping[str, str] | None = None,
     prompt: Callable[[str], str] = getpass.getpass,

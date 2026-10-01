@@ -3,20 +3,28 @@ chain opened by paramiko here and handed to netmiko as a ready socket."""
 
 import contextlib
 import re
+import time
 from collections.abc import Sequence
 
 from ..domain import (
-    COMMAND_ERROR_PATTERN,
     Hop,
     Target,
     UsageError,
     check_command_output,
+    check_config_line_output,
+    config_stopped_at,
     validate_show_commands,
 )
 from .deps import missing_dependency
 
 READ_TIMEOUT = 120
 CONNECT_TIMEOUT = 20
+# IX-R starts each session 80 columns wide whatever width the SSH pty asked for,
+# and folds the echo of a longer line. netmiko waits for the echo of every config
+# line, never sees it whole, and gives up after READ_TIMEOUT. 512 is the top of
+# IX-R's range (60-512, CRM 1.5a); the width lasts for the session only and is
+# not part of running-config (IX keeps `terminal default-width` for that).
+TERMINAL_WIDTH = 512
 
 
 def open_jump_socket(hops: Sequence[Hop], dest_host: str, dest_port: int, clients: list):
@@ -33,7 +41,9 @@ def open_jump_socket(hops: Sequence[Hop], dest_host: str, dest_port: int, client
     for index, hop in enumerate(hops):
         client = paramiko.SSHClient()
         client.load_system_host_keys()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # Preserve the current connection policy: reject changed known keys,
+        # accept unknown keys. Tightening that behavior is a separate CLI policy.
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # noqa: S507
         client.connect(
             hostname=hop.host,
             port=hop.port,
@@ -57,10 +67,10 @@ class NetmikoSession:
     accepts running-config and most feature shows there; `apply` and `save` map
     onto the nec_ix driver's config/save handling."""
 
-    def __init__(self, conn, jump_clients: list, config_error: type[Exception]):
+    def __init__(self, conn, jump_clients: list, read_error: type[Exception]):
         self._conn = conn
         self._jump_clients = jump_clients
-        self._config_error = config_error
+        self._read_error = read_error
 
     def show(self, cmd: str) -> str:
         """Run a single `show ...` inside config mode. expect_string is pinned to
@@ -77,15 +87,31 @@ class NetmikoSession:
         return check_command_output(cmd, output)
 
     def apply(self, lines: Sequence[str]) -> str:
-        # send_config_set enters config mode, applies the lines, then exits.
-        try:
-            return self._conn.send_config_set(
-                list(lines), read_timeout=READ_TIMEOUT, error_pattern=COMMAND_ERROR_PATTERN
-            )
-        except self._config_error as exc:
-            raise UsageError(
-                f"ERROR: configuration stopped; earlier lines may already be applied: {exc}"
-            ) from exc
+        """Apply the lines in one config-mode visit, handing them to netmiko one at
+        a time so a failure is pinned to its line by position. netmiko waits for
+        each line's echo and prompt either way, so this adds no round trips.
+        A config line may carry a secret (pre-shared key, password), and netmiko
+        quotes the line in its own errors (error_pattern's ConfigInvalidException,
+        and ReadTimeout's "Pattern not detected"); neither text is shown, and the
+        exception is not chained, so the line cannot surface from a traceback."""
+        conn = self._conn
+        total = len(lines)
+        output = conn.config_mode()
+        for number, line in enumerate(lines, 1):
+            try:
+                echo = conn.send_config_set(
+                    [line],
+                    enter_config_mode=False,
+                    exit_config_mode=False,
+                    read_timeout=READ_TIMEOUT,
+                )
+            except self._read_error:
+                raise UsageError(
+                    f"ERROR: {config_stopped_at(number, total)}: no echo or prompt within "
+                    f"{READ_TIMEOUT}s; earlier lines may already be applied"
+                ) from None
+            output += check_config_line_output(number, total, echo)
+        return output + conn.exit_config_mode()
 
     def save(self) -> str:
         return check_command_output("write memory", self._conn.save_config())
@@ -105,9 +131,11 @@ def _close_all(clients: list) -> None:
             clients.pop().close()
 
 
-def open_session(target: Target) -> NetmikoSession:
+def open_session(target: Target) -> NetmikoSession:  # noqa: C901
+    # Complexity includes the nested Netmiko overrides; their signatures and
+    # lifecycle must stay together with the selected config-entry command.
     try:
-        from netmiko.exceptions import ConfigInvalidException
+        from netmiko.exceptions import ReadException
         from netmiko.nec.nec_ix import NecIxSSH
     except ImportError as e:
         raise missing_dependency("netmiko") from e
@@ -115,7 +143,29 @@ def open_session(target: Target) -> NetmikoSession:
     entry_command = "svintr-config" if target.force_config else "enable-config"
 
     class IxConnection(NecIxSSH):
-        def config_mode(self, config_command="", pattern="", re_flags=re.IGNORECASE):
+        def session_preparation(self):
+            # NecIxBase.session_preparation (netmiko 4.7), plus the terminal width
+            # in the same config-mode visit as `terminal length 0`.
+            self.set_base_prompt()
+            self.config_mode()
+            time.sleep(0.3 * self.global_delay_factor)
+            self.clear_buffer()
+            self.disable_paging(command=self.RETURN + "terminal length 0")
+            self.widen_terminal()
+            self.exit_config_mode()
+
+        def widen_terminal(self):
+            # A refusal is not an error: IX2000/IX3000's CRM gives no range for
+            # the width, and a narrow terminal only hurts lines longer than it.
+            prompt = rf"(?m:^{re.escape(self.base_prompt)}\(config\)#[ \t]*$)"
+            self.send_command(
+                f"terminal width {TERMINAL_WIDTH}",
+                expect_string=prompt,
+                read_timeout=READ_TIMEOUT,
+            )
+
+        def config_mode(self, config_command="", pattern="", re_flags=re.IGNORECASE):  # noqa: ARG002
+            # Keep Netmiko's callback signature; IX uses its own command/prompt.
             # Netmiko invokes this during construction as well as show/config/save.
             # Its default implementation calls enable() with svintr-config.
             current = self.find_prompt()
@@ -147,7 +197,8 @@ def open_session(target: Target) -> NetmikoSession:
             self.base_prompt = hostname
             return output
 
-        def exit_config_mode(self, exit_config="exit", pattern=""):
+        def exit_config_mode(self, exit_config="exit", pattern=""):  # noqa: ARG002
+            # Keep Netmiko's callback signature; the IX prompt is pinned below.
             current = self.find_prompt()
             if not current.endswith(")#"):
                 return ""
@@ -196,4 +247,4 @@ def open_session(target: Target) -> NetmikoSession:
         # down here, otherwise paramiko threads keep running and bury the real error.
         _close_all(jump_clients)
         raise
-    return NetmikoSession(conn, jump_clients, ConfigInvalidException)
+    return NetmikoSession(conn, jump_clients, ReadException)

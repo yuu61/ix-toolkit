@@ -51,7 +51,7 @@ def target(**over) -> Target:
 class ExecuteTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.cwd = os.getcwd()
+        self.cwd = Path.cwd()
         os.chdir(self.tmp.name)  # default backup path is relative (backups/...)
 
     def tearDown(self):
@@ -182,12 +182,12 @@ class RunTest(unittest.TestCase):
             config_lines=("hostname x",),
             raw=True,
         )
-        run(req, env={}, out=io.StringIO(), open_session=lambda t: session)
+        run(req, env={}, out=io.StringIO(), open_session=lambda _: session)
         self.assertEqual(session.calls, [("apply", ("hostname x", "logging buffered 100"))])
 
         missing = self.request(target=TargetRequest(device="home"), config_file=str(cfg) + ".nope")
         with self.assertRaisesRegex(UsageError, "cannot read config file"):
-            run(missing, env={}, open_session=lambda t: self.fail("must not connect"))
+            run(missing, env={}, open_session=lambda _: self.fail("must not connect"))
 
     def test_password_sources(self):
         # key auth needs no password

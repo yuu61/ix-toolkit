@@ -67,8 +67,8 @@ func (s Source) route() string {
 // sourceColumnNote は索引の source 列の読み方。
 func (s Source) sourceColumnNote() string {
 	if s.Kind == domain.KindWeb {
-		return fmt.Sprintf("`source` は元のページと節のアンカー (`cli/….html#…`)。`%s` に続ければ URL になる。",
-			strings.TrimSuffix(s.BaseURL, "/")+"/")
+		return "`source` は元のページと節のアンカー (`cli/….html#…`)。`" +
+			strings.TrimSuffix(s.BaseURL, "/") + "/` に続ければ URL になる。"
 	}
 	return "`source` は元 PDF の物理ページ (`p61`)。そのまま PDF ビューアのページ指定に使える。"
 }

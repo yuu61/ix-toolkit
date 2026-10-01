@@ -112,12 +112,13 @@ class ErrorBoundaryTest(unittest.TestCase):
         self.assertIn(fix_command(path), err.getvalue())
         self.assertEqual([c[0] for c in session.calls], ["show", "apply", "save"])
 
-    def test_fix_command_names_the_user_and_needs_no_shell_expansion(self):
+    def test_fix_command_uses_the_process_identity_on_windows(self):
         cmd = fix_command(self.root / "devices.json")
         self.assertIn(str((self.root / "devices.json").absolute()), cmd)
         self.assertNotIn("%USERNAME%", cmd)
         if os.name == "nt":
-            self.assertIn(f'"{os.getlogin()}:F"', cmd)
+            self.assertIn("WindowsIdentity]::GetCurrent().User", cmd)
+            self.assertIn("RemoveAccessRuleSpecific", cmd)
         else:
             self.assertTrue(cmd.startswith("chmod 600 "))
 

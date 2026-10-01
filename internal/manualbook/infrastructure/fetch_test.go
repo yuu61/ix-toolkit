@@ -67,7 +67,7 @@ func newFetchSite(t *testing.T) *fetchSite {
 				return
 			}
 		}
-		_, _ = io.WriteString(w, f.body)
+		_, _ = io.WriteString(w, f.body) //nolint:errcheck // A simulated HTTP client may abort the response.
 	}))
 	t.Cleanup(s.Close)
 	return s
