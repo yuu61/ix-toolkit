@@ -38,7 +38,7 @@ import (
 // ReadManifest はマニフェストを読む。
 func ReadManifest(manifestPath string) (domain.Manifest, error) {
 	var m domain.Manifest
-	b, err := os.ReadFile(manifestPath)
+	b, err := readHandEdited(manifestPath)
 	if err != nil {
 		return m, fmt.Errorf("マニフェストを読めません: %w", err)
 	}

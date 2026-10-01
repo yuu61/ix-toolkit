@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from ..domain import UsageError, parse_inventory
+from .files import HAND_EDITED_ENCODING
 from .permissions import fix_command, is_secure_file
 
 INVENTORY_ENV = "IX_INVENTORY"
@@ -53,7 +54,7 @@ def read_inventory(
         )
 
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding=HAND_EDITED_ENCODING))
     except json.JSONDecodeError as exc:
         raise UsageError(f"ERROR: invalid JSON in {path}: {exc}") from None
     except (OSError, UnicodeError) as exc:

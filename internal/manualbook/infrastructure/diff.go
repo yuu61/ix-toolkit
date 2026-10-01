@@ -2,6 +2,7 @@ package infrastructure
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"html"
 	"os"
@@ -194,13 +195,12 @@ func splitTableRow(ln string) []string {
 
 // ReadDerived は手で導いた差分の TSV を読む。
 func ReadDerived(path string) ([]domain.DiffRow, error) {
-	f, err := os.Open(path)
+	b, err := readHandEdited(path)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
 	var rows []domain.DiffRow
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(bytes.NewReader(b))
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	seenHeader := false
 	for sc.Scan() {

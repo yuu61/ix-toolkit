@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ..domain import UsageError
 from .deps import missing_dependency
+from .files import HAND_EDITED_ENCODING
 
 DEFAULT_SSH_CONFIG = str(Path.home() / ".ssh" / "config")
 
@@ -18,7 +19,7 @@ def _read_ssh_config_text(path: Path, depth: int = 0) -> str:
     if depth > 8 or not path.is_file():
         return ""
     out = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in path.read_text(encoding=HAND_EDITED_ENCODING, errors="replace").splitlines():
         stripped = line.strip()
         if stripped.lower().startswith("include "):
             for pattern in stripped.split(None, 1)[1].split():

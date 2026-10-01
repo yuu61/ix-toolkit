@@ -27,7 +27,7 @@ import (
 
 // LoadProfile はプロファイル JSON を読む。書いていない欄は既定値のまま。
 func LoadProfile(path string) (*domain.Profile, error) {
-	b, err := os.ReadFile(path)
+	b, err := readHandEdited(path)
 	if err != nil {
 		return nil, err
 	}
