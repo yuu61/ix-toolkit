@@ -14,7 +14,7 @@ def restrict_to_owner(path: Path) -> bool:
     """
     try:
         if os.name != "nt":
-            os.chmod(path, 0o600)
+            Path(path).chmod(0o600)
             return True
         windows_permissions.restrict_to_owner(str(path))
         return _is_secure_windows(str(path))

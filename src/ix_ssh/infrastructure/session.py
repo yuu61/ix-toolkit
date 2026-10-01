@@ -41,7 +41,9 @@ def open_jump_socket(hops: Sequence[Hop], dest_host: str, dest_port: int, client
     for index, hop in enumerate(hops):
         client = paramiko.SSHClient()
         client.load_system_host_keys()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # Preserve the current connection policy: reject changed known keys,
+        # accept unknown keys. Tightening that behavior is a separate CLI policy.
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # noqa: S507
         client.connect(
             hostname=hop.host,
             port=hop.port,
@@ -129,7 +131,9 @@ def _close_all(clients: list) -> None:
             clients.pop().close()
 
 
-def open_session(target: Target) -> NetmikoSession:
+def open_session(target: Target) -> NetmikoSession:  # noqa: C901
+    # Complexity includes the nested Netmiko overrides; their signatures and
+    # lifecycle must stay together with the selected config-entry command.
     try:
         from netmiko.exceptions import ReadException
         from netmiko.nec.nec_ix import NecIxSSH
@@ -160,7 +164,8 @@ def open_session(target: Target) -> NetmikoSession:
                 read_timeout=READ_TIMEOUT,
             )
 
-        def config_mode(self, config_command="", pattern="", re_flags=re.IGNORECASE):
+        def config_mode(self, config_command="", pattern="", re_flags=re.IGNORECASE):  # noqa: ARG002
+            # Keep Netmiko's callback signature; IX uses its own command/prompt.
             # Netmiko invokes this during construction as well as show/config/save.
             # Its default implementation calls enable() with svintr-config.
             current = self.find_prompt()
@@ -192,7 +197,8 @@ def open_session(target: Target) -> NetmikoSession:
             self.base_prompt = hostname
             return output
 
-        def exit_config_mode(self, exit_config="exit", pattern=""):
+        def exit_config_mode(self, exit_config="exit", pattern=""):  # noqa: ARG002
+            # Keep Netmiko's callback signature; the IX prompt is pinned below.
             current = self.find_prompt()
             if not current.endswith(")#"):
                 return ""

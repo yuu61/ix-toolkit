@@ -31,6 +31,8 @@ _server_log.propagate = False
 DEVICE_USER = "admin"
 JUMP_USER = "jump"
 HOSTNAME = "fakeix"
+MIN_TERMINAL_WIDTH = 60
+MAX_TERMINAL_WIDTH = 512
 
 SHOW_VERSION = [
     "NEC Portable Internetwork Core Operating System Software",
@@ -225,7 +227,10 @@ class FakeIX:
                         reply(
                             [
                                 "% CONFIG process is occupied.",
-                                "% You may use 'svintr-config' command with administrator privilege.",
+                                (
+                                    "% You may use 'svintr-config' command "
+                                    "with administrator privilege."
+                                ),
                             ]
                         )
                     else:
@@ -245,7 +250,7 @@ class FakeIX:
                 elif line == "terminal length 0":
                     reply([])
                 elif line.startswith("terminal width ") and line[15:].isdigit():
-                    if not 60 <= int(line[15:]) <= 512:  # IX-R's range
+                    if not MIN_TERMINAL_WIDTH <= int(line[15:]) <= MAX_TERMINAL_WIDTH:
                         reply([f"% {line} -- Invalid input."])
                     else:
                         width = int(line[15:])

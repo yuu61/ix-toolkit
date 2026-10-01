@@ -151,6 +151,9 @@ class _ACEHeader(ctypes.Structure):
     _fields_ = [("kind", wintypes.BYTE), ("flags", wintypes.BYTE), ("size", wintypes.WORD)]
 
 
+MIN_ALLOW_ACE_SIZE = 12  # Header, access mask, and the start of a SID.
+
+
 def is_secure_file(path: str) -> bool:
     security, kernel = _api()
     dacl, descriptor = wintypes.LPVOID(), wintypes.LPVOID()
@@ -171,7 +174,7 @@ def is_secure_file(path: str) -> bool:
             header = ctypes.cast(ace, ctypes.POINTER(_ACEHeader)).contents
             if header.flags & 0x08 or header.kind == 1:
                 continue  # INHERIT_ONLY or a deny ACE cannot grant file access.
-            if header.kind != 0 or header.size < 12:
+            if header.kind != 0 or header.size < MIN_ALLOW_ACE_SIZE:
                 return False  # Fail closed on unsupported object/callback ACEs.
             mask = ctypes.cast(ace.value + 4, ctypes.POINTER(wintypes.DWORD)).contents.value
             if mask and _sid_string(security, kernel, ace.value + 8) not in allowed:

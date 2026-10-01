@@ -1,5 +1,6 @@
 """Config files read from disk and backups written to it."""
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -28,10 +29,10 @@ def _private_opener(file, flags):
     running-config readable by others while it is being written)."""
     fd = os.open(file, flags, 0o600)
     if os.name != "nt":
-        try:
+        # Some filesystems (vfat, CIFS) cannot enforce POSIX modes; the caller
+        # checks the final permissions and reports that the backup is not private.
+        with contextlib.suppress(OSError):
             os.fchmod(fd, 0o600)
-        except OSError:
-            pass  # filesystem without POSIX modes (vfat, some CIFS): nothing to tighten
     return fd
 
 

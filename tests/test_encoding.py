@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from ix_ssh.domain import UsageError
 from ix_ssh.infrastructure import load_ssh_config, read_config_file, read_inventory, write_backup
@@ -70,6 +71,24 @@ class HandEditedFileTest(unittest.TestCase):
         config = self.root / "config"
         config.write_text('Include "unterminated\n', encoding="utf-8")
         with self.assertRaisesRegex(UsageError, "cannot read ssh_config"):
+            load_ssh_config(config)
+
+    def test_include_with_unresolvable_home_is_reported(self):
+        config = self.root / "config"
+        config.write_text("Include ~missing-user/config\n", encoding="utf-8")
+        expanduser = Path.expanduser
+
+        def resolve_home(path):
+            if str(path).startswith("~missing-user"):
+                raise RuntimeError("Could not determine home directory")
+            return expanduser(path)
+
+        # Named-user home lookup differs on POSIX and Windows. Exercise the
+        # documented pathlib failure without depending on local accounts.
+        with (
+            patch.object(Path, "expanduser", autospec=True, side_effect=resolve_home),
+            self.assertRaisesRegex(UsageError, "cannot read ssh_config.*home directory"),
+        ):
             load_ssh_config(config)
 
 

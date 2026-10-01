@@ -77,7 +77,8 @@ def ssh_config_path(req: TargetRequest, entry: Mapping, default: str) -> str | N
     return req.ssh_config or entry.get("ssh_config_file") or default
 
 
-def resolve_target(
+# Separate input sources make their precedence explicit without reading I/O here.
+def resolve_target(  # noqa: PLR0913, PLR0917
     req: TargetRequest,
     name: str | None,
     entry: Mapping,

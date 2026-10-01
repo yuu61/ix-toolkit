@@ -75,7 +75,7 @@ class IntegrationTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        cls.cwd = os.getcwd()
+        cls.cwd = Path.cwd()
         os.chdir(root)
 
     @classmethod
@@ -118,7 +118,8 @@ class IntegrationTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertEqual(
             err.splitlines()[0],
-            f"# target: viajump (admin@127.0.0.1:{self.device.port} [fakeix] via fakejump, model IX2215)",
+            f"# target: viajump (admin@127.0.0.1:{self.device.port} [fakeix] "
+            "via fakejump, model IX2215)",
         )
         self.assertIn("===== show version =====\n" + "\n".join(SHOW_VERSION), out)
         self.assertIn("===== config =====", out)
