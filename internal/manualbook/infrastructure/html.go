@@ -105,8 +105,11 @@ func ReadWebPages(dir string, unnumbered bool) ([]WebPage, error) {
 	if err != nil {
 		return nil, err
 	}
-	sort.SliceStable(pages, func(i, j int) bool { return lessNumber(pages[i].number, pages[j].number) })
+	// 番号なしのページには番号付きの最後の章の次から章番号を振る。振ってから
+	// 並べないと、番号の無い (nil) ページが先頭に集まるのに章番号は最大で、
+	// index.md で「N+1 章」が「1 章」より先に出る。
 	numberWebPages(pages)
+	sort.SliceStable(pages, func(i, j int) bool { return lessNumber(pages[i].number, pages[j].number) })
 	return pages, nil
 }
 
@@ -325,16 +328,22 @@ func dtLabel(dt *html.Node) string {
 
 // WriteWebFigures は解析済み本文の画像参照を保存し、出力名と図中ラベルを補う。
 // 保存に失敗した場合は呼び出し元に返し、成功した画像だけを重複排除する。
+//
+// 出力名は元のファイル名だが、figures/ は 1 階層なので、別のディレクトリにある
+// 同名の画像 (a/_images/fig.svg と b/_images/fig.svg) はそのままだと後が先を上書きし、
+// 両方の [図] が同じ絵を指す。同じ名前になった画像には連番を付けて別ファイルにする。
 func WriteWebFigures(cacheDir, outDir string, heads []domain.Heading) error {
 	type savedFigure struct {
 		name   string
 		labels []string
 	}
 	saved := map[string]savedFigure{}
+	used := map[string]bool{} // 出力名 (小文字)。Windows / macOS は大文字小文字を区別しない
 	dir := filepath.Join(outDir, "figures")
 	for i := range heads {
-		for j := range heads[i].Blocks {
-			b := &heads[i].Blocks[j]
+		blocks := heads[i].Blocks
+		for j := range blocks {
+			b := &blocks[j]
 			if b.Kind != domain.BlockFigure {
 				continue
 			}
@@ -342,7 +351,7 @@ func WriteWebFigures(cacheDir, outDir string, heads []domain.Heading) error {
 			fig, ok := saved[rel]
 			if !ok {
 				from := filepath.Join(cacheDir, filepath.FromSlash(rel))
-				fig.name = path.Base(rel)
+				fig.name = uniqueFigureName(used, path.Base(rel))
 				if err := os.MkdirAll(dir, 0o755); err != nil {
 					return fmt.Errorf("図の出力先を作れません: %w", err)
 				}
@@ -358,6 +367,34 @@ func WriteWebFigures(cacheDir, outDir string, heads []domain.Heading) error {
 		}
 	}
 	return nil
+}
+
+// uniqueFigureName は figures/ の中でまだ使っていない名前を返し、used に記録する。
+func uniqueFigureName(used map[string]bool, base string) string {
+	ext := path.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	name := base
+	for n := 2; used[strings.ToLower(name)]; n++ {
+		name = fmt.Sprintf("%s-%d%s", stem, n, ext)
+	}
+	used[strings.ToLower(name)] = true
+	return name
+}
+
+// webFigureCount は figures/ に置いた図の数 (出力名の異なり数)。README に書く。
+// PDF のページ画像を拾う loadFigures は p<番号>.png の名前しか見ないので、
+// SVG のまま置く Web の図はこちらで数える。
+func webFigureCount(heads []domain.Heading) int {
+	names := map[string]bool{}
+	for i := range heads {
+		blocks := heads[i].Blocks
+		for j := range blocks {
+			if blocks[j].Kind == domain.BlockFigure && blocks[j].Figure != "" {
+				names[blocks[j].Figure] = true
+			}
+		}
+	}
+	return len(names)
 }
 
 func copyFile(from, to string) error {
@@ -530,8 +567,9 @@ func isHeadingTag(tag string) bool {
 }
 
 // walk は深さ優先で辿る。fn が false を返した節点の子は見ない。
+// nil は空の木として扱う。findNode の結果 (無ければ nil) をそのまま渡せるようにするため。
 func walk(n *html.Node, fn func(*html.Node) bool) {
-	if !fn(n) {
+	if n == nil || !fn(n) {
 		return
 	}
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
