@@ -373,14 +373,9 @@ func WriteSections(outDir, docTitle string, src Source,
 	figs := loadFigures(outDir)
 
 	order, grouped := groupSectionHeadings(heads)
-	relPath := map[domain.SectionKey]string{}
+	relPath := sectionFiles(order, chapters)
 	for _, k := range order {
-		chDir := "ch00-その他"
-		if k.Chapter > 0 {
-			chDir = fmt.Sprintf("ch%02d-%s", k.Chapter, safeName(chapters[k.Chapter]))
-		}
-		rel := filepath.Join(chDir, safeName(k.Section)+".md")
-		relPath[k] = rel
+		rel := relPath[k]
 		full := filepath.Join(outDir, rel)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			return err
@@ -414,7 +409,7 @@ func WriteSections(outDir, docTitle string, src Source,
 	if err := writeSectionIndex(outDir, docTitle, chapters, order, grouped, relPath, heads); err != nil {
 		return err
 	}
-	return writeSectionReadme(outDir, docTitle, src, len(heads), len(order), figs)
+	return writeSectionReadme(outDir, docTitle, src, len(heads), len(order), figs, webFigureCount(heads))
 }
 
 // pdfLinkBase は節ファイルの置き場所から元 PDF へ辿る相対パスを返す。
@@ -638,8 +633,10 @@ func writeSectionIndex(outDir, docTitle string, chapters map[int]string, order [
 	return os.WriteFile(filepath.Join(outDir, "index.md"), []byte(b.String()), 0o644)
 }
 
+// figs は PDF のページ画像 (p<番号>.png)、nWebFigures は Web の図 (SVG のまま置く) の数。
+// loadFigures はページ画像の名前しか見ないので、Web の図は heads から数えて渡す。
 func writeSectionReadme(outDir, docTitle string, src Source,
-	nHeads, nSections int, figs figureSet,
+	nHeads, nSections int, figs figureSet, nWebFigures int,
 ) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s (Markdown 変換版)\n\n", docTitle)
@@ -666,7 +663,7 @@ func writeSectionReadme(outDir, docTitle string, src Source,
 		fmt.Fprintln(&b, "セルが結合されていた箇所は、覆う範囲のセル全部に同じ値を繰り返してある。")
 		fmt.Fprintln(&b, "脚注の参照 `[1]` はセルの中にそのまま残り、脚注の本文は表の直後にある。")
 		fmt.Fprintln(&b)
-		fmt.Fprintf(&b, "図は `figures/` に元のファイル (SVG) のまま置いてあり (%d 枚)、本文の\n", len(figs))
+		fmt.Fprintf(&b, "図は `figures/` に元のファイル (SVG) のまま置いてあり (%d 枚)、本文の\n", nWebFigures)
 		fmt.Fprintln(&b, "`[図]` から辿れる。図の直前の ```text の囲みは図中のラベルを並べたもので、")
 		fmt.Fprintln(&b, "節を探し当てる手がかりにはなるが、**矢印の向き・包含関係はファイルを開かないと")
 		fmt.Fprintln(&b, "分からない。** SVG は XML なので、箱の座標 (`<rect>`) と矢印 (`<path>`) を")

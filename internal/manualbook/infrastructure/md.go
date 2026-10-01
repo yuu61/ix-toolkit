@@ -254,10 +254,15 @@ func dedent(lines []string) []string {
 	if indent <= 0 {
 		return lines
 	}
+	// 字下げは半角空白の数で測っているので、削るのも半角空白に限る。長さだけで
+	// 切ると、全角空白 (3 バイト) だけの空行を途中で割って壊れた UTF-8 になる。
+	// 本文行は全部 indent 以上の空白で始まる (indent はその最小値) ので、
+	// ここに来るのは空白だけの行に限られる。
+	prefix := strings.Repeat(" ", indent)
 	out := make([]string, len(lines))
 	for i, ln := range lines {
-		if len(ln) >= indent {
-			out[i] = ln[indent:]
+		if rest, ok := strings.CutPrefix(ln, prefix); ok {
+			out[i] = rest
 		} else {
 			out[i] = strings.TrimLeft(ln, " ")
 		}
@@ -421,15 +426,9 @@ func WriteAll(outDir, docTitle string, src Source,
 	}
 
 	// 節ごとに 1 ファイル。852 ページを 1 ファイルにすると skill から引けない。
-	relPath := map[domain.SectionKey]string{}
+	relPath := sectionFiles(order, chapters)
 	for _, k := range order {
-		chDir := "ch00-その他"
-		if k.Chapter > 0 {
-			chDir = fmt.Sprintf("ch%02d-%s", k.Chapter, safeName(chapters[k.Chapter]))
-		}
-		rel := filepath.Join(chDir, safeName(k.Section)+".md")
-		relPath[k] = rel
-
+		rel := relPath[k]
 		full := filepath.Join(outDir, rel)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			return err
@@ -618,6 +617,32 @@ func mdLinkDest(path string) string {
 		return "<" + p + ">"
 	}
 	return p
+}
+
+// sectionFiles は節ごとの出力ファイルの相対パスを決める。コマンド辞書 (WriteAll) と
+// 解説書 (WriteSections) の両方がこれを使う。
+//
+// safeName は別の節名を同じファイル名に写すことがある ("A/B" と "A:B"、60 文字を超えて
+// 先頭が同じ節名)。そのまま書くと後の節が先の節を黙って上書きし、索引の行番号は
+// 消えた本文を指したままになる。同じ名前になった節には連番を付けて別ファイルにする。
+// Windows / macOS のファイル名は大文字小文字を区別しないので、衝突の判定もそれに合わせる。
+func sectionFiles(order []domain.SectionKey, chapters map[int]string) map[domain.SectionKey]string {
+	relPath := map[domain.SectionKey]string{}
+	used := map[string]bool{}
+	for _, k := range order {
+		chDir := "ch00-その他"
+		if k.Chapter > 0 {
+			chDir = fmt.Sprintf("ch%02d-%s", k.Chapter, safeName(chapters[k.Chapter]))
+		}
+		name := safeName(k.Section)
+		rel := filepath.Join(chDir, name+".md")
+		for n := 2; used[strings.ToLower(rel)]; n++ {
+			rel = filepath.Join(chDir, fmt.Sprintf("%s-%d.md", name, n))
+		}
+		used[strings.ToLower(rel)] = true
+		relPath[k] = rel
+	}
+	return relPath
 }
 
 var unsafeName = regexp.MustCompile(`[<>:"/\\|?*\x00-\x1f]`)

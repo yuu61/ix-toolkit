@@ -122,6 +122,32 @@ func TestSetDiffPrefersDocumentedDifferencesAndExistingPrefixes(t *testing.T) {
 	}
 }
 
+// 表側が 1 語で終わる行 (ip / show) は片方だけの一致では引かない。何にでも当たる。
+// 両方がその 1 語で尽きる (reload と reload) なら完全一致として引く。
+func TestChapterDifferenceDoesNotMatchSingleWordPrefix(t *testing.T) {
+	index := []domain.IndexedCommand{
+		{Cmd: "ip route NETWORK", Source: "p1"},
+		{Cmd: "reload", Source: "p2"},
+		{Cmd: "pki cert erase { name NAME | all }", Source: "p3"},
+	}
+	for _, tc := range []struct{ text, wantRef string }{
+		{"ip", ""},
+		{"ip route", "crm:p1"},
+		{"reload", "crm:p2"},
+		{"reload now", ""},
+		{"pki cert erase name NAME", "crm:p3"},
+	} {
+		table := [][]string{
+			{"機能", "設定コマンド", "IXシリーズ", "IX-Rシリーズ"},
+			{"f", tc.text, "x", "廃止"},
+		}
+		rows := domain.Ch8Rows("removed", "", table, index)
+		if len(rows) != 1 || rows[0].RefIX != tc.wantRef {
+			t.Errorf("%q: rows = %+v, want ref_ix %q", tc.text, rows, tc.wantRef)
+		}
+	}
+}
+
 func TestChapterDifferenceExpandsAlternativesAndKeepsReferences(t *testing.T) {
 	table := [][]string{
 		{"機能", "IXシリーズ", "IX-Rシリーズ", "備考"},

@@ -287,12 +287,18 @@ func imageSources(page []byte) []string {
 	return out
 }
 
+// 機種の系列。manifest の series の値で、変換結果の置き場 <manuals>/<系列>/ にもなる。
+const (
+	seriesIX  = "ix"   // IX2000/IX3000
+	seriesIXR = "ix-r" // IX-R/IX-V
+)
+
 func completeDoc(d *domain.Doc) {
 	if d.Kind == "" {
 		switch d.Series {
-		case "ix":
+		case seriesIX:
 			d.Kind = domain.KindPDF
-		case "ix-r":
+		case seriesIXR:
 			d.Kind = domain.KindWeb
 		}
 	}
@@ -566,37 +572,42 @@ func writeWebMetadata(stage string, base *url.URL, d domain.Doc, newTags map[str
 	return nil
 }
 
+// bookTitles は系列ごとの冊子名。系列で綴りが違う (無印は「マニュアル」が付く)。
+//
+//nolint:gochecknoglobals // 不変の冊子名表。
+var bookTitles = map[string]map[string]string{
+	seriesIX: {
+		"crm": "コマンドリファレンスマニュアル",
+		"fd":  "機能説明書",
+		"ex":  "設定事例集",
+	},
+	seriesIXR: {
+		"crm":  "コマンドリファレンス",
+		"fd":   "機能説明書",
+		"ex":   "設定事例集",
+		"slog": "syslog リファレンス",
+	},
+}
+
+// inferredTitle は系列・冊子・版から資料題を組む。冊子名を知らない組は空を返し、
+// 題を推測しない (空なら md がファイル名を題にする)。
 func inferredTitle(d *domain.Doc) string {
-	var title string
+	book := bookTitles[d.Series][d.Book]
+	if book == "" {
+		return ""
+	}
 	switch d.Series {
-	case "ix":
-		title = "IX2000/IX3000 "
-		switch d.Book {
-		case "crm":
-			title += "コマンドリファレンスマニュアル"
-		case "fd":
-			title += "機能説明書"
-		case "ex":
-			title += "設定事例集"
-		}
+	case seriesIX:
 		v, _, _ := strings.Cut(d.Version, "-")
-		title += " " + v
-	case "ix-r":
-		title = "IX-R/IX-V "
-		switch d.Book {
-		case "crm":
-			title += "コマンドリファレンス"
-		case "fd":
-			title += "機能説明書"
-		case "ex":
-			title += "設定事例集"
-		}
-		title += " " + d.Version
+		return "IX2000/IX3000 " + book + " " + v
+	case seriesIXR:
+		title := "IX-R/IX-V " + book + " " + d.Version
 		if d.Book == "fd" {
 			title += "版"
 		}
+		return title
 	}
-	return title
+	return ""
 }
 
 func (cache webCache) fetchImages(w io.Writer, images map[string]bool) error {

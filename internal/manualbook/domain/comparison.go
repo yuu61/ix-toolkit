@@ -49,8 +49,9 @@ type IndexedCommand struct {
 // 語を先頭から突き合わせ、パラメータ (英大文字・括弧) に当たるまでの語が
 // 片方をもう片方が覆う索引行のうち、一致した語が最も多いものを返す。
 // 索引側が短くてよいのは「pki cert erase { name NAME | all }」のように索引の
-// 構文が表より早く括弧に入る場合のため。ただし 1 語だけの一致は取らない
-// (ip や show で始まる行は何にでも当たる)。
+// 構文が表より早く括弧に入る場合のため。ただし 1 語だけの一致は、両方が
+// その 1 語で尽きる (reload と reload) ときしか取らない。表側が ip や show の
+// 1 語で終わる行を片方だけの一致で通すと、何にでも当たる。
 func lookupCommand(cmds []IndexedCommand, text string) (IndexedCommand, bool) {
 	want := keywords(text)
 	if len(want) == 0 {
@@ -63,12 +64,18 @@ func lookupCommand(cmds []IndexedCommand, text string) (IndexedCommand, bool) {
 		for n < len(want) && n < len(have) && want[n] == have[n] {
 			n++
 		}
-		covers := n == len(want) || (n == len(have) && n >= 2)
-		if covers && n > bestN {
+		if coversKeywords(n, len(want), len(have)) && n > bestN {
 			best, bestN = c, n
 		}
 	}
 	return best, bestN > 0
+}
+
+// coversKeywords は先頭から n 語一致したとき、その一致を採るかを返す。
+// 両方が n 語で尽きる完全一致はいつでも採る。片方だけを覆う一致は 2 語以上に限る。
+func coversKeywords(n, nWant, nHave int) bool {
+	exact := nWant == nHave && n == nWant
+	return exact || (n >= 2 && (n == nWant || n == nHave))
 }
 
 // keywords はコマンドの先頭から、キーワード (英小文字・数字・ハイフン) が続く
