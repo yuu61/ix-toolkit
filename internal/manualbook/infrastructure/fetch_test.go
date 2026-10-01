@@ -18,6 +18,8 @@ const firstPage = "one.html"
 const (
 	diagramPath   = "_images/diagram.svg"
 	editionSource = "edition"
+	webVersion    = "1.5a"
+	bookCRM       = "crm"
 )
 
 type fetchResponse struct {
@@ -88,7 +90,7 @@ func (s *fetchSite) lastRequest(path string) http.Header {
 }
 
 func (s *fetchSite) doc() domain.Doc {
-	return domain.Doc{Name: "manual", Kind: "web", Version: "1.5a", URL: s.URL}
+	return domain.Doc{Name: "manual", Kind: "web", Version: webVersion, URL: s.URL}
 }
 
 func (s *fetchSite) fetch(cache string, force bool) error {
@@ -302,5 +304,26 @@ func checkUnchangedCache(t *testing.T, cache, dst string, original map[string]st
 	}
 	if len(files) != 1 {
 		t.Errorf("temporary directories remain: %v", files)
+	}
+}
+
+// 資料題は系列・冊子・版から組む。冊子名を知らない組は推測せず空のままにし、
+// 「IX2000/IX3000  10.11」のような壊れた題を作らない。
+func TestCompleteDocInfersTitleOnlyForKnownBooks(t *testing.T) {
+	for _, tc := range []struct {
+		doc   domain.Doc
+		title string
+	}{
+		{domain.Doc{Series: seriesIXR, Book: "slog", Version: "1.5.24"}, "IX-R/IX-V syslog リファレンス 1.5.24"},
+		{domain.Doc{Series: seriesIXR, Book: "fd", Version: webVersion}, "IX-R/IX-V 機能説明書 1.5a版"},
+		{domain.Doc{Series: seriesIX, Book: bookCRM, Version: "10.11-1.1"}, "IX2000/IX3000 コマンドリファレンスマニュアル 10.11"},
+		{domain.Doc{Series: seriesIX, Book: "slog", Version: "10.11"}, ""},
+		{domain.Doc{Series: seriesIXR, Book: bookCRM, Version: webVersion, Title: "given"}, "given"},
+	} {
+		d := tc.doc
+		completeDoc(&d)
+		if d.Title != tc.title {
+			t.Errorf("%+v: title = %q, want %q", tc.doc, d.Title, tc.title)
+		}
 	}
 }
