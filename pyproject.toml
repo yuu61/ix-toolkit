@@ -33,3 +33,9 @@ packages = ["src/ix_ssh"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint]
+extend-select = ["PERF", "PLW2901", "PLW1514"]
+# Enable only explicitly selected preview rules (PLW1514).
+preview = true
+explicit-preview-rules = true

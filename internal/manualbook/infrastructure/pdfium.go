@@ -66,14 +66,15 @@ type pdfPage struct {
 	height float64
 }
 
-// pdfDoc は開いた PDF 1 冊。文字 (pages) は openDoc が最初に呼ばれたときに全ページ分を
-// まとめて読む。ページ画像だけを焼く経路 (openPDF) は文字を読まない。
+// pdfDoc は開いた PDF 1 冊。文字は必要なページだけ読み、openDoc は残りを読む。
+// ページ画像だけを焼く経路 (openPDF) は文字を読まない。
 type pdfDoc struct {
 	instance pdfium.Pdfium
 	path     string
 	ref      references.FPDF_DOCUMENT
 	data     []byte    // 並列処理のインスタンスも同じ原本を開く。
-	pages    []pdfPage // 文字と寸法。textRead になるまでは空
+	pages    []pdfPage // 文字と寸法。部分抽出済みのページも格納する。
+	pageRead []bool    // 先頭ページだけ試し読みしても、全文抽出で二度読まない。
 	count    int       // ページ数
 	textRead bool
 }
@@ -124,17 +125,23 @@ func engineInstance() (pdfium.Pdfium, error) {
 
 // openDoc は PDF を開き、全ページの文字と寸法を読む。同じパスなら開き直さず使い回す。
 func openDoc(path string) (*pdfDoc, error) {
+	return openTextPages(path, -1)
+}
+
+// openTextPages は先頭 n ページの文字を読む。n < 0 は全ページ。
+// 未読ページだけを抽出し、途中の読み込み失敗でも取得済みのページを再利用する。
+func openTextPages(path string, n int) (*pdfDoc, error) {
 	docsMu.Lock()
 	defer docsMu.Unlock()
 	d, err := openPDFLocked(path)
 	if err != nil {
 		return nil, err
 	}
-	if !d.textRead {
-		if err := d.readPages(); err != nil {
-			return nil, err
-		}
-		d.textRead = true
+	if n < 0 {
+		n = d.count
+	}
+	if err := d.readPagesThrough(min(n, d.count)); err != nil {
+		return nil, err
 	}
 	return d, nil
 }
@@ -167,7 +174,7 @@ func openPDFLocked(path string) (*pdfDoc, error) {
 	}
 	cnt, err := inst.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: res.Document})
 	if err != nil {
-		_, _ = inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: res.Document})
+		_, _ = inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: res.Document}) //nolint:errcheck // Cleanup after a failed page count; preserve that failure.
 		return nil, err
 	}
 
@@ -185,7 +192,7 @@ func CloseDoc(path string) {
 	if !ok {
 		return
 	}
-	_, _ = d.instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: d.ref})
+	_, _ = d.instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: d.ref}) //nolint:errcheck // Release a read-only PDF after the operation completes.
 	delete(docs, path)
 }
 
@@ -252,17 +259,35 @@ func (d *pdfDoc) forEach(n int, f func(*pdfDoc, int) error) error {
 	return nil
 }
 
-// readPages は全ページの文字と寸法を読み、ページ番号の位置に格納する。
-func (d *pdfDoc) readPages() error {
-	d.pages = make([]pdfPage, d.count)
-	return d.forPages(func(worker *pdfDoc, i int) error {
+// readPagesThrough は先頭 n ページの未読部分を、ページ番号の位置に格納する。
+func (d *pdfDoc) readPagesThrough(n int) error {
+	if d.textRead || n == 0 {
+		return nil
+	}
+	if d.pages == nil {
+		d.pages = make([]pdfPage, d.count)
+		d.pageRead = make([]bool, d.count)
+	}
+	var missing []int
+	for i := range n {
+		if !d.pageRead[i] {
+			missing = append(missing, i)
+		}
+	}
+	err := d.forEach(len(missing), func(worker *pdfDoc, k int) error {
+		i := missing[k]
 		pg, err := worker.readPage(i)
 		if err != nil {
 			return err
 		}
 		d.pages[i] = pg
+		d.pageRead[i] = true
 		return nil
 	})
+	if err == nil && n == d.count {
+		d.textRead = true
+	}
+	return err
 }
 
 // renderPage はページを PNG 用の画像に焼く。呼び出し側が cleanup を呼ぶ。
@@ -300,12 +325,12 @@ func (d *pdfDoc) pageWorkers(n int, cleanups *[]func()) ([]*pdfDoc, error) {
 		if err != nil {
 			return nil, fmt.Errorf("並列処理用 PDFium の取得に失敗: %w", err)
 		}
-		*cleanups = append(*cleanups, func() { _ = inst.Close() })
+		*cleanups = append(*cleanups, func() { _ = inst.Close() }) //nolint:errcheck // Return the instance even after an operation failed.
 		res, err := inst.OpenDocument(&requests.OpenDocument{File: &d.data})
 		if err != nil {
 			return nil, fmt.Errorf("並列処理用 PDF を開けません (%s): %w", d.path, err)
 		}
-		*cleanups = append(*cleanups, func() { _, _ = inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: res.Document}) })
+		*cleanups = append(*cleanups, func() { _, _ = inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: res.Document}) }) //nolint:errcheck // Close the read-only worker document before returning its instance.
 		workers = append(workers, &pdfDoc{
 			path: d.path, data: d.data, instance: inst, ref: res.Document,
 			count: d.count, pages: d.pages, textRead: d.textRead,

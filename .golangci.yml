@@ -60,6 +60,10 @@ linters:
   # default: all を使うことで、これら以外の有益なリンター (intrange, prealloc, perfsprint, modernize, fieldalignment など) はすべて有効になります。
 
   settings:
+    errcheck:
+      # `_ = f.Close()` must not hide a failed write. Read-only cleanup is
+      # suppressed locally with a reason, never for all os.File.Close calls.
+      check-blank: true
     gocritic:
       enabled-tags:
         - diagnostic
@@ -91,6 +95,12 @@ linters:
     nestif:
       min-complexity: 8
 
+  exclusions:
+    # std-error-handling excludes every Close/Remove, including output files.
+    presets:
+      - comments
+      - legacy
+
 formatters:
   enable:
     - gofumpt
@@ -101,4 +111,4 @@ formatters:
         group-params: true
     goimports:
       local-prefixes:
-        - process-book-scans
+        - github.com/yuu61/ix-toolkit

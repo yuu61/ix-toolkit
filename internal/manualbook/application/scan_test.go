@@ -169,7 +169,7 @@ func readScanPNG(t *testing.T, path string) image.Image {
 		t.Fatal(err)
 	}
 	img, err := png.Decode(f)
-	_ = f.Close()
+	_ = f.Close() //nolint:errcheck // Read-only fixture PNG; Decode reports failures.
 	if err != nil {
 		t.Fatal(err)
 	}

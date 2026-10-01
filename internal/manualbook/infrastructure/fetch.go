@@ -15,8 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 	"golang.org/x/net/html"
+
+	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 )
 
 // 資料の取得。マニフェストに書いた資料を取得キャッシュへ取る。
@@ -87,7 +88,7 @@ func fetchOne(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 	// url が空でも、別の経路で手に入れた PDF が置いてあれば取得済みとして扱う。
 	if !force {
 		if _, err := os.Stat(dst); err == nil {
-			_, _ = fmt.Fprintf(w, "  = %s (取得済み)\n", d.Name)
+			_, _ = fmt.Fprintf(w, "  = %s (取得済み)\n", d.Name) //nolint:errcheck // Best-effort progress output; never discard artifact write errors.
 			return nil
 		}
 	}
@@ -95,7 +96,7 @@ func fetchOne(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 		return fmt.Errorf("url が空。配布ページを見て転記するか、手元にある PDF を %s に置く", dst)
 	}
 
-	_, _ = fmt.Fprintf(w, "  → %s\n", d.URL)
+	_, _ = fmt.Fprintf(w, "  → %s\n", d.URL) //nolint:errcheck // Best-effort progress output; never discard artifact write errors.
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, d.URL, http.NoBody)
 	if err != nil {
 		return err
@@ -104,7 +105,7 @@ func fetchOne(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 	if err != nil {
 		return err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // Read-only response; body reads report failures.
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %s", resp.Status)
 	}
@@ -113,7 +114,7 @@ func fetchOne(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 	if err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(w, "  ✓ %s (%.1f MB)\n", dst, float64(n)/(1<<20))
+	_, _ = fmt.Fprintf(w, "  ✓ %s (%.1f MB)\n", dst, float64(n)/(1<<20)) //nolint:errcheck // Best-effort progress output; never discard artifact write errors.
 	return nil
 }
 
@@ -179,7 +180,7 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 	c := webClient{client: client, base: base, force: force, userAgent: userAgent}
 
 	// 1. index の指定箇所で版を確かめる。違えば取らずに止まる。
-	_, _ = fmt.Fprintf(w, "  → %s\n", base)
+	_, _ = fmt.Fprintf(w, "  → %s\n", base) //nolint:errcheck // Best-effort progress output; never discard artifact write errors.
 	index, docnames, err := c.validatedIndex(w, d)
 	if err != nil {
 		return err
@@ -207,7 +208,7 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 	if err := publishWebCache(stage, dst, previous); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(w, "  ✓ %s\n", dst)
+	_, _ = fmt.Fprintf(w, "  ✓ %s\n", dst) //nolint:errcheck // Best-effort progress output; never discard artifact write errors.
 	return nil
 }
 
@@ -380,7 +381,7 @@ func (c webClient) readAll(rel string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // Read-only response; body reads report failures.
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s: HTTP %s", rel, resp.Status)
 	}
@@ -402,7 +403,7 @@ func (c webCache) fetchFile(rel string) (changed bool, body []byte, err error) {
 	if err != nil {
 		return false, nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // Read-only response; body reads report failures.
 	changed, body, tag, err = cachedResponse(resp, c.force, cached, cacheErr, tag)
 	if err != nil {
 		return false, nil, err
@@ -439,10 +440,10 @@ func (cache webCache) fetchContents(w io.Writer, index []byte, docnames []string
 			images[path.Join(path.Dir(rel), src)] = true
 		}
 		if (i+1)%20 == 0 {
-			_, _ = fmt.Fprintf(w, "    %d/%d ページ\n", i+1, len(docnames))
+			_, _ = fmt.Fprintf(w, "    %d/%d ページ\n", i+1, len(docnames)) //nolint:errcheck // Best-effort progress output; never discard artifact write errors.
 		}
 	}
-	_, _ = fmt.Fprintf(w, "    ページ: 取得 %d / 変化なし %d\n", fetched, unchanged)
+	_, _ = fmt.Fprintf(w, "    ページ: 取得 %d / 変化なし %d\n", fetched, unchanged) //nolint:errcheck // Best-effort progress output; never discard artifact write errors.
 
 	return cache.fetchImages(w, images)
 }
@@ -456,7 +457,7 @@ func (c webClient) docnames(w io.Writer, index []byte, d domain.Doc) ([]string, 
 		return nil, fmt.Errorf("版が合わない\n    マニフェスト: %s\n    サイトの版の記載: %s\n"+
 			"    配布ページを確かめて manifest の version と url を更新する", d.Version, versionText)
 	}
-	_, _ = fmt.Fprintf(w, "    版 %s: %s\n", d.Version, versionText)
+	_, _ = fmt.Fprintf(w, "    版 %s: %s\n", d.Version, versionText) //nolint:errcheck // Best-effort progress output; never discard artifact write errors.
 
 	// 2. searchindex.js からページの一覧を取る。これで取る対象が確定する。
 	si, err := c.readAll("searchindex.js")
@@ -471,7 +472,7 @@ func (c webClient) docnames(w io.Writer, index []byte, d domain.Doc) ([]string, 
 	if err := json.Unmarshal(m[1], &docnames); err != nil {
 		return nil, fmt.Errorf("docnames: %w", err)
 	}
-	_, _ = fmt.Fprintf(w, "    ページ: %d\n", len(docnames))
+	_, _ = fmt.Fprintf(w, "    ページ: %d\n", len(docnames)) //nolint:errcheck // Best-effort progress output; never discard artifact write errors.
 
 	return docnames, nil
 }
@@ -504,12 +505,12 @@ func writeDownloadedPDF(dst string, body io.Reader) (int64, error) {
 		err = cerr
 	}
 	if err != nil {
-		_ = os.Remove(tmp)
+		_ = os.Remove(tmp) //nolint:errcheck // Remove partial download; preserve the original failure.
 		return 0, err
 	}
 
 	if err := os.Rename(tmp, dst); err != nil {
-		_ = os.Remove(tmp)
+		_ = os.Remove(tmp) //nolint:errcheck // Remove partial download; preserve the original failure.
 		return 0, err
 	}
 
@@ -613,7 +614,7 @@ func (cache webCache) fetchImages(w io.Writer, images map[string]bool) error {
 			imgUnchanged++
 		}
 	}
-	_, _ = fmt.Fprintf(w, "    画像: 取得 %d / 変化なし %d\n", imgFetched, imgUnchanged)
+	_, _ = fmt.Fprintf(w, "    画像: 取得 %d / 変化なし %d\n", imgFetched, imgUnchanged) //nolint:errcheck // Best-effort progress output; never discard artifact write errors.
 
 	return nil
 }
@@ -643,7 +644,7 @@ func writeCacheFile(stage, rel string, body []byte) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = root.Close() }()
+	defer func() { _ = root.Close() }() //nolint:errcheck // Directory handle cleanup; all file writes were checked.
 	local := filepath.FromSlash(rel)
 	if err := root.MkdirAll(filepath.Dir(local), 0o755); err != nil {
 		return err
@@ -663,7 +664,7 @@ func prepareWebStage(dst string) (stage, previous string, cleanup func(), err er
 	cleanup = func() {
 		// 切り替えも復元も失敗した場合は、以前の本文を消さずに残す。
 		if _, err := os.Stat(previous); os.IsNotExist(err) {
-			_ = os.RemoveAll(work)
+			_ = os.RemoveAll(work) //nolint:errcheck // Best-effort stage cleanup; a failed restore is preserved above.
 		}
 	}
 	if err := os.Mkdir(stage, 0o755); err != nil {

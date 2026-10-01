@@ -77,7 +77,7 @@ func ReadCommandIndex(path string) ([]domain.IndexedCommand, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	defer func() { _ = f.Close() }() //nolint:errcheck // Read-only index; Scanner.Err reports read failures.
 	var cmds []domain.IndexedCommand
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
@@ -144,7 +144,7 @@ func readSectionIndex(path string) ([]indexedSection, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	defer func() { _ = f.Close() }() //nolint:errcheck // Read-only index; Scanner.Err reports read failures.
 	var secs []indexedSection
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
@@ -158,7 +158,10 @@ func readSectionIndex(path string) ([]indexedSection, error) {
 		if len(c) < 5 {
 			continue
 		}
-		n, _ := strconv.Atoi(c[3])
+		n, parseErr := strconv.Atoi(c[3])
+		if parseErr != nil || n < 1 {
+			return nil, fmt.Errorf("%s: 索引の行番号が不正です: %q", path, c[3])
+		}
 		secs = append(secs, indexedSection{section: c[0], title: c[1], file: c[2], line: n, source: c[4]})
 	}
 	return secs, sc.Err()

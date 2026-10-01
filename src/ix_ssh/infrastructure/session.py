@@ -108,7 +108,7 @@ class NetmikoSession:
                     f"ERROR: {config_stopped_at(number, total)}: no echo or prompt within "
                     f"{READ_TIMEOUT}s; earlier lines may already be applied"
                 ) from None
-            output += check_config_line_output(line, number, total, echo)
+            output += check_config_line_output(number, total, echo)
         return output + conn.exit_config_mode()
 
     def save(self) -> str:

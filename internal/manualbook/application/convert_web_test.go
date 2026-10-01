@@ -190,7 +190,7 @@ func readIndexBody(t *testing.T, dir, rel string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = root.Close() }()
+	defer func() { _ = root.Close() }() //nolint:errcheck // Read-only fixture directory handle.
 	body, err := root.ReadFile(filepath.FromSlash(rel))
 	if err != nil {
 		t.Fatal(err)

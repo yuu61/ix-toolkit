@@ -77,6 +77,7 @@ $ ./manualbook build
 - マニュアルの変換結果は `~/.ix-toolkit/manuals/` 以下に出力されます。
 - PDF 版マニュアル（無印の設定事例集など）が手元にある場合は `pdf/` ディレクトリに配置しておくと、ダウンロードをスキップして変換します。
 - 2回目以降の実行では、取得済みの資料は再取得せずに変換のみを行います。
+- PDF のページ画像は、原本の SHA-256・DPI・全画像の存在を確認して再利用します。古い形式の生成済み印は初回に作り直します。
 
 ### 変換結果の構成
 
@@ -100,6 +101,19 @@ manualbook scan    見開き画像を1ページずつに分割
 ```
 
 ---
+
+## 開発時の検証
+
+```console
+$ uv sync --extra dev
+$ uv run ruff check src/ tests/
+$ uv run ruff format --check src/ tests/
+$ uv run python -m unittest
+$ golangci-lint run ./...
+$ go test ./...
+```
+
+Ruff は性能上の書き方、ループ変数の上書き、`open()` の文字コード指定漏れを検出します。`pathlib` とテキストの `subprocess` にも文字コードを指定する規則は unittest で検査します。Go は出力ファイルの `Close()` を含め、無視したエラーを検出します。権限と画像キャッシュの正しさは回帰テストで確認します。
 
 ## ライセンス
 

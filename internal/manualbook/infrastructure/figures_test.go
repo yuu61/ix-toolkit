@@ -106,11 +106,12 @@ func writeSquaresPDF(t *testing.T, path string, pages int) {
 	for i := range pages {
 		page := len(objects) + 1
 		kids[i] = fmt.Sprintf("%d 0 R", page)
-		content := fmt.Sprintf("0 0 0 rg %d %d 8 8 re f", 4*i, 4*i)
+		content := fmt.Sprintf("0 0 0 rg %d %d 8 8 re f BT /F1 12 Tf 2 20 Td (page-%d) Tj ET", 4*i, 4*i, i+1)
 		objects = append(objects,
-			fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 40 40] /Contents %d 0 R /Resources << >> >>", page+1),
+			fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 40 40] /Contents %d 0 R /Resources << /Font << /F1 %d 0 R >> >> >>", page+1, 3+2*pages),
 			fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content))
 	}
+	objects = append(objects, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
 	objects[1] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), pages)
 
 	var b strings.Builder

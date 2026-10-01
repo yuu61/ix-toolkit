@@ -2,7 +2,6 @@ package infrastructure
 
 import (
 	"fmt"
-	"image/png"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,6 +28,10 @@ func RenderFigures(pdf, outDir string, dpi int, pageSpec string) (int, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return 0, err
 	}
+	// Partial/manual renders or a failed rewrite must not leave a complete mark.
+	if err := invalidateFiguresMark(dir); err != nil {
+		return 0, err
+	}
 
 	if err := d.forEach(len(want), func(worker *pdfDoc, k int) error {
 		return worker.writeFigure(dir, want[k], dpi)
@@ -46,13 +49,7 @@ func (d *pdfDoc) writeFigure(dir string, n, dpi int) error {
 	}
 	defer cleanup() // WebAssembly では画像の裏のメモリをここで返す
 	path := filepath.Join(dir, fmt.Sprintf("p%d.png", n))
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	err = png.Encode(f, img)
-	_ = f.Close()
-	if err != nil {
+	if err := savePNG(path, img); err != nil {
 		return fmt.Errorf("%s の書き出しに失敗: %w", path, err)
 	}
 	return nil

@@ -14,7 +14,6 @@ from .commands import (
     config_stopped_at,
     default_backup_path,
     is_show_command,
-    mask_config_line,
     parse_config_lines,
     validate_show_commands,
 )
@@ -55,7 +54,6 @@ __all__ = [
     "find_password",
     "hop_specs",
     "is_show_command",
-    "mask_config_line",
     "missing_password_message",
     "parse_config_lines",
     "parse_inventory",

@@ -15,6 +15,47 @@ func testGlyph(r rune, x, y float64) glyph {
 	return glyph{r: r, left: x - 1, right: x + 1, bottom: y - 4, top: y + 4}
 }
 
+//nolint:cyclop // Follow one PDF from dimensions through growing samples to full extraction.
+func TestSampleReadsOnlyRequestedPagesAndReusesText(t *testing.T) {
+	pdf := filepath.Join(t.TempDir(), "sample.pdf")
+	writeSquaresPDF(t, pdf, 7)
+	t.Cleanup(func() { CloseDoc(pdf) })
+	if width, height, err := pageSize(pdf); err != nil || width != 40 || height != 40 {
+		t.Fatalf("page size = %v x %v, %v", width, height, err)
+	}
+	d, err := openPDF(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.pages != nil || d.textRead {
+		t.Fatal("pageSize extracted text")
+	}
+	count, err := hasTextLayer(pdf, 2)
+	if err != nil || count == 0 {
+		t.Fatalf("sample glyphs = %d, %v", count, err)
+	}
+	if d.textRead || d.pageRead[2] {
+		t.Fatal("sample extracted text past the second page")
+	}
+	first := &d.pages[0].glyphs[0]
+	if _, sampleErr := hasTextLayer(pdf, 3); sampleErr != nil {
+		t.Fatal(sampleErr)
+	}
+	if !d.pageRead[2] || d.pageRead[3] {
+		t.Fatal("larger sample did not extract exactly the extra page")
+	}
+	if _, openErr := openDoc(pdf); openErr != nil {
+		t.Fatal(openErr)
+	}
+	if !d.textRead || first != &d.pages[0].glyphs[0] {
+		t.Fatal("full extraction reread the sample instead of reusing it")
+	}
+	all, err := hasTextLayer(pdf, 100)
+	if err != nil || all != 7*count/2 {
+		t.Fatalf("all glyphs = %d, %v, sample = %d", all, err, count)
+	}
+}
+
 func glyphCounts(s string) map[rune]int {
 	out := map[rune]int{}
 	for _, r := range s {

@@ -1,4 +1,4 @@
-"""Run commands on a NEC IX router (IX OS 10.x) over SSH using netmiko's nec_ix driver.
+r"""Run commands on a NEC IX router (IX OS 10.x) over SSH using netmiko's nec_ix driver.
 
 Device-agnostic: no host, credential or model is baked into this package. Targets are
 resolved from an inventory file (default ~/.ix-toolkit/devices.json) via --device, or
@@ -111,7 +111,7 @@ NEC IX specifics handled by the nec_ix netmiko driver:
       widened with `terminal width 512` (IX-R starts at 80 columns and folds the
       echo of a longer config line, which netmiko then waits for until timeout).
     * config lines are sent one at a time; a failure names the line by its
-      position ("config line 2 of 3") and masks it in the device's diagnostic,
+      position ("config line 2 of 3") without printing the device's diagnostic,
       since a line may carry a pre-shared key or password.
     * save == `write memory`.
     * `show running-config` / `startup-config` / `tech-support` / `ipsec` / `ike` /

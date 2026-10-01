@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from ix_ssh.domain import UsageError
 from ix_ssh.infrastructure import load_ssh_config, read_config_file, read_inventory, write_backup
 
 BOM = b"\xef\xbb\xbf"
@@ -48,6 +49,28 @@ class HandEditedFileTest(unittest.TestCase):
         path = self.root / "backup.conf"
         write_backup(path, "hostname r1\nip route default Null0\n")
         self.assertEqual(path.read_bytes(), b"hostname r1\nip route default Null0\n")
+
+    def test_include_paths_with_spaces_quotes_comments_and_native_separators(self):
+        directory = self.root / "space dir"
+        directory.mkdir()
+        included = directory / "lab.conf"
+        included.write_text("Host lab\n  HostName 192.0.2.9\n", encoding="utf-8")
+        config = self.root / "config"
+        for directive in (
+            'Include "space dir/lab.conf"',
+            'Include\t"space dir/*.conf" # ignored comment',
+            'Include="space dir/lab.conf"',
+            f'Include "{included}"',
+        ):
+            with self.subTest(directive=directive):
+                config.write_text(directive + "\n", encoding="utf-8")
+                self.assertEqual(load_ssh_config(config).lookup("lab")["hostname"], "192.0.2.9")
+
+    def test_invalid_include_quotes_are_reported(self):
+        config = self.root / "config"
+        config.write_text('Include "unterminated\n', encoding="utf-8")
+        with self.assertRaisesRegex(UsageError, "cannot read ssh_config"):
+            load_ssh_config(config)
 
 
 class PipeOutputTest(unittest.TestCase):

@@ -7,6 +7,8 @@ import (
 	"os"
 	"unicode"
 
+	"github.com/klippa-app/go-pdfium/requests"
+
 	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 )
 
@@ -170,14 +172,18 @@ func extractBands(p *domain.Profile, pdf string) (headers, footers []string, err
 
 // pageSize は PDF の 1 ページ目の寸法を返す。probe が版面の較正に使う。
 func pageSize(pdf string) (width, height float64, err error) {
-	d, err := openDoc(pdf)
+	d, err := openPDF(pdf)
 	if err != nil {
 		return 0, 0, err
 	}
-	if len(d.pages) == 0 {
+	if d.count == 0 {
 		return 0, 0, fmt.Errorf("ページがありません: %s", pdf)
 	}
-	return d.pages[0].width, d.pages[0].height, nil
+	size, err := d.instance.GetPageSize(&requests.GetPageSize{Page: d.page(0)})
+	if err != nil {
+		return 0, 0, err
+	}
+	return size.Width, size.Height, nil
 }
 
 // --- 補助 ---
@@ -198,15 +204,12 @@ func countGlyphs(s string) int {
 // 紙スキャン由来の画像 PDF ならここが 0 に近くなり、md ではなく
 // scan + OCR の経路が必要だと分かる。
 func hasTextLayer(pdf string, nPages int) (int, error) {
-	d, err := openDoc(pdf)
+	d, err := openTextPages(pdf, max(nPages, 0))
 	if err != nil {
 		return 0, err
 	}
 	total := 0
-	for i, pg := range d.pages {
-		if i >= nPages {
-			break
-		}
+	for _, pg := range d.pages[:min(max(nPages, 0), len(d.pages))] {
 		total += len(pg.glyphs)
 	}
 	return total, nil

@@ -39,7 +39,8 @@ class IntegrationTest(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         root = Path(cls.tmp.name)
         key = root / "jump_key"
-        cls.device.jump_key.write_private_key_file(str(key))
+        with key.open("w", encoding="utf-8", newline="\n") as stream:
+            cls.device.jump_key.write_private_key(stream)
         (root / "conf.d").mkdir()
         # aliases live in an Include'd file: paramiko alone would not see them
         (root / "conf.d" / "lab.conf").write_text(
@@ -169,8 +170,8 @@ class IntegrationTest(unittest.TestCase):
             )
         self.assertEqual(code, 1, err)
         self.assertIn(
-            "configuration stopped at config line 2 of 3; earlier lines may already be "
-            "applied: % *** -- Invalid command.",
+            "configuration stopped at config line 2 of 3: device rejected input; "
+            "earlier lines may already be applied",
             err,
         )
         self.assertNotIn(SECRET, out + err)
@@ -178,6 +179,16 @@ class IntegrationTest(unittest.TestCase):
         self.assertEqual(self.device.applied, [*before[0], "logging buffered 200"])
         self.assertEqual(self.device.saved, before[1])
         self.assertNotIn("===== write memory", out)
+
+    def test_config_error_with_unquoted_secret_is_not_displayed(self):
+        line = f'ike preshared-key 0 "{SECRET}"'
+        before = self.device.saved
+        with patch.dict(self.device.responses, {line: [f"% Invalid input at '{SECRET}'"]}):
+            code, out, err = self.ix_ssh("-d", "viajump", "--config", line, "--save")
+        self.assertEqual(code, 1, err)
+        self.assertIn("config line 1 of 1: device rejected input", err)
+        self.assertNotIn(SECRET, out + err)
+        self.assertEqual(self.device.saved, before)
 
     def test_long_config_line_goes_through_a_widened_terminal(self):
         # The fake, like IX-R, folds the echo at 80 columns. Unless the session
