@@ -21,8 +21,8 @@
 | `manifest.json` | 取得する資料の一覧 (系列・冊子・種別・版・URL・プロファイル)。`build` の唯一の入力 | JSON |
 
 ```console
-$ go build -ldflags="-s -w" -o manualbook ./cmd/manualbook   # -s -w は Defender の誤検知回避で必須
-$ ./manualbook build                                          # 変換結果を作り直して確かめる
+$ go build -ldflags="-s -w" ./cmd/manualbook                  # -s -w は Defender の誤検知回避で必須。-o manualbook は Windows で .exe が付かないので付けない
+$ ./manualbook build                                          # 変換結果を作り直して確かめる (Windows は .\manualbook.exe build)
 $ go test ./...                                               # ドメイン規則 (索引のキー・系列間対応・出典) の検証
 $ uv sync --extra dev                                         # ix-ssh の開発用 .venv (netmiko / paramiko / ruff)
 $ uv run python -m unittest                                   # ix-ssh の規則と、偽の IX に対する一連の操作の検証

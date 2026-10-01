@@ -1,0 +1,3 @@
+# テキストはリポジトリでも作業ツリーでも LF に揃える。core.autocrlf=true の Windows で
+# クローンしても、SKILL.md・プロファイル・差分 TSV・テストの期待値が CRLF にならない。
+* text=auto eol=lf

@@ -67,9 +67,10 @@ NEC の公式マニュアル（PDF / Web）を取得し、`ix-manual` skill が�
 ### 使い方
 
 ```console
-$ go build -ldflags="-s -w" -o manualbook ./cmd/manualbook
+$ go build -ldflags="-s -w" ./cmd/manualbook
 $ ./manualbook build
 ```
+※ Windows では `manualbook.exe` ができるので、PowerShell では `.\manualbook.exe build` と実行します（`-o manualbook` を付けると `.exe` が付かず、実行できません）。
 ※ Windows Defender の誤検知を避けるため `-ldflags="-s -w"` を推奨します。
 
 - `manifest.json` の定義に従い、取得 → 変換 → 差分表の作成までを1回で作ります。
