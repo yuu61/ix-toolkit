@@ -6,7 +6,10 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "yuu61" }]
-dependencies = ["netmiko>=4.7", "paramiko>=3.0"]
+# paramiko 5 dropped the ssh-rsa (SHA-1) host key algorithm. IX2000/IX3000 host
+# keys are RSA or DSA only (FD 10.11 "SSH を利用した遠隔設定"), and DSA already went
+# in paramiko 4, so with paramiko 5 the key exchange with them fails outright.
+dependencies = ["netmiko>=4.7", "paramiko>=3.0,<5"]
 
 [project.optional-dependencies]
 dev = ["ruff"]

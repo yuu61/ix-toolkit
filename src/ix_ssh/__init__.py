@@ -113,7 +113,8 @@ NEC IX specifics handled by the nec_ix netmiko driver:
       `logging` / `ntp` / `vrrp` ... are only valid inside config mode, so all
       shows run there. The EXEC-mode `show` set is a strict subset.
 
-Requires netmiko >= 4.6 (nec_ix driver; verified on 4.7.0) and paramiko; uv
+Requires netmiko >= 4.6 (nec_ix driver; verified on 4.7.0) and paramiko < 5
+(paramiko 5 cannot verify the ssh-rsa host key of IX2000/IX3000); uv
 installs both from pyproject.toml. They are imported only when a connection is
 opened, so --list and --help work without them (e.g. `python -m ix_ssh` in a
 bare checkout), and a missing one is reported with the interpreter path

@@ -9,6 +9,9 @@ in config mode is recorded as applied. Input is echoed like a terminal would.
 The same server also accepts `direct-tcpip` channels and forwards them, so it can
 be its own ProxyJump host: password auth for the device user, public-key auth
 for the jump user, as ix-ssh does it.
+
+Like IX2000/IX3000, the RSA host key is offered as `ssh-rsa` (SHA-1) only, so a
+client that has dropped it (paramiko 5) fails here as it would on the device.
 """
 
 import contextlib
@@ -120,7 +123,9 @@ class FakeIX:
             threading.Thread(target=self._serve, args=(client,), daemon=True).start()
 
     def _serve(self, client: socket.socket) -> None:
-        transport = paramiko.Transport(client)
+        transport = paramiko.Transport(
+            client, disabled_algorithms={"keys": ["rsa-sha2-256", "rsa-sha2-512"]}
+        )
         transport.set_log_channel(__name__)
         self._transports.append(transport)
         transport.add_server_key(self.host_key)
