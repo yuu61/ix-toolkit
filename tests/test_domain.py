@@ -10,10 +10,12 @@ from ix_ssh.domain import (
     TargetRequest,
     UsageError,
     check_command_output,
+    check_config_line_output,
     default_backup_path,
     find_password,
     hop_specs,
     is_show_command,
+    mask_config_line,
     missing_password_message,
     parse_config_lines,
     parse_inventory,
@@ -310,6 +312,38 @@ class CommandsTest(unittest.TestCase):
     def test_default_backup_path(self):
         path = default_backup_path("home", datetime(2026, 9, 11, 1, 2, 3, tzinfo=timezone.utc))
         self.assertEqual(path.as_posix(), "backups/home-20260911-010203.conf")
+
+
+class ConfigLineMaskTest(unittest.TestCase):
+    """A config line may carry a secret, and IX quotes rejected input back."""
+
+    LINE = "ike preshared-key 0 s3cr.t(1)"
+
+    def test_whole_line_and_each_word_are_masked(self):
+        for text, want in (
+            (f"% {self.LINE} -- Invalid command.", "% *** -- Invalid command."),
+            ("% Invalid input at 's3cr.t(1)'", "% Invalid input at '***'"),
+            ("% ike  preshared-key: s3cr.t(1) rejected", "% ***  ***: *** rejected"),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(mask_config_line(text, self.LINE), want)
+
+    def test_words_inside_longer_words_and_regex_characters_are_left_alone(self):
+        self.assertEqual(mask_config_line("% Invalid input", "in put"), "% Invalid input")
+        self.assertEqual(mask_config_line("% s3crXt(1)", self.LINE), "% s3crXt(1)")
+        self.assertEqual(mask_config_line("% Invalid input", "   "), "% Invalid input")
+
+    def test_failure_names_the_line_by_position_only(self):
+        output = f"{self.LINE}\n% {self.LINE} -- Invalid command.\nrouter(config)#"
+        with self.assertRaises(UsageError) as cm:
+            check_config_line_output(self.LINE, 2, 3, output)
+        self.assertEqual(
+            str(cm.exception),
+            "ERROR: configuration stopped at config line 2 of 3; earlier lines may already be "
+            "applied: % *** -- Invalid command.",
+        )
+        ok = f"{self.LINE}\nrouter(config)#"
+        self.assertEqual(check_config_line_output(self.LINE, 1, 1, ok), ok)
 
 
 if __name__ == "__main__":

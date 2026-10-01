@@ -23,6 +23,13 @@ else:
 
 from ix_ssh.cli import main
 
+# A config line can carry a secret; it must never reach the output of a failed run.
+SECRET = "Zq7PreSharedKey"
+SECRET_LINE = f"ike preshared-key 0 {SECRET}"
+# Longer than IX-R's starting width of 80 columns once the prompt is in front.
+LONG_LINE = "ike proposal p1 encryption aes-cbc-256 hash sha2-256 group 2048-bit lifetime 28800"
+LONG_SECRET_LINE = f"ike preshared-key ipv4 192.0.2.10 key 0 {SECRET}-{'x' * 48}"
+
 
 @unittest.skipUnless(HAVE_SSH, "netmiko/paramiko not installed")
 class IntegrationTest(unittest.TestCase):
@@ -145,8 +152,9 @@ class IntegrationTest(unittest.TestCase):
 
     def test_config_error_stops_remaining_lines_and_save(self):
         before = (list(self.device.applied), self.device.saved)
+        # IX quotes the rejected input in its diagnostic, secret and all.
         with patch.dict(
-            self.device.responses, {"bad-command": ["% bad-command -- Invalid command."]}
+            self.device.responses, {SECRET_LINE: [f"% {SECRET_LINE} -- Invalid command."]}
         ):
             code, out, err = self.ix_ssh(
                 "-d",
@@ -154,18 +162,66 @@ class IntegrationTest(unittest.TestCase):
                 "--config",
                 "logging buffered 200",
                 "--config",
-                "bad-command",
+                SECRET_LINE,
                 "--config",
                 "logging buffered 300",
                 "--save",
             )
         self.assertEqual(code, 1, err)
-        self.assertIn("configuration stopped", err)
-        self.assertIn("bad-command", err)
+        self.assertIn(
+            "configuration stopped at config line 2 of 3; earlier lines may already be "
+            "applied: % *** -- Invalid command.",
+            err,
+        )
+        self.assertNotIn(SECRET, out + err)
         self.assertNotIn("Traceback", err)
         self.assertEqual(self.device.applied, [*before[0], "logging buffered 200"])
         self.assertEqual(self.device.saved, before[1])
         self.assertNotIn("===== write memory", out)
+
+    def test_long_config_line_goes_through_a_widened_terminal(self):
+        # The fake, like IX-R, folds the echo at 80 columns. Unless the session
+        # widens the terminal, netmiko never sees the echo whole and stalls until
+        # READ_TIMEOUT.
+        start = len(self.device.commands)
+        before = list(self.device.applied)
+        with patch("ix_ssh.infrastructure.session.READ_TIMEOUT", 5):
+            code, _, err = self.ix_ssh("-d", "viajump", "--config", LONG_LINE)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.device.applied, [*before, LONG_LINE])
+        commands = self.device.commands[start:]
+        # widened during initialization, in the same config visit as paging
+        self.assertEqual(commands[:3], ["enable-config", "terminal length 0", "terminal width 512"])
+
+    def test_refused_width_is_tolerated_and_a_stalled_line_stays_hidden(self):
+        # IX2000/IX3000's CRM gives no range for `terminal width`; a refusal must
+        # not stop the run. A long line then stalls, and netmiko's ReadTimeout
+        # quotes the line it waited for: only its position may be shown.
+        refused = {"terminal width 512": ["% terminal width 512 -- Invalid input."]}
+        with patch.dict(self.device.responses, refused):
+            code, out, err = self.ix_ssh("-d", "viajump", "show version")
+            self.assertEqual(code, 0, err)
+            self.assertIn(SHOW_VERSION[0], out)
+
+            before = list(self.device.applied)
+            with patch("ix_ssh.infrastructure.session.READ_TIMEOUT", 2):
+                code, out, err = self.ix_ssh(
+                    "-d",
+                    "viajump",
+                    "--config",
+                    "logging buffered 500",
+                    "--config",
+                    LONG_SECRET_LINE,
+                )
+        self.assertEqual(code, 1, err)
+        self.assertIn(
+            "configuration stopped at config line 2 of 2: no echo or prompt within 2s; "
+            "earlier lines may already be applied",
+            err,
+        )
+        self.assertNotIn(SECRET, out + err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(self.device.applied[len(before)], "logging buffered 500")
 
     def test_show_error_stops_following_operations(self):
         before = (list(self.device.applied), self.device.saved)

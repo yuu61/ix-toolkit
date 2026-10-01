@@ -2,9 +2,11 @@
 
 Just enough of IX OS for netmiko's nec_ix driver and ix-ssh: exec / config
 prompts (`fakeix#` / `fakeix(config)#`), `svintr-config` / `configure` / `exit`,
-`terminal length 0`, a few `show`s (running-config contains a `hostname` line on
-purpose, to exercise the pinned-prompt read), `write memory`, and any other line
-in config mode is recorded as applied. Input is echoed like a terminal would.
+`terminal length 0`, `terminal width N`, a few `show`s (running-config contains a
+`hostname` line on purpose, to exercise the pinned-prompt read), `write memory`,
+and any other line in config mode is recorded as applied. Input is echoed like a
+terminal would: like IX-R, each session starts 80 columns wide whatever the pty
+asked for, and the echo of a longer line is folded at that width.
 
 The same server also accepts `direct-tcpip` channels and forwards them, so it can
 be its own ProxyJump host: password auth for the device user, public-key auth
@@ -174,12 +176,32 @@ class FakeIX:
     def _shell(self, chan: paramiko.Channel, _dest=None) -> None:
         self.sessions += 1
         config = self.initial_mode
+        width = 80  # IX-R's starting width, whatever the pty asked for
+        column = 0
 
         def prompt() -> str:
             return f"{HOSTNAME}({config})#" if config else f"{HOSTNAME}#"
 
         def reply(lines: list[str]) -> None:
+            nonlocal column
             chan.sendall("".join(f"{line}\r\n" for line in lines) + prompt())
+            column = len(prompt())
+
+        def echo(data: bytes) -> None:
+            # A terminal `width` columns wide folds the echo of a longer line, so
+            # the line never comes back whole.
+            nonlocal column
+            out = bytearray()
+            for byte in data:
+                if byte in b"\r\n":
+                    column = 0
+                elif column >= width:
+                    out += b"\r\n"
+                    column = 1
+                else:
+                    column += 1
+                out.append(byte)
+            chan.sendall(bytes(out))
 
         reply([])
         buf = b""
@@ -187,7 +209,7 @@ class FakeIX:
             data = chan.recv(1024)
             if not data:
                 break
-            chan.sendall(data)  # terminal echo
+            echo(data)
             buf += data
             while b"\n" in buf:
                 raw, buf = buf.split(b"\n", 1)
@@ -222,6 +244,12 @@ class FakeIX:
                     reply([])
                 elif line == "terminal length 0":
                     reply([])
+                elif line.startswith("terminal width ") and line[15:].isdigit():
+                    if not 60 <= int(line[15:]) <= 512:  # IX-R's range
+                        reply([f"% {line} -- Invalid input."])
+                    else:
+                        width = int(line[15:])
+                        reply([])
                 elif not config:
                     reply([f"% Command not found: {line}"])
                 elif line == "show version":
