@@ -7,12 +7,14 @@ import (
 	"runtime"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/klippa-app/go-pdfium"
 	"github.com/klippa-app/go-pdfium/references"
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/webassembly"
+	"github.com/tetratelabs/wazero"
 )
 
 // PDF を読むエンジン。PDFium を WebAssembly で持つ (cgo も外部コマンドも要らない)。
@@ -64,13 +66,16 @@ type pdfPage struct {
 	height float64
 }
 
-// pdfDoc は開いた PDF 1 冊。文字は初回アクセス時にまとめて読む。
+// pdfDoc は開いた PDF 1 冊。文字 (pages) は openDoc が最初に呼ばれたときに全ページ分を
+// まとめて読む。ページ画像だけを焼く経路 (openPDF) は文字を読まない。
 type pdfDoc struct {
-	path     string
-	data     []byte // 並列処理のインスタンスも同じ原本を開く。
 	instance pdfium.Pdfium
+	path     string
 	ref      references.FPDF_DOCUMENT
-	pages    []pdfPage
+	data     []byte    // 並列処理のインスタンスも同じ原本を開く。
+	pages    []pdfPage // 文字と寸法。textRead になるまでは空
+	count    int       // ページ数
+	textRead bool
 }
 
 //nolint:gochecknoglobals // PDFium の初期化と冊をまたぐプール・文書キャッシュを共有する。docsMu と engineOnce で保護する。
@@ -79,6 +84,8 @@ var (
 	engine      pdfium.Pdfium
 	enginePools [maxPDFWorkers]pdfium.Pool
 	errEngine   error
+	// compiled は PDFium のコンパイル結果 (機械語)。全プールの Runtime で共有する。
+	compiled = wazero.NewCompilationCache()
 
 	docsMu sync.Mutex
 	docs   = map[string]*pdfDoc{}
@@ -87,13 +94,22 @@ var (
 // 主インスタンスは冊をまたいで使い回す。並列処理用のプールは必要時に作る。
 // wazero v1.12.0 の Emscripten 呼び出しは型情報を遅延初期化するため、
 // 同一 Runtime 内の複数インスタンスでも競合する。Runtime ごと分離する。
+// 分けたいのは Runtime ごとの Store と Emscripten の呼び出し口で、機械語ではない。
+// コンパイル結果は compiled で共有する (Runtime ごとにコンパイルし直すと 1 回ごとに
+// 秒単位かかり、並列化で稼いだ時間を食い潰していた)。
 const maxPDFWorkers = 4
+
+// newEnginePool はインスタンス 1 つだけのプールを、独立した Runtime の上に作る。
+func newEnginePool() (pdfium.Pool, error) {
+	return webassembly.Init(webassembly.Config{
+		MinIdle: 1, MaxIdle: 1, MaxTotal: 1,
+		RuntimeConfig: wazero.NewRuntimeConfig().WithCompilationCache(compiled),
+	})
+}
 
 func engineInstance() (pdfium.Pdfium, error) {
 	engineOnce.Do(func() {
-		pool, err := webassembly.Init(webassembly.Config{
-			MinIdle: 1, MaxIdle: 1, MaxTotal: 1,
-		})
+		pool, err := newEnginePool()
 		if err != nil {
 			errEngine = fmt.Errorf("PDFium の初期化に失敗: %w", err)
 			return
@@ -106,10 +122,33 @@ func engineInstance() (pdfium.Pdfium, error) {
 	return engine, errEngine
 }
 
-// openDoc は PDF を開く。同じパスなら開き直さず使い回す。
+// openDoc は PDF を開き、全ページの文字と寸法を読む。同じパスなら開き直さず使い回す。
 func openDoc(path string) (*pdfDoc, error) {
 	docsMu.Lock()
 	defer docsMu.Unlock()
+	d, err := openPDFLocked(path)
+	if err != nil {
+		return nil, err
+	}
+	if !d.textRead {
+		if err := d.readPages(); err != nil {
+			return nil, err
+		}
+		d.textRead = true
+	}
+	return d, nil
+}
+
+// openPDF は PDF を開くだけで、文字は読まない。ページ画像を焼くのに文字は要らず、
+// 全ページの文字を読むと 1 枚だけ焼くときでも冊子 1 冊分の時間がかかる。
+func openPDF(path string) (*pdfDoc, error) {
+	docsMu.Lock()
+	defer docsMu.Unlock()
+	return openPDFLocked(path)
+}
+
+// openPDFLocked は docsMu を持った状態で呼ぶ。開いた文書は CloseDoc まで使い回す。
+func openPDFLocked(path string) (*pdfDoc, error) {
 	if d, ok := docs[path]; ok {
 		return d, nil
 	}
@@ -126,12 +165,13 @@ func openDoc(path string) (*pdfDoc, error) {
 	if err != nil {
 		return nil, fmt.Errorf("PDF を開けません (%s): %w", path, err)
 	}
-
-	d := &pdfDoc{path: path, data: b, instance: inst, ref: res.Document}
-	if err := d.readPages(); err != nil {
-		_, _ = inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: d.ref})
+	cnt, err := inst.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: res.Document})
+	if err != nil {
+		_, _ = inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: res.Document})
 		return nil, err
 	}
+
+	d := &pdfDoc{path: path, data: b, instance: inst, ref: res.Document, count: cnt.PageCount}
 	docs[path] = d
 	return d, nil
 }
@@ -154,13 +194,22 @@ func (d *pdfDoc) page(i int) requests.Page {
 	return requests.Page{ByIndex: &requests.PageByIndex{Document: d.ref, Index: i}}
 }
 
-// forPages は各インスタンスを 1 つの goroutine だけで使う。
-// f は自分のページの結果だけを書き、他ページの結果は全処理の終了後に読む。
-// 呼び出し中は、呼び出し元も d.instance に触れない。
+// forPages は d.pages の各ページについて f を呼ぶ (forEach を参照)。
 func (d *pdfDoc) forPages(f func(*pdfDoc, int) error) error {
-	n := min(maxPDFWorkers, runtime.GOMAXPROCS(0), len(d.pages))
-	if n <= 1 {
-		return d.forPagesSequential(f)
+	return d.forEach(len(d.pages), f)
+}
+
+// forEach は 0 から n-1 の各番号について f を、並列処理用のインスタンスに分けて呼ぶ。
+// 番号は空いたインスタンスが先着順に取る。固定の割り振りだと、重いページが 1 つの
+// インスタンスに偏ったときに他が先に終わって遊ぶ。
+// 各インスタンスは 1 つの goroutine だけで使う。
+// f は自分の番号の結果だけを書き、他の番号の結果は全処理の終了後に読む。
+// 呼び出し中は、呼び出し元も d.instance に触れない。
+// どれかの f が失敗したら、残りの番号は取らずに止める。
+func (d *pdfDoc) forEach(n int, f func(*pdfDoc, int) error) error {
+	nw := min(maxPDFWorkers, runtime.GOMAXPROCS(0), n)
+	if nw <= 1 {
+		return d.forEachSequential(n, f)
 	}
 	var cleanups []func()
 	defer func() {
@@ -169,17 +218,26 @@ func (d *pdfDoc) forPages(f func(*pdfDoc, int) error) error {
 		}
 	}()
 
-	workers, err := d.pageWorkers(n, &cleanups)
+	workers, err := d.pageWorkers(nw, &cleanups)
 	if err != nil {
 		return err
 	}
-	var wg sync.WaitGroup
-	errs := make([]error, n)
+	var (
+		wg     sync.WaitGroup
+		next   atomic.Int64
+		failed atomic.Bool
+	)
+	errs := make([]error, nw)
 	for k, worker := range workers {
 		wg.Go(func() {
-			for i := k; i < len(d.pages); i += n {
+			for !failed.Load() {
+				i := int(next.Add(1) - 1)
+				if i >= n {
+					return
+				}
 				if err := f(worker, i); err != nil {
 					errs[k] = err
+					failed.Store(true)
 					return
 				}
 			}
@@ -196,11 +254,7 @@ func (d *pdfDoc) forPages(f func(*pdfDoc, int) error) error {
 
 // readPages は全ページの文字と寸法を読み、ページ番号の位置に格納する。
 func (d *pdfDoc) readPages() error {
-	cnt, err := d.instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: d.ref})
-	if err != nil {
-		return err
-	}
-	d.pages = make([]pdfPage, cnt.PageCount)
+	d.pages = make([]pdfPage, d.count)
 	return d.forPages(func(worker *pdfDoc, i int) error {
 		pg, err := worker.readPage(i)
 		if err != nil {
@@ -236,7 +290,7 @@ func (d *pdfDoc) pageWorkers(n int, cleanups *[]func()) ([]*pdfDoc, error) {
 	for len(workers) < n {
 		k := len(workers)
 		if enginePools[k] == nil {
-			pool, err := webassembly.Init(webassembly.Config{MinIdle: 1, MaxIdle: 1, MaxTotal: 1})
+			pool, err := newEnginePool()
 			if err != nil {
 				return nil, fmt.Errorf("並列処理用 PDFium の初期化に失敗: %w", err)
 			}
@@ -252,7 +306,10 @@ func (d *pdfDoc) pageWorkers(n int, cleanups *[]func()) ([]*pdfDoc, error) {
 			return nil, fmt.Errorf("並列処理用 PDF を開けません (%s): %w", d.path, err)
 		}
 		*cleanups = append(*cleanups, func() { _, _ = inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: res.Document}) })
-		workers = append(workers, &pdfDoc{path: d.path, data: d.data, instance: inst, ref: res.Document, pages: d.pages})
+		workers = append(workers, &pdfDoc{
+			path: d.path, data: d.data, instance: inst, ref: res.Document,
+			count: d.count, pages: d.pages, textRead: d.textRead,
+		})
 	}
 	return workers, nil
 }
@@ -313,8 +370,8 @@ func (worker *pdfDoc) readPage(i int) (pdfPage, error) {
 	return pg, nil
 }
 
-func (d *pdfDoc) forPagesSequential(f func(*pdfDoc, int) error) error {
-	for i := range d.pages {
+func (d *pdfDoc) forEachSequential(n int, f func(*pdfDoc, int) error) error {
+	for i := range n {
 		if err := f(d, i); err != nil {
 			return err
 		}
