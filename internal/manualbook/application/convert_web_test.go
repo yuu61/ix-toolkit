@@ -38,6 +38,45 @@ func TestWebFigureFailuresReachApplication(t *testing.T) {
 	}
 }
 
+func TestNestedCommandFieldsReachMarkdownAndIndex(t *testing.T) {
+	cache, out := t.TempDir(), t.TempDir()
+	// Synthetic command and prose, preserving only the problematic HTML shape.
+	writeWebFile(t, filepath.Join(cache, "command.html"), `<article itemprop="articleBody">
+<section id="chapter"><h1><span class="section-number">1. </span>Test chapter</h1>
+<section id="test-auth"><h2><span class="section-number">1.1. </span>Test authentication</h2>
+<blockquote><div><dl><dt><strong>[入力形式]</strong></dt><dd>
+<div class="line-block"><div class="line">example authentication psk</div>
+<div class="line-block"><div class="line">id nbma-address key char SHARED-KEY</div></div></div>
+<div class="line-block"><div class="line">no example authentication psk</div></div></dd>
+<dt><strong>[パラメータ]</strong></dt><dd><p>SHARED-KEY: synthetic secret description</p>
+<blockquote><div><dl><dt>nested value</dt><dd>synthetic detail</dd></dl></div></blockquote></dd>
+</dl></div></blockquote><dl><dt>[説明]</dt><dd><p>synthetic description</p></dd></dl>
+</section><section id="next"><h2><span class="section-number">1.2. </span>Next</h2>
+<dl><dt>[入力形式]</dt><dd><div class="line-block"><div class="line">example next</div></div></dd></dl>
+</section></section></article>`)
+	if err := application.Convert(application.MDOptions{Input: cache, OutDir: out}); err != nil {
+		t.Fatal(err)
+	}
+	index := string(readIndexBody(t, out, "commands.tsv"))
+	for _, want := range []string{"example authentication psk", "nbma-address", "SHARED-KEY", "command.html#test-auth", "example next"} {
+		if !strings.Contains(index, want) {
+			t.Fatalf("index missing %q: %s", want, index)
+		}
+	}
+	var body strings.Builder
+	for _, row := range strings.Split(strings.TrimSpace(index), "\n")[1:] {
+		cols := strings.Split(row, "\t")
+		if _, err := body.Write(readIndexBody(t, out, cols[2])); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, want := range []string{"no example authentication psk", "synthetic secret description", "synthetic detail"} {
+		if !strings.Contains(body.String(), want) {
+			t.Fatalf("body missing %q", want)
+		}
+	}
+}
+
 func TestWebHeadingParsingDoesNotReadOrWriteFigures(t *testing.T) {
 	o := webFigureFixture(t)
 	pages, err := infrastructure.ReadWebPages(o.Input, false)

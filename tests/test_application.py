@@ -24,7 +24,7 @@ class FakeSession:
 
     def apply(self, lines):
         self.calls.append(("apply", tuple(lines)))
-        return "applied"
+        yield "applied"
 
     def save(self):
         self.calls.append(("save",))
@@ -188,6 +188,12 @@ class RunTest(unittest.TestCase):
         missing = self.request(target=TargetRequest(device="home"), config_file=str(cfg) + ".nope")
         with self.assertRaisesRegex(UsageError, "cannot read config file"):
             run(missing, env={}, open_session=lambda _: self.fail("must not connect"))
+
+    def test_interactive_key_input_is_rejected_before_connecting(self):
+        req = self.request(config_lines=("pki private-key import crypto TestSecret",))
+        with self.assertRaisesRegex(UsageError, "config line 1: interactive") as cm:
+            run(req, env={}, open_session=lambda _: self.fail("must not connect"))
+        self.assertNotIn("TestSecret", str(cm.exception))
 
     def test_password_sources(self):
         # key auth needs no password

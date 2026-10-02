@@ -1,6 +1,7 @@
 package application
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -14,7 +15,7 @@ const DefaultUserAgent = infrastructure.DefaultUserAgent
 
 // Fetch はマニフェストの資料をまとめて取得キャッシュへ取る。1 件が取れなくても
 // 残りは取り、最後にまとめて数を出す。
-func Fetch(manifestPath, outDir string, force bool, only string, timeout, delay time.Duration, ua string) error {
+func Fetch(ctx context.Context, manifestPath, outDir string, force bool, only string, timeout, delay time.Duration, ua string) error {
 	m, err := infrastructure.ReadManifest(manifestPath)
 	if err != nil {
 		return err
@@ -26,12 +27,18 @@ func Fetch(manifestPath, outDir string, force bool, only string, timeout, delay 
 	client := &http.Client{Timeout: timeout}
 	failed, total := 0, 0
 	for i := range m.Docs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		d := &m.Docs[i]
 		if only != "" && d.Name != only {
 			continue
 		}
 		total++
-		if err := infrastructure.FetchDoc(os.Stdout, client, *d, outDir, force, delay, ua); err != nil {
+		if err := infrastructure.FetchDoc(ctx, os.Stdout, client, *d, outDir, force, delay, ua); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			fmt.Fprintf(os.Stderr, "  ✗ %s: %s\n", d.Name, err)
 			failed++
 		}

@@ -8,6 +8,7 @@ from .. import infrastructure
 from ..domain import (
     DEFAULT_PORT,
     TargetRequest,
+    UsageError,
     entry_host,
     entry_user,
     resolve_password,
@@ -33,14 +34,18 @@ def describe_devices(
         cfg = infrastructure.quiet_load_ssh_config(cfg_path)
         # Listing incomplete/broken entries must remain possible. This boundary
         # includes lookup and route resolution, not just parsing the config file.
+        route_error = ""
         try:
             route = resolve_route(cfg, host, user, entry.get("port"))
             resolved_host, resolved_port = route.hostname, route.port
             user, hops = route.user, route.hops
             if resolved_host == host:
                 port = resolved_port
-        except Exception:  # noqa: BLE001 - diagnostics must survive broken ssh_config
+        except Exception as exc:  # noqa: BLE001 - diagnostics must survive broken ssh_config
             resolved_host, resolved_port, hops = host, port, ()
+            route_error = "unsupported or invalid SSH route; check ssh_config"
+            if isinstance(exc, UsageError) and str(exc).startswith("ERROR: ProxyCommand"):
+                route_error = str(exc).removeprefix("ERROR: ")
         password = resolve_password(entry, env)
         if password.source == "inventory":
             auth = "inventory-password"
@@ -65,6 +70,7 @@ def describe_devices(
                 auth,
                 entry.get("model") or "",
                 entry.get("note") or "",
+                route_error,
             )
         )
     return format_inventory(

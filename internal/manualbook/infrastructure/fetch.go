@@ -1,6 +1,7 @@
 package infrastructure
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -65,16 +66,19 @@ func CachePath(cacheDir string, d domain.Doc) string {
 }
 
 // FetchDoc は資料 1 件を取得キャッシュへ取る。kind で作法が変わる。
-func FetchDoc(w io.Writer, client *http.Client, d domain.Doc, cacheDir string, force bool, delay time.Duration, ua string) error {
+func FetchDoc(ctx context.Context, w io.Writer, client *http.Client, d domain.Doc, cacheDir string, force bool, delay time.Duration, ua string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	switch d.Kind {
 	case domain.KindPDF:
-		return fetchOne(w, client, d, CachePath(cacheDir, d), force)
+		return fetchOne(ctx, w, client, d, CachePath(cacheDir, d), force)
 	case domain.KindWeb:
 		// キャッシュを冊単位で置き換えるので、資料名は単一のディレクトリ名に限る。
 		if !filepath.IsLocal(d.Name) || d.Name == "." || strings.ContainsAny(d.Name, `/\`) {
 			return fmt.Errorf("name は単一のディレクトリ名にしてください: %q", d.Name)
 		}
-		return fetchWeb(w, client, d, CachePath(cacheDir, d), force, delay, ua)
+		return fetchWeb(ctx, w, client, d, CachePath(cacheDir, d), force, delay, ua)
 	case "":
 		return errors.New(`kind が無い。"pdf" か "web" を書く (取得と検証の作法が変わるので推測しない)`)
 	default:
@@ -84,7 +88,7 @@ func FetchDoc(w io.Writer, client *http.Client, d domain.Doc, cacheDir string, f
 
 // --- pdf ---
 
-func fetchOne(w io.Writer, client *http.Client, d domain.Doc, dst string, force bool) error {
+func fetchOne(ctx context.Context, w io.Writer, client *http.Client, d domain.Doc, dst string, force bool) error {
 	// url が空でも、別の経路で手に入れた PDF が置いてあれば取得済みとして扱う。
 	if !force {
 		if _, err := os.Stat(dst); err == nil {
@@ -97,20 +101,19 @@ func fetchOne(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 	}
 
 	_, _ = fmt.Fprintf(w, "  → %s\n", d.URL) //nolint:errcheck // Best-effort progress output; never discard artifact write errors.
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, d.URL, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.URL, http.NoBody)
 	if err != nil {
 		return err
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // Read-only response; body reads report failures.
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %s", resp.Status)
-	}
-
-	n, err := writeDownloadedPDF(dst, resp.Body)
+	var n int64
+	err = getWithRetry(client, req, 0, func(resp *http.Response) error {
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("HTTP %s", resp.Status)
+		}
+		var writeErr error
+		n, writeErr = writeDownloadedPDF(ctx, dst, responseReader{resp.Body})
+		return writeErr
+	})
 	if err != nil {
 		return err
 	}
@@ -167,7 +170,7 @@ func WebFetched(dst string, d domain.Doc) bool {
 	return true
 }
 
-func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force bool, delay time.Duration, userAgent string) error {
+func fetchWeb(ctx context.Context, w io.Writer, client *http.Client, d domain.Doc, dst string, force bool, delay time.Duration, userAgent string) error { //nolint:cyclop // Check cancellation before publishing the staged cache.
 	base, baseErr := webBaseURL(d)
 	if baseErr != nil {
 		return baseErr
@@ -177,7 +180,7 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 	if err := os.Remove(filepath.Join(dst, WebMetaName)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	c := webClient{client: client, base: base, force: force, userAgent: userAgent}
+	c := webClient{ctx: ctx, client: client, base: base, force: force, userAgent: userAgent, delay: delay}
 
 	// 1. index の指定箇所で版を確かめる。違えば取らずに止まる。
 	_, _ = fmt.Fprintf(w, "  → %s\n", base) //nolint:errcheck // Best-effort progress output; never discard artifact write errors.
@@ -197,12 +200,18 @@ func fetchWeb(w io.Writer, client *http.Client, d domain.Doc, dst string, force 
 		return err
 	}
 
-	cache := webCache{webClient: c, dst: dst, stage: stage, tags: tags, newTags: newTags, delay: delay}
+	cache := webCache{webClient: c, dst: dst, stage: stage, tags: tags, newTags: newTags}
 	if err := cache.fetchContents(w, index, docnames); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 
 	if err := writeWebMetadata(stage, base, d, newTags); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := publishWebCache(stage, dst, previous); err != nil {
@@ -351,22 +360,26 @@ func inferDocName(d *domain.Doc) {
 }
 
 type webClient struct {
+	ctx       context.Context //nolint:containedctx // One fetch-scoped client, never stored beyond FetchDoc.
 	client    *http.Client
 	base      *url.URL
 	userAgent string
 	force     bool
+	delay     time.Duration
 }
 
 type webCache struct {
 	tags, newTags map[string]etagEntry
 	dst, stage    string
 	webClient
-	delay time.Duration
 }
 
 func (c webClient) get(rel string, tag etagEntry) (*http.Response, error) {
 	u := c.base.ResolveReference(&url.URL{Path: rel})
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), http.NoBody)
+	if err := waitContext(c.ctx, c.delay); err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(c.ctx, http.MethodGet, u.String(), http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -379,7 +392,21 @@ func (c webClient) get(rel string, tag etagEntry) (*http.Response, error) {
 			req.Header.Set("If-Modified-Since", tag.LastModified)
 		}
 	}
-	return c.client.Do(req)
+	var result *http.Response
+	err = getWithRetry(c.client, req, c.delay, func(resp *http.Response) error {
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotModified {
+			return fmt.Errorf("HTTP %s", resp.Status)
+		}
+		body, readErr := io.ReadAll(responseReader{resp.Body})
+		if readErr != nil {
+			return readErr
+		}
+		copyResponse := *resp
+		copyResponse.Body = io.NopCloser(bytes.NewReader(body))
+		result = &copyResponse
+		return nil
+	})
+	return result, err
 }
 
 func (c webClient) readAll(rel string) ([]byte, error) {
@@ -404,7 +431,6 @@ func (c webCache) fetchFile(rel string) (changed bool, body []byte, err error) {
 	if cacheErr != nil {
 		tag = etagEntry{}
 	}
-	time.Sleep(c.delay)
 	resp, err := c.get(rel, tag)
 	if err != nil {
 		return false, nil, err
@@ -498,7 +524,7 @@ func editionParagraph(h *html.Node) (string, bool) {
 	return "", false
 }
 
-func writeDownloadedPDF(dst string, body io.Reader) (int64, error) {
+func writeDownloadedPDF(ctx context.Context, dst string, body io.Reader) (int64, error) {
 	// 途中で失敗した半端なファイルを残さないよう、一時ファイル経由で置く
 	tmp := dst + ".part"
 	f, err := os.Create(tmp)
@@ -509,6 +535,9 @@ func writeDownloadedPDF(dst string, body io.Reader) (int64, error) {
 	cerr := f.Close()
 	if err == nil {
 		err = cerr
+	}
+	if err == nil {
+		err = ctx.Err()
 	}
 	if err != nil {
 		_ = os.Remove(tmp) //nolint:errcheck // Remove partial download; preserve the original failure.

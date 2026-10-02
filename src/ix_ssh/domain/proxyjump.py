@@ -62,7 +62,9 @@ def hop_specs(cfg: SshConfigLookup | None, host: str, _seen: set | None = None) 
     if host in _seen:
         return []
     _seen.add(host)
-    proxyjump = cfg.lookup(host).get("proxyjump")
+    entry = cfg.lookup(host)
+    reject_proxycommand(entry, host)
+    proxyjump = entry.get("proxyjump")
     if not proxyjump or proxyjump.strip().lower() == "none":
         return []
     hops: list[str] = []
@@ -77,6 +79,7 @@ def resolve_hop(cfg: SshConfigLookup | None, spec: str) -> Hop:
     """Turn one hop spec into concrete connection settings via ssh_config."""
     user, host, port = split_hop(spec)
     entry = cfg.lookup(host) if cfg else {}
+    reject_proxycommand(entry, host)
     keys = entry.get("identityfile") or []
     if isinstance(keys, str):
         keys = [keys]
@@ -107,9 +110,16 @@ def resolve_route(
     A user may be absent in an incomplete inventory; connecting validates it later.
     """
     looked_up = cfg.lookup(host) if cfg is not None else {}
+    reject_proxycommand(looked_up, host)
     return Route(
         hostname=looked_up.get("hostname", host),
         port=parse_port(port or looked_up.get("port") or DEFAULT_PORT),
         user=user or looked_up.get("user"),
         hops=tuple(hop_specs(cfg, host)),
     )
+
+
+def reject_proxycommand(entry: Mapping[str, Any], host: str) -> None:
+    command = entry.get("proxycommand")
+    if command and str(command).strip().lower() != "none":
+        raise UsageError(f"ERROR: ProxyCommand is unsupported for host {host!r}; use ProxyJump")

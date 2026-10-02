@@ -244,6 +244,48 @@ class IntegrationTest(unittest.TestCase):
         self.assertIn("Invalid input", err)
         self.assertEqual((self.device.applied, self.device.saved), before)
 
+    def test_config_notices_and_masking_survive_a_later_rejection(self):
+        line = "ikev2 authentication psk id fqdn router key char " + SECRET
+        responses = {
+            line: ["% Please reboot the router.", "Strength: strong", "Unclassified notice"],
+            "bad-command": ["% Invalid input near " + SECRET[:8] + "..."],
+        }
+        for raw in (False, True):
+            with self.subTest(raw=raw), patch.dict(self.device.responses, responses):
+                args = ["-d", "viajump", "--config", line, "--config", "bad-command", "--save"]
+                if raw:
+                    args.append("--raw")
+                saved = self.device.saved
+                code, out, err = self.ix_ssh(*args)
+                self.assertEqual(code, 1, err)
+                self.assertIn("Please reboot the router.", out)
+                self.assertIn("Strength: strong", out)
+                self.assertIn("Unclassified notice", out)
+                self.assertNotIn(SECRET, out + err)
+                self.assertNotIn(SECRET[:8], out + err)
+                self.assertIn("line 2 of 2", err)
+                self.assertEqual(self.device.saved, saved)
+
+    def test_successful_config_masks_echo_and_reports_acceptance_count(self):
+        line = "username user password plain " + SECRET
+        for raw in (False, True):
+            args = ["-d", "viajump", "--config", line]
+            if raw:
+                args.append("--raw")
+            code, out, err = self.ix_ssh(*args)
+            self.assertEqual(code, 0, err)
+            self.assertNotIn(SECRET, out + err)
+            self.assertIn("[REDACTED]", out)
+            self.assertIn("received responses for 1 config lines", out)
+
+    def test_later_save_diagnostic_cannot_quote_a_config_secret(self):
+        line = "password old " + SECRET
+        with patch.dict(self.device.responses, {"write memory": ["% Error saving " + SECRET]}):
+            code, out, err = self.ix_ssh("-d", "viajump", "--config", line, "--save")
+        self.assertEqual(code, 1, err)
+        self.assertIn("Error saving", err)
+        self.assertNotIn(SECRET, out + err)
+
     def test_backup_command_error_preserves_file_and_stops_config(self):
         dest = Path(self.tmp.name) / "preserved.conf"
         dest.write_text("previous backup\n", encoding="utf-8")

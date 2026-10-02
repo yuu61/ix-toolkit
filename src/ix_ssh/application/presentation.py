@@ -20,6 +20,7 @@ class InventoryRow:
     auth: str
     model: str = ""
     note: str = ""
+    route_error: str = ""
 
 
 def format_inventory(
@@ -44,6 +45,8 @@ def format_inventory(
             route = f" -> {row.resolved_host}:{row.resolved_port}"
         if row.hops:
             route += " via " + " -> ".join(row.hops)
+        if row.route_error:
+            route = f"  route=unresolved ({row.route_error})"
         model = f"  model={row.model}" if row.model else ""
         lines.append(
             f"  {row.name:<{width}}  {row.user}@{row.host}:{row.port}{route}"
