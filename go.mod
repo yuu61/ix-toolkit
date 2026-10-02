@@ -3,7 +3,7 @@ module github.com/yuu61/ix-toolkit
 go 1.26.0
 
 require (
-	github.com/klippa-app/go-pdfium v1.19.8
+	github.com/klippa-app/go-pdfium v1.21.1
 	github.com/tetratelabs/wazero v1.12.0
 	golang.org/x/net v0.59.0
 )
