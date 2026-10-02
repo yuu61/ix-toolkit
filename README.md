@@ -24,9 +24,9 @@ git clone https://github.com/yuu61/ix-toolkit "$HOME/.agents/skills/ix-toolkit"
 uv tool install -e "$HOME/.agents/skills/ix-toolkit"
 ```
 
-両エージェントの全プロジェクトで使え、スキルごとのコピーや登録は不要です。
+全プロジェクトで使え、スキルごとのコピーや登録は不要です。
 
-インストール後は両エージェントを再起動してください。`ix-ssh` が見つからない場合は
+インストール後はエージェントを再起動してください。`ix-ssh` が見つからない場合は
 `uv tool update-shell` を実行し、ターミナルとエージェントを開き直します。
 
 更新は `git -C "$HOME/.agents/skills/ix-toolkit" pull` で本体・スキルの両方に反映されます。
@@ -49,6 +49,7 @@ uv tool install -e "$HOME/.agents/skills/ix-toolkit"
   }
 }
 ```
+
 - `host` は IP アドレスや `~/.ssh/config` のエイリアスが使用可能です（`ProxyJump` 等も自動で辿ります）。
 - 意図しない機器への設定投入を防ぐため、既定の機器は設定できません。エージェントが会話から判断するかユーザーに尋ねます。
 - 動作確認は手動で `ix-ssh --list` を実行してください。
@@ -67,9 +68,10 @@ NEC の公式マニュアル（PDF / Web）を取得し、`ix-manual` skill が�
 ### 使い方
 
 ```console
-$ go build -ldflags="-s -w" ./cmd/manualbook
-$ ./manualbook build
+go build -ldflags="-s -w" ./cmd/manualbook
+./manualbook build
 ```
+
 ※ Windows では `manualbook.exe` ができるので、PowerShell では `.\manualbook.exe build` と実行します（`-o manualbook` を付けると `.exe` が付かず、実行できません）。
 ※ Windows Defender の誤検知を避けるため `-ldflags="-s -w"` を推奨します。
 
@@ -105,12 +107,12 @@ manualbook scan    見開き画像を1ページずつに分割
 ## 開発時の検証
 
 ```console
-$ uv sync --extra dev
-$ uv run ruff check src/ tests/
-$ uv run ruff format --check src/ tests/
-$ uv run python -m unittest
-$ golangci-lint run ./...
-$ go test ./...
+uv sync --extra dev
+uv run ruff check src/ tests/
+uv run ruff format --check src/ tests/
+uv run python -m unittest
+golangci-lint run ./...
+go test ./...
 ```
 
 Ruff は `pyproject.toml` で検査対象を明示し、0.16.7 以上・0.17 未満で実行します。プレビューの検査は個別に選び、Python 3.10 に対応する構文を基準にします。[公式ルール一覧](https://docs.astral.sh/ruff/rules/)を参照して追加・更新します。
