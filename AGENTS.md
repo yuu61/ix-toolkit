@@ -7,6 +7,8 @@
 | ディレクトリ | 中身 | 言語 |
 |---|---|---|
 | `skills/` | SKILL.md 形式の skill 5 つ | Markdown |
+| `skills/*/agents/openai.yaml` | Codex 向けの skill 表示名と短い説明 | YAML |
+| `.codex-plugin/` | Codex 向けのプラグイン manifest | JSON |
 | `src/ix_ssh/domain/` | インベントリの読み方、設定の優先順位、パスワードの探し方、ProxyJump の平坦化、show の判定 | Python |
 | `src/ix_ssh/application/` | 1 回の `ix-ssh` 実行 (一覧 / show → backup → config → save) の手順 | Python |
 | `src/ix_ssh/infrastructure/` | インベントリと ssh_config の読み込み、バックアップの書き出し、netmiko / paramiko のセッション | Python (netmiko / paramiko) |
@@ -32,7 +34,7 @@ $ uv run ruff check src/ tests/ && uv run ruff format src/ tests/
 配布は「クローン + `uv tool install -e <クローン>`」だけ。skill は PATH の `ix-ssh` を呼ぶ。
 `gh skill install` は skill ディレクトリしか複製しない (`src/` が付いてこない) ので README から
 外してある。戻さない。
-
+共通のクローン先は `~/.agents/skills/ix-toolkit`。
 manualbook の変換結果の形 (`<manuals>/<系列>/<冊子>/` と索引の列) は `ix-manual` の SKILL.md が
 そのまま読む。片方を変えたらもう片方も直す。
 

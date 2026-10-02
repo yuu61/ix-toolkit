@@ -1,0 +1,3 @@
+interface:
+  display_name: "IX Manual"
+  short_description: "NEC IX のマニュアルから構文・機能・設定事例と系列間差分を調査"

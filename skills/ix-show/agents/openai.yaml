@@ -1,0 +1,3 @@
+interface:
+  display_name: "IX Show"
+  short_description: "NEC IX の show コマンドで機器の状態と設定を確認"

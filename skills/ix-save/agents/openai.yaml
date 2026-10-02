@@ -1,0 +1,3 @@
+interface:
+  display_name: "IX Save"
+  short_description: "NEC IX の running-config を startup-config に保存"

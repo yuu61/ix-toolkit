@@ -19,18 +19,18 @@ LLM が IX ルータの状態確認や設定変更を行うためのツール群
 
 ### インストール
 
-[uv](https://docs.astral.sh/uv/) を使用して、リポジトリ内の `ix-ssh` コマンドを PATH にインストールします。
-
-**Claude Code の場合:**
 ```console
-$ git clone https://github.com/yuu61/ix-toolkit $HOME/.claude/skills/ix-toolkit
-$ uv tool install -e $HOME/.claude/skills/ix-toolkit
+git clone https://github.com/yuu61/ix-toolkit "$HOME/.agents/skills/ix-toolkit"
+uv tool install -e "$HOME/.agents/skills/ix-toolkit"
 ```
-※ **`gh skill install` は使わないでください**（ソースコードが含まれないため動作しません）。
-※ アップデートは `git pull` のみで反映されます。
 
-**Codex などの他のエージェントの場合:**
-クローン先を対象エージェントの skill ディレクトリ（例: `~/.codex/skills/ix-toolkit`）に変更し、同様に `uv tool install -e $HOME/.codex/skills/ix-toolkit` を実行してください。
+両エージェントの全プロジェクトで使え、スキルごとのコピーや登録は不要です。
+
+インストール後は両エージェントを再起動してください。`ix-ssh` が見つからない場合は
+`uv tool update-shell` を実行し、ターミナルとエージェントを開き直します。
+
+更新は `git -C "$HOME/.agents/skills/ix-toolkit" pull` で本体・スキルの両方に反映されます。
+依存パッケージの変更時は `uv tool install --reinstall -e "$HOME/.agents/skills/ix-toolkit"` を再実行します。
 
 ### 接続先 (インベントリ)
 

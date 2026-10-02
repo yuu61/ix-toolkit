@@ -1,0 +1,3 @@
+interface:
+  display_name: "IX Backup"
+  short_description: "NEC IX の running-config をローカルにバックアップ"

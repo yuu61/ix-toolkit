@@ -1,0 +1,3 @@
+interface:
+  display_name: "IX Configure"
+  short_description: "NEC IX の設定変更を準備し、対象と設定行を確認して投入"
