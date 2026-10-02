@@ -190,10 +190,36 @@ class RunTest(unittest.TestCase):
             run(missing, env={}, open_session=lambda _: self.fail("must not connect"))
 
     def test_interactive_key_input_is_rejected_before_connecting(self):
-        req = self.request(config_lines=("pki private-key import crypto TestSecret",))
-        with self.assertRaisesRegex(UsageError, "config line 1: interactive") as cm:
-            run(req, env={}, open_session=lambda _: self.fail("must not connect"))
-        self.assertNotIn("TestSecret", str(cm.exception))
+        for command in (
+            "pki private-key import pem rsa crypto TestSecret",
+            "pki cert import pem name cert1",
+        ):
+            req = self.request(config_lines=(command,))
+            with (
+                self.subTest(command=command),
+                self.assertRaisesRegex(UsageError, "config line 1: interactive") as cm,
+            ):
+                run(req, env={}, open_session=lambda _: self.fail("must not connect"))
+            self.assertNotIn("TestSecret", str(cm.exception))
+
+    def test_noninteractive_imports_reach_the_session(self):
+        lines = (
+            "pki cert import pem name cert1 url file:cert.pem",
+            "pki cert import der name cert2 url file:///cert.der",
+            "pki cert import bundle url https://example/certs",
+            "pki private-key import pem rsa crypto crypto file key.pem",
+        )
+        session = FakeSession()
+        run(
+            self.request(
+                target=TargetRequest(device="home", no_ssh_config=True), config_lines=lines
+            ),
+            env={},
+            out=io.StringIO(),
+            err=io.StringIO(),
+            open_session=lambda _: session,
+        )
+        self.assertEqual(session.calls, [("apply", lines)])
 
     def test_password_sources(self):
         # key auth needs no password

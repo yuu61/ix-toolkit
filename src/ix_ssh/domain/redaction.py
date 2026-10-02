@@ -67,11 +67,27 @@ _FAMILIES = tuple(
 )
 _TOKEN = re.compile(r""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+""")
 _QUOTED = re.compile(r""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*' """, re.VERBOSE)
-_MODES = {"plain", "secret", "hash", "char", "hex", "0", "1"}
 _USERNAME_PASSWORD_MIN_TOKENS = 4
 _MIN_FRAGMENT_LENGTH = 4
 _DEVICE_ESCAPE = re.compile(r"\\(?:x([0-9a-fA-F]{2})|u([0-9a-fA-F]{4})|([0-7]{1,3}))")
-_CERT_SOURCE_INDEX = 4
+_MODE_FIELDS = (
+    (("ikev2", "authentication"), "key", {"char", "hex", "secret"}),
+    (("radius", "host"), "key", {"0", "1"}),
+    (("nm", "account"), "password", {"plain", "secret"}),
+    (("ngn", "radius-auth"), "password", {"0", "1"}),
+)
+_IMPORT_SOURCES = {
+    ("pki", "cert", "import"): (
+        ("bundle", "url"),
+        ("der", "name", None, "url"),
+        ("pem", "name", None, "url"),
+    ),
+    ("pki", "private-key"): (
+        ("bundle", "crypto", None, "file"),
+        ("pem", "rsa", "crypto", None, "file"),
+        ("pem", "dsa", "crypto", None, "file"),
+    ),
+}
 
 
 def _value(token: str) -> str:
@@ -106,10 +122,9 @@ def _secret_start(words: list[str]) -> int | None:  # noqa: C901, PLR0911, PLR09
         and len(words) >= _USERNAME_PASSWORD_MIN_TOKENS
         and words[2] == "password"
     ):
-        index = 3
-        while index < len(words) and words[index] in _MODES:
-            index += 1
-        return index
+        # Consume only the required type. IX's optional numeric mode occupies
+        # the same position as a numeric IX-R password, so protect it as well.
+        return 4 if words[3] in {"plain", "hash", "secret"} else 3
     if words[:2] == ["authentication", "password"]:
         return 3
     if words[:2] == ["authentication", "secret-password"]:
@@ -142,8 +157,16 @@ def _secret_start(words: list[str]) -> int | None:  # noqa: C901, PLR0911, PLR09
             start = index + 1
             if word == "message-digest-key":
                 start += 1
-            while start < len(words) and words[start] in _MODES:
-                start += 1
+            # Only these fields take a mode, exactly once. In other families
+            # (HTTP, OSPF, PKI, etc.) the next token is already the value.
+            for prefix, field, modes in _MODE_FIELDS:
+                if (
+                    tuple(words[: len(prefix)]) == prefix
+                    and word == field
+                    and words[start : start + 1]
+                    and words[start] in modes
+                ):
+                    return start + 1
             return start
     if words[0] == "vrrp" and "authentication" in words:
         return words.index("authentication") + 1
@@ -194,21 +217,33 @@ def protect_input(line: str) -> ProtectedInput:
     return ProtectedInput(line, masked, secrets)
 
 
+def _external_import_source(words: list[str], family: tuple[str, ...]) -> bool:
+    # Follow the argument grammar, consuming name/crypto values even when they
+    # are themselves "url" or "file". IX accepts abbreviated keywords.
+    arguments = words[3:]
+    for prefix in _IMPORT_SOURCES[family]:
+        if len(arguments) <= len(prefix):
+            continue
+        if not all(
+            value and (keyword is None or keyword.startswith(value))
+            for keyword, value in zip(prefix, arguments, strict=False)
+        ):
+            continue
+        source = arguments[len(prefix)]
+        if source and (prefix[-1] == "file" or ":" in source):
+            return True
+    return False
+
+
 def validate_config_protocol(lines: tuple[str, ...]) -> None:
     """Reject interactive key/certificate input before opening a device session."""
     for number, line in enumerate(lines, 1):
         words = [_value(token.group()).lower() for token in _TOKEN.finditer(line)]
         family = _family(words)
-        file_form = any(
-            word == "file" and not "crypto".startswith(words[index - 1]) and index + 1 < len(words)
-            for index, word in enumerate(words)
-        )
-        source_url = len(words) > _CERT_SOURCE_INDEX and ":" in words[_CERT_SOURCE_INDEX]
-        external_source = file_form if family == ("pki", "private-key") else source_url
         if (
-            family in {("pki", "private-key"), ("pki", "cert", "import")}
+            family in _IMPORT_SOURCES
             and any("import".startswith(word) for word in words[2:3])
-            and not external_source
+            and not _external_import_source(words, family)
         ):
             raise UsageError(
                 f"ERROR: config line {number}: interactive key/certificate input "

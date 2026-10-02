@@ -141,6 +141,19 @@ class IntegrationTest(unittest.TestCase):
             out,
         )
 
+    def test_proxyjump_connects_despite_later_fallback_proxycommand(self):
+        config = Path(self.tmp.name) / "fallback-config"
+        config.write_text(
+            "Include conf.d/*.conf\n"
+            "Host fakejump direct\n  ProxyCommand none\n"
+            "Host *\n  ProxyCommand unused-fallback token=hidden\n",
+            encoding="utf-8",
+        )
+        code, out, err = self.ix_ssh("-d", "viajump", "--ssh-config", str(config), "show version")
+        self.assertEqual(code, 0, err)
+        self.assertIn(SHOW_VERSION[0], out)
+        self.assertNotIn("hidden", out + err)
+
     def test_raw_show_direct_with_password_env(self):
         os.environ["FAKEIX_PASS"] = "s3cret"
         try:
@@ -277,6 +290,23 @@ class IntegrationTest(unittest.TestCase):
             self.assertNotIn(SECRET, out + err)
             self.assertIn("[REDACTED]", out)
             self.assertIn("received responses for 1 config lines", out)
+
+    def test_mode_keyword_password_stays_hidden_when_later_command_fails(self):
+        secret = "Secret"
+        line = f"username user password plain {secret} administrator"
+        responses = {line: ["Accepted value: " + secret], "bad-command": ["% Invalid input."]}
+        for raw in (False, True):
+            with self.subTest(raw=raw), patch.dict(self.device.responses, responses):
+                saved = self.device.saved
+                args = ["-d", "viajump", "--config", line, "--config", "bad-command", "--save"]
+                if raw:
+                    args.append("--raw")
+                code, out, err = self.ix_ssh(*args)
+                self.assertEqual(code, 1, err)
+                self.assertNotIn(secret, out + err)
+                self.assertIn("Accepted value: [REDACTED]", out)
+                self.assertIn("line 2 of 2", err)
+                self.assertEqual(self.device.saved, saved)
 
     def test_later_save_diagnostic_cannot_quote_a_config_secret(self):
         line = "password old " + SECRET
