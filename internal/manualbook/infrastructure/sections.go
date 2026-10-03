@@ -72,6 +72,11 @@ func normalizeHeadingNumber(s string) string {
 // ReadSectionPages は本文帯とヘッダ・フッタ帯を読み、ページの列に組み立てる。
 // progress は表の解析済みページ数を通知する。通知は直列化し、nil なら省略する。
 func ReadSectionPages(p *domain.Profile, pdf string, progress func(completed, total int)) ([]Page, error) {
+	// 本文・帯の抽出より先にサイズを読む。同じページを二度抽出しない。
+	d, err := openDoc(pdf)
+	if err != nil {
+		return nil, err
+	}
 	body, err := extractBody(p, pdf)
 	if err != nil {
 		return nil, err
@@ -80,11 +85,6 @@ func ReadSectionPages(p *domain.Profile, pdf string, progress func(completed, to
 	if err != nil {
 		return nil, err
 	}
-	d, err := openDoc(pdf)
-	if err != nil {
-		return nil, err
-	}
-
 	pages := make([]Page, 0, len(body))
 	bodySize := pdfBodyFontSize(d.pages, bodyCrop(p))
 	// 描画と表の検出はページごとに独立して行える。前ページからの

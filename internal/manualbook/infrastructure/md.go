@@ -49,7 +49,7 @@ func ReadPages(p *domain.Profile, pdf string) ([]Page, PageStats, error) {
 	if err != nil {
 		return nil, PageStats{}, err
 	}
-	d, err := openDoc(pdf)
+	d, err := openTextDoc(pdf)
 	if err != nil {
 		return nil, PageStats{}, err
 	}
