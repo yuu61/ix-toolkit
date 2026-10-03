@@ -66,7 +66,8 @@ _FAMILIES = tuple(
     )
 )
 _TOKEN = re.compile(r""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+""")
-_QUOTED = re.compile(r""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*' """, re.VERBOSE)
+_QUOTE_OR_ESCAPE = re.compile(r"""\\.|["']|\\""")
+_NONSPACE = re.compile(r"\S+")
 _USERNAME_PASSWORD_MIN_TOKENS = 4
 _MIN_FRAGMENT_LENGTH = 4
 _DEVICE_ESCAPE = re.compile(r"\\(?:x([0-9a-fA-F]{2})|u([0-9a-fA-F]{4})|([0-7]{1,3}))")
@@ -251,6 +252,72 @@ def validate_config_protocol(lines: tuple[str, ...]) -> None:
             )
 
 
+def _quote_events(text: str) -> list[tuple[int, str, bool]]:
+    events = []
+    for match in _QUOTE_OR_ESCAPE.finditer(text):
+        token = match.group()
+        if token[0] in {"'", '"'}:
+            events.append((match.start(), token, True))
+        elif len(token) == 1:
+            # A trailing backslash or backslash-newline cannot occur inside a
+            # complete quoted match: the original escape grammar uses \\.
+            events.append((match.start(), "", False))
+        elif token[1] in {"'", '"'}:
+            # An escaped quote can still start a quoted diagnostic fragment,
+            # though it cannot close one that started earlier.
+            events.append((match.start() + 1, token[1], False))
+    return events
+
+
+def _mask_quoted(text: str) -> str:
+    # Resolve the next unescaped closer once per quote, then take the leftmost
+    # non-overlapping matches. Unclosed quotes never rescan the same suffix.
+    closers = {}
+    ranges = []
+    for start, quote, unescaped in reversed(_quote_events(text)):
+        if not quote:
+            closers.clear()
+            continue
+        if quote in closers:
+            ranges.append((start, closers[quote]))
+        if unescaped:
+            closers[quote] = start + 1
+    parts = []
+    cursor = 0
+    for start, end in reversed(ranges):
+        if start < cursor:
+            continue
+        parts.extend((text[cursor:start], MASK))
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
+def _wrapped_pattern(secret: str) -> str:
+    # Whitespace runs have one quantifier, with no adjacent wrapping quantifiers.
+    # A leading run is tried only at its start, not at every space on a miss.
+    characters = re.findall(r"\s+|\S", secret)
+    pattern = [r"(?<!\s)"] if characters[0].isspace() else []
+    for index, char in enumerate(characters):
+        if char.isspace():
+            pattern.append(rf"\s{{{len(char)},}}")
+        else:
+            if index and not characters[index - 1].isspace():
+                pattern.append(r"\s*")
+            pattern.append(re.escape(char))
+    return "".join(pattern)
+
+
+def _truncated_token(token: str, first: str) -> str:
+    # Search within a token once rather than retry a greedy suffix at each
+    # occurrence of the first character when no ellipsis is present.
+    start = token.find(first)
+    end = token.rfind("...")
+    if 0 <= start < end:
+        return token[:start] + MASK + token[end + 3 :]
+    return token
+
+
 class ConfigRedactor:
     """Scrub echoes and quoted/escaped/truncated diagnostic values per response.
 
@@ -292,13 +359,13 @@ class ConfigRedactor:
     def message(self, text: str) -> str:
         """Protect later diagnostics too, without changing failure classification."""
         if self.secrets:
-            text = _QUOTED.sub(MASK, text)
-            text = re.sub(r"\S*\\\S*", self._escaped_token, text)
+            text = _mask_quoted(text)
+            text = _NONSPACE.sub(self._escaped_token, text)
         secrets = sorted(self.secrets, key=len, reverse=True)
         for secret in secrets:
             # A long echo can wrap inside the value; protect that before
             # considering the individual output lines or truncated tokens.
-            text = re.sub(r"\s*".join(map(re.escape, secret)), MASK, text)
+            text = re.sub(_wrapped_pattern(secret), MASK, text)
         for secret in secrets:
             for variant in (secret, secret.replace('"', r"\""), secret.replace("'", r"\'")):
                 text = text.replace(variant, MASK)
@@ -307,11 +374,15 @@ class ConfigRedactor:
             for part in parts:
                 prefix = re.escape(part[: min(4, len(part))])
                 text = re.sub(prefix + r"[^\s\"']*", MASK, text)
-                text = re.sub(re.escape(part[:1]) + r"[^\s]*\.\.\.", MASK, text)
+                text = _NONSPACE.sub(
+                    lambda match, first=part[0]: _truncated_token(match.group(), first), text
+                )
         return text
 
     def _escaped_token(self, match: re.Match[str]) -> str:
         token = match.group()
+        if "\\" not in token:
+            return token
         decoded = _DEVICE_ESCAPE.sub(
             lambda m: chr(int(m[1] or m[2] or m[3], 8 if m[3] else 16)), token
         )

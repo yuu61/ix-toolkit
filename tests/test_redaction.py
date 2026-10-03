@@ -1,5 +1,8 @@
 """Privacy boundaries: synthetic values, both families and diagnostic variants."""
 
+import json
+import subprocess
+import sys
 import unittest
 
 from ix_ssh.domain import UsageError
@@ -9,6 +12,107 @@ SECRET = "Zq9SensitiveValue"
 
 
 class RedactionTest(unittest.TestCase):
+    def _run_bounded_script(self, script: str, data=()):
+        # Backtracking regressions must fail without hanging the test runner.
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            input=json.dumps(data),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=5,
+            check=True,
+        )
+        return json.loads(result.stdout)
+
+    def test_long_diagnostic_misses_finish_within_a_bounded_time(self):
+        script = """
+import json
+import sys
+from ix_ssh.domain.redaction import ConfigRedactor
+secret, text = json.load(sys.stdin)
+redactor = ConfigRedactor(('password ' + json.dumps(secret),))
+print(json.dumps(redactor.message(text)))
+"""
+        cases = (
+            (" " * 12 + "X", " " * 40 + "hostname router"),
+            (" " * 12 + "X", " " * 200000 + "hostname router"),
+            (SECRET, "a" * 200000),
+            (SECRET, "Z" * 200000),
+            (SECRET, '"' + r"\" " * 100000),
+            (SECRET, "'" + r"\' " * 100000),
+        )
+        for secret, text in cases:
+            with self.subTest(secret=secret, length=len(text)):
+                self.assertEqual(self._run_bounded_script(script, (secret, text)), text)
+
+    def test_indented_echo_does_not_stop_later_lines_or_save(self):
+        script = """
+import json
+from unittest.mock import Mock
+from ix_ssh.infrastructure.session import NetmikoSession
+lines = (' ' * 40 + 'hostname router', 'password "' + ' ' * 12 + 'X"',
+         'logging buffered 100')
+conn = Mock()
+conn.send_config_set.side_effect = lines
+conn.save_config.return_value = 'Configuration saved.'
+session = NetmikoSession(conn, [], TimeoutError)
+outputs = list(session.apply(lines))
+saved = session.save()
+print(json.dumps((outputs, saved, conn.send_config_set.call_count,
+                  conn.exit_config_mode.call_count, conn.save_config.call_count)))
+"""
+        outputs, saved, applied, exited, saves = self._run_bounded_script(script)
+        self.assertEqual(
+            outputs,
+            [" " * 40 + "hostname router", "password [REDACTED]", "logging buffered 100"],
+        )
+        self.assertEqual(saved, "Configuration saved.")
+        self.assertEqual((applied, exited, saves), (3, 1, 1))
+
+    def test_wrapped_whitespace_runs_are_masked(self):
+        cases = (
+            ("a   b", "a \n\t b"),
+            ("a\t\tb", "a\t\n\t b"),
+            (" " * 12 + "X", " " * 40 + "X"),
+            ("XYZ" + " " * 12, "X\nY\tZ" + " " * 40),
+            (" " * 12, " " * 40),
+            ("a   b", "a   b / a\n  b"),
+        )
+        for secret, representation in cases:
+            with self.subTest(secret=secret, representation=representation):
+                redactor = ConfigRedactor(('password "' + secret + '"',))
+                expected = "[REDACTED] / [REDACTED]" if " / " in representation else "[REDACTED]"
+                self.assertEqual(redactor.message(representation), expected)
+
+    def test_truncated_tokens_preserve_surrounding_text(self):
+        for first in ("Z", "$", "."):
+            with self.subTest(first=first):
+                redactor = ConfigRedactor(("password " + first + "q9SensitiveValue",))
+                text = "Notice: prefix" + first + "...tail...suffix"
+                self.assertEqual(redactor.message(text), "Notice: prefix[REDACTED]suffix")
+        redactor = ConfigRedactor(("password .q9SensitiveValue",))
+        self.assertEqual(redactor.message("Notice: ..."), "Notice: ...")
+
+    def test_unterminated_quotes_and_contractions_preserve_notices(self):
+        redactor = ConfigRedactor(("password " + SECRET,))
+        for text in ("Can't save current config.", 'Notice: "unfinished', "Notice: 'unfinished"):
+            with self.subTest(text=text):
+                self.assertEqual(redactor.message(text), text)
+
+    def test_quoted_short_fragments_keep_existing_protection(self):
+        redactor = ConfigRedactor(("password " + SECRET,))
+        cases = (
+            ('"Zq"', "[REDACTED]"),
+            (r'\"Zq"', r"\[REDACTED]"),
+            (r"\'Zq'", r"\[REDACTED]"),
+            ("\"unfinished 'Zq'", '"unfinished [REDACTED]'),
+            ('"unfinished\\\n"Zq"', '"unfinished\\\n[REDACTED]'),
+        )
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(redactor.message(text), expected)
+
     def test_inventory_families_and_deletion_forms(self):
         commands = (
             "username user password plain 1 {} administrator",
