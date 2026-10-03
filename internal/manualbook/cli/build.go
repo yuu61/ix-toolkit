@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 
 	"github.com/yuu61/ix-toolkit/internal/manualbook/application"
 )
@@ -23,7 +25,10 @@ func runBuild(args []string) {
 	}
 	parseFlags(fs, args)
 
-	if err := application.Build(*manifestPath, *cacheDir, *manualsDir, *force, *only); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	err := application.Build(ctx, *manifestPath, *cacheDir, *manualsDir, *force, *only)
+	stop()
+	if err != nil {
 		fatal(err)
 	}
 }

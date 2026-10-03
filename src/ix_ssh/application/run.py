@@ -1,7 +1,7 @@
 import getpass
 import os
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +20,7 @@ from ..domain import (
     ssh_config_path,
     validate_show_commands,
 )
+from ..domain.redaction import validate_config_protocol
 from .listing import describe_devices, list_devices
 from .presentation import ConsoleOutput, format_target
 
@@ -49,7 +50,7 @@ class Session(Protocol):
     is the real one; tests substitute a fake."""
 
     def show(self, cmd: str) -> str: ...
-    def apply(self, lines: Sequence[str]) -> str: ...
+    def apply(self, lines: Sequence[str]) -> Iterator[str]: ...
     def save(self) -> str: ...
     def close(self) -> None: ...
 
@@ -121,7 +122,14 @@ def execute(  # noqa: PLR0913, PLR0917
 
     if req.config_lines:
         output.header("config")
-        output.result(session.apply(req.config_lines))
+        for response in session.apply(req.config_lines):
+            output.result(response)
+            output.out.flush()
+        output.result(
+            f"[OK] received responses for {len(req.config_lines)} config lines; "
+            "no recognized rejection; "
+            "verify behavior with show; startup-config is saved only by --save"
+        )
 
     if req.save:
         output.header("write memory")
@@ -157,6 +165,7 @@ def run(  # noqa: PLR0913, PLR0917
             "ERROR: nothing to do (give show commands, --backup, --config, --save, or --list)"
         )
 
+    validate_config_protocol(tuple(config_lines))
     target = prepare_target(req, env, prompt)
     if not req.raw:
         print(format_target(target), file=err)

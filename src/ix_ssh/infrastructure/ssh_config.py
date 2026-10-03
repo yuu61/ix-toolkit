@@ -7,11 +7,34 @@ import shlex
 from pathlib import Path
 
 from ..domain import UsageError
+from ..domain.proxyjump import SshConfigLookup
 from .deps import missing_dependency
 from .files import HAND_EDITED_ENCODING
 
 DEFAULT_SSH_CONFIG = str(Path.home() / ".ssh" / "config")
 MAX_INCLUDE_DEPTH = 8
+
+
+class _EffectiveSshConfig:
+    """Expose only the proxy selected by OpenSSH's directive precedence."""
+
+    def __init__(self, config: SshConfigLookup):
+        self._config = config
+
+    def lookup(self, hostname: str):
+        # Paramiko inserts keys in the order matching directives first set them,
+        # including Match final's second pass, but treats the proxy keys as
+        # independent. Resolve their competition before domain route checks.
+        entry = self._config.lookup(hostname)
+        options = dict(entry)
+        for key, value in entry.items():
+            if key == "proxycommand":
+                options.pop("proxyjump", None)
+                break
+            if key == "proxyjump" and value.strip().lower() != "none":
+                options.pop("proxycommand", None)
+                break
+        return options
 
 
 def _read_ssh_config_text(path: Path, depth: int = 0) -> str:
@@ -50,7 +73,7 @@ def _read_ssh_config_text(path: Path, depth: int = 0) -> str:
 
 
 def load_ssh_config(path: str | Path):
-    """paramiko.SSHConfig for `path`, or None when the file is missing/empty."""
+    """Effective SSH settings for `path`, or None when the file is missing/empty."""
     try:
         import paramiko
     except ImportError as e:
@@ -61,10 +84,18 @@ def load_ssh_config(path: str | Path):
         text = _read_ssh_config_text(Path(path).expanduser())
         if not text:
             return None
+        # Paramiko's special handling of unquoted `ProxyCommand none` overwrites
+        # earlier commands in the same block. Quoting preserves first-value wins
+        # while keeping an explicit none present to block later ProxyJump values.
+        text = re.sub(
+            r"(?im)^([ \t]*proxycommand(?:[ \t]*=[ \t]*|[ \t]+))none[ \t]*$",
+            r'\1"none"',
+            text,
+        )
         cfg.parse(io.StringIO(text))
     except (OSError, UnicodeError, ValueError, RuntimeError, paramiko.SSHException) as exc:
         raise UsageError(f"ERROR: cannot read ssh_config {path}: {exc}") from exc
-    return cfg
+    return _EffectiveSshConfig(cfg)
 
 
 def quiet_load_ssh_config(path: str | None):

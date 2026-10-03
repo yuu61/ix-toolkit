@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import unittest
+from importlib import import_module
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,6 +16,10 @@ from ix_ssh.domain import UsageError
 from ix_ssh.infrastructure import fix_command, load_ssh_config, read_inventory, write_backup
 
 from .test_application import FakeSession, target
+
+# Python 3.10's mock.patch traverses package attributes: application.run is
+# also an exported function. Resolve the module explicitly on every version.
+RUN_MODULE = import_module("ix_ssh.application.run")
 
 
 class ErrorBoundaryTest(unittest.TestCase):
@@ -32,7 +37,7 @@ class ErrorBoundaryTest(unittest.TestCase):
 
     def test_missing_config_file_fails_before_connecting(self):
         path = self.root / "missing.conf"
-        with patch("ix_ssh.application.run.prepare_target") as prepare:
+        with patch.object(RUN_MODULE, "prepare_target") as prepare:
             self.assert_cli_error(["--config-file", str(path)], f"cannot read config file {path}")
             prepare.assert_not_called()
 
@@ -40,7 +45,7 @@ class ErrorBoundaryTest(unittest.TestCase):
         for command in ("showcase", "ip route x", "show version\nwrite memory", "show\tip route"):
             with (
                 self.subTest(command=command),
-                patch("ix_ssh.application.run.prepare_target") as prepare,
+                patch.object(RUN_MODULE, "prepare_target") as prepare,
             ):
                 self.assert_cli_error(
                     ["show version", command, "--config", "hostname x", "--save"],
@@ -70,7 +75,7 @@ class ErrorBoundaryTest(unittest.TestCase):
         session = FakeSession()
         req = Request(backup=str(blocked / "backup.conf"), config_lines=("hostname x",), save=True)
         with (
-            patch("ix_ssh.application.run.prepare_target", return_value=target()),
+            patch.object(RUN_MODULE, "prepare_target", return_value=target()),
             self.assertRaisesRegex(UsageError, "cannot write backup"),
         ):
             run(req, env={}, out=io.StringIO(), err=io.StringIO(), open_session=lambda _: session)
@@ -103,7 +108,7 @@ class ErrorBoundaryTest(unittest.TestCase):
         session, out, err = FakeSession(), io.StringIO(), io.StringIO()
         req = Request(backup=str(path), config_lines=("hostname x",), save=True)
         with (
-            patch("ix_ssh.application.run.prepare_target", return_value=target()),
+            patch.object(RUN_MODULE, "prepare_target", return_value=target()),
             patch("ix_ssh.infrastructure.files.restrict_to_owner", return_value=False),
         ):
             run(req, env={}, out=out, err=err, open_session=lambda _: session)

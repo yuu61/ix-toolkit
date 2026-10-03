@@ -6,8 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 	"golang.org/x/net/html"
+
+	"github.com/yuu61/ix-toolkit/internal/manualbook/domain"
 )
 
 const (

@@ -2,6 +2,7 @@ package application
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -39,7 +40,9 @@ import (
 // が 150dpi (sections.go の実測)。
 const buildFigureDPI = 150
 
-func Build(manifestPath, cacheDir, manualsDir string, force bool, only string) error {
+func Build(ctx context.Context, manifestPath, cacheDir, manualsDir string, force bool, only string) error { //nolint:cyclop // Cancellation checks belong at each fetch/convert boundary.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	m, err := infrastructure.ReadManifest(manifestPath)
 	if err != nil {
 		return err
@@ -61,23 +64,36 @@ func Build(manifestPath, cacheDir, manualsDir string, force bool, only string) e
 
 	client := &http.Client{Timeout: 5 * time.Minute}
 
-	fetched := startWebFetch(client, web, cacheDir, force, len(local) > 0)
+	fetched, done := startWebFetch(ctx, client, web, cacheDir, force, len(local) > 0)
+	defer func() {
+		cancel()
+		<-done // Join before CLI exit so staging-directory cleanup completes.
+	}()
 
 	n := len(local) + len(web)
 	b := buildProgress{total: n, manualsDir: manualsDir, cacheDir: cacheDir, manifestDir: manifestDir}
 	for k := range local {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		d := &local[k]
-		b.step(*d, func() error { return fetchIfNeeded(os.Stdout, client, *d, cacheDir, force) })
+		b.step(ctx, *d, func() error { return fetchIfNeeded(ctx, os.Stdout, client, *d, cacheDir, force) })
 	}
 	for k := range web {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		d := &web[k]
-		b.step(*d, func() error { return <-fetched[k] })
+		b.step(ctx, *d, func() error { return <-fetched[k] })
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	failed := b.failed + buildDiff(manualsDir, manifestDir)
 
 	fmt.Printf("\n完了: %d 件中 %d 件 → %s\n", n, n-failed, manualsDir)
-	if created, invPath, err := infrastructure.InitInventory(); err != nil {
+	if created, invPath, err := infrastructure.InitInventory(); err != nil { //nolint:contextcheck // Local file/permission setup after all cancellable work; no fetch is started.
 		fmt.Fprintf(os.Stderr, "  ✗ %s\n", err)
 	} else if created {
 		fmt.Printf("空のインベントリを作成しました: %s\n", invPath)
@@ -91,12 +107,12 @@ func Build(manifestPath, cacheDir, manualsDir string, force bool, only string) e
 
 // fetchIfNeeded は取得済みなら取りに行かない FetchDoc。PDF は実体の有無 (fetchOne が
 // 見る)、Web は取り切った印 (.manualbook.json の版) で決める。-force ならどちらも取り直す。
-func fetchIfNeeded(w io.Writer, client *http.Client, d domain.Doc, cacheDir string, force bool) error {
+func fetchIfNeeded(ctx context.Context, w io.Writer, client *http.Client, d domain.Doc, cacheDir string, force bool) error {
 	if d.Kind == domain.KindWeb && !force && infrastructure.WebFetched(infrastructure.CachePath(cacheDir, d), d) {
 		_, _ = fmt.Fprintf(w, "  = %s (取得済み)\n", d.Name) //nolint:errcheck // Best-effort progress output; never discard artifact write errors.
 		return nil
 	}
-	return infrastructure.FetchDoc(w, client, d, cacheDir, force, time.Second, infrastructure.DefaultUserAgent)
+	return infrastructure.FetchDoc(ctx, w, client, d, cacheDir, force, time.Second, infrastructure.DefaultUserAgent)
 }
 
 // convertDoc は取得済みの資料 1 件を <manuals>/<系列>/<冊子>/ に変換する。
@@ -257,14 +273,17 @@ type buildProgress struct {
 	total, completed, failed          int
 }
 
-func (b *buildProgress) step(d domain.Doc, fetch func() error) {
+func (b *buildProgress) step(ctx context.Context, d domain.Doc, fetch func() error) {
 	b.completed++
 	err := domain.CheckDoc(d)
 	if err == nil {
 		outDir := filepath.Join(b.manualsDir, d.Series, d.Book)
 		fmt.Printf("[%d/%d] %s (%s) → %s\n", b.completed, b.total, d.Name, d.Kind, outDir)
 		if err = fetch(); err == nil {
-			err = convertDoc(d, b.cacheDir, outDir, resolveManifestPath(b.manifestDir, d.Profile))
+			err = ctx.Err()
+			if err == nil {
+				err = convertDoc(d, b.cacheDir, outDir, resolveManifestPath(b.manifestDir, d.Profile))
+			}
 		}
 	} else {
 		fmt.Printf("[%d/%d] %s (%s)\n", b.completed, b.total, d.Name, d.Kind)
@@ -276,18 +295,24 @@ func (b *buildProgress) step(d domain.Doc, fetch func() error) {
 	fmt.Println()
 }
 
-func startWebFetch(client *http.Client, web []domain.Doc, cacheDir string, force, hasLocal bool) []chan error {
+func startWebFetch(ctx context.Context, client *http.Client, web []domain.Doc, cacheDir string, force, hasLocal bool) ([]chan error, <-chan struct{}) {
 	// Web の取得。1 つの goroutine で順に取る (同じサイトなので、並べて投げない)。
 	// 進捗は表の出力に混ざるので、行の頭に資料名を付けて見分けられるようにする。
 	fetched := make([]chan error, len(web))
 	for k := range web {
 		fetched[k] = make(chan error, 1)
 	}
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		for k := range web {
+			if err := ctx.Err(); err != nil {
+				fetched[k] <- err
+				continue
+			}
 			d := &web[k]
 			w := &prefixWriter{prefix: d.Name + ": ", dst: os.Stdout}
-			fetched[k] <- infrastructure.FetchDoc(w, client, *d, cacheDir, force, time.Second, infrastructure.DefaultUserAgent)
+			fetched[k] <- infrastructure.FetchDoc(ctx, w, client, *d, cacheDir, force, time.Second, infrastructure.DefaultUserAgent)
 		}
 	}()
 	if hasLocal && len(web) > 0 {
@@ -299,5 +324,5 @@ func startWebFetch(client *http.Client, web []domain.Doc, cacheDir string, force
 		fmt.Printf("Web の取得は裏で先に始める: %s\n\n", strings.Join(names, ", "))
 	}
 
-	return fetched
+	return fetched, done
 }

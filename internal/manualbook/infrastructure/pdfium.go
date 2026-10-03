@@ -15,6 +15,8 @@ import (
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental"
 )
 
 // PDF を読むエンジン。PDFium を WebAssembly で持つ (cgo も外部コマンドも要らない)。
@@ -104,7 +106,11 @@ const maxPDFWorkers = 4
 func newEnginePool() (pdfium.Pool, error) {
 	return webassembly.Init(webassembly.Config{
 		MinIdle: 1, MaxIdle: 1, MaxTotal: 1,
-		RuntimeConfig: wazero.NewRuntimeConfig().WithCompilationCache(compiled),
+		// The bundled PDFium WASM uses exception handling, which Wazero does
+		// not enable by default. Keep extraction and rendering settings intact.
+		RuntimeConfig: wazero.NewRuntimeConfig().
+			WithCoreFeatures(api.CoreFeaturesV2 | experimental.CoreFeaturesExceptionHandling).
+			WithCompilationCache(compiled),
 	})
 }
 

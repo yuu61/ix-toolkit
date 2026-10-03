@@ -4,7 +4,7 @@ chain opened by paramiko here and handed to netmiko as a ready socket."""
 import contextlib
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 
 from ..domain import (
     Hop,
@@ -15,6 +15,7 @@ from ..domain import (
     config_stopped_at,
     validate_show_commands,
 )
+from ..domain.redaction import ConfigRedactor
 from .deps import missing_dependency
 
 READ_TIMEOUT = 120
@@ -71,6 +72,7 @@ class NetmikoSession:
         self._conn = conn
         self._jump_clients = jump_clients
         self._read_error = read_error
+        self._redactor: ConfigRedactor | None = None
 
     def show(self, cmd: str) -> str:
         """Run a single `show ...` inside config mode. expect_string is pinned to
@@ -86,7 +88,7 @@ class NetmikoSession:
             conn.exit_config_mode()
         return check_command_output(cmd, output)
 
-    def apply(self, lines: Sequence[str]) -> str:
+    def apply(self, lines: Sequence[str]) -> Iterator[str]:
         """Apply the lines in one config-mode visit, handing them to netmiko one at
         a time so a failure is pinned to its line by position. netmiko waits for
         each line's echo and prompt either way, so this adds no round trips.
@@ -96,7 +98,9 @@ class NetmikoSession:
         exception is not chained, so the line cannot surface from a traceback."""
         conn = self._conn
         total = len(lines)
-        output = conn.config_mode()
+        redactor = ConfigRedactor(tuple(lines))
+        self._redactor = redactor
+        conn.config_mode()
         for number, line in enumerate(lines, 1):
             try:
                 echo = conn.send_config_set(
@@ -110,11 +114,19 @@ class NetmikoSession:
                     f"ERROR: {config_stopped_at(number, total)}: no echo or prompt within "
                     f"{READ_TIMEOUT}s; earlier lines may already be applied"
                 ) from None
-            output += check_config_line_output(number, total, echo)
-        return output + conn.exit_config_mode()
+            check_config_line_output(number, total, echo)
+            yield redactor.response(number, echo)
+        conn.exit_config_mode()
 
     def save(self) -> str:
-        return check_command_output("write memory", self._conn.save_config())
+        output = self._conn.save_config()
+        try:
+            check_command_output("write memory", output)
+        except UsageError as exc:
+            if self._redactor is not None:
+                raise UsageError(self._redactor.message(str(exc))) from None
+            raise
+        return self._redactor.message(output) if self._redactor is not None else output
 
     def close(self) -> None:
         try:

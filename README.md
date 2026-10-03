@@ -50,7 +50,7 @@ uv tool install -e "$HOME/.agents/skills/ix-toolkit"
 }
 ```
 
-- `host` は IP アドレスや `~/.ssh/config` のエイリアスが使用可能です（`ProxyJump` 等も自動で辿ります）。
+- `host` は IP アドレスや `~/.ssh/config` のエイリアスが使用可能です（`ProxyJump` も自動で辿ります）。対象または踏み台の有効な `ProxyCommand` は未対応として接続前にエラーにし、`--list` では未解決の経路と表示します。
 - 意図しない機器への設定投入を防ぐため、既定の機器は設定できません。エージェントが会話から判断するかユーザーに尋ねます。
 - 動作確認は手動で `ix-ssh --list` を実行してください。
 
@@ -58,6 +58,15 @@ uv tool install -e "$HOME/.agents/skills/ix-toolkit"
 
 通常は `enable-config` で入ります。他のユーザーが使用中の場合はエラーになります。
 強制取得を明示する場合は `--force-config` を付けて実行します。skill は、ユーザーから「強制的に設定して」など明示された場合のみこのオプションを付与します。
+
+設定応答は行ごとに表示し、パスワード・認証鍵・PIN 等のエコーと診断中の値を `[REDACTED]` に伏せます。
+対象は IX CRM / FD 10.11-1.1 と IX-R CRM / FD 1.5a の調査に基づき、機種情報がなくても両系列を保護します。
+省略形・曖昧な構文・任意文字列への埋め込みでは引数列を広く伏せる場合があります。`--raw` でも保護します。
+再起動要求やパスワード強度評価、未分類の通知は秘密を除いて表示し、後続行の失敗でも先行する通知を残します。
+既存の拒否判定で失敗した場合は行番号を示し、後続の設定・保存を止めます。
+完了行数は応答を受信し、既知の拒否を検出しなかった数です。動作確認は別の show、永続化は `--save` / `ix-save` で行います。
+対話式の鍵・証明書入力は未対応のため接続前に拒否し、端末に返る秘密鍵の出力は全体を伏せます。
+show の本文や機器が書き出すファイルはこの設定応答マスクの対象外です。
 
 ---
 
@@ -72,13 +81,15 @@ go build -ldflags="-s -w" ./cmd/manualbook
 ./manualbook build
 ```
 
-※ Windows では `manualbook.exe` ができるので、PowerShell では `.\manualbook.exe build` と実行します（`-o manualbook` を付けると `.exe` が付かず、実行できません）。
+※ Windows では `manualbook.exe` ができるので、PowerShell では `.\manualbook.exe build` と実行します。
 ※ Windows Defender の誤検知を避けるため `-ldflags="-s -w"` を推奨します。
 
 - `manifest.json` の定義に従い、取得 → 変換 → 差分表の作成までを1回で作ります。
 - マニュアルの変換結果は `~/.ix-toolkit/manuals/` 以下に出力されます。
 - PDF 版マニュアル（無印の設定事例集など）が手元にある場合は `pdf/` ディレクトリに配置しておくと、ダウンロードをスキップして変換します。
 - 2回目以降の実行では、取得済みの資料は再取得せずに変換のみを行います。
+- GET の一時的な通信失敗と HTTP 429 / 500 / 502 / 503 / 504 は最大 3 回試します。再試行待ちは通常 2 秒・4 秒で、429 / 503 の `Retry-After` と取得間隔を守ります。`Retry-After` が 30 秒を超える場合は失敗にします。
+- `fetch` / `build` は Ctrl-C で HTTP と待機を中断し、起動済みの取得処理と一時ファイルの後始末を終えてから終了します。再取得に失敗した Web キャッシュは、以前の本文を保ち、未完了として次回取り直します。
 - PDF のページ画像は、原本の SHA-256・DPI・全画像の存在を確認して再利用します。古い形式の生成済み印は初回に作り直します。
 
 ### 変換結果の構成
@@ -91,43 +102,11 @@ go build -ldflags="-s -w" ./cmd/manualbook
 
 PDF由来の図表はテキスト構造として復元されるか、必要に応じてページごと画像（PNG）として保存され、Markdown内に埋め込まれます。
 
-### 個別実行 (開発・デバッグ用)
-変換処理の一部だけをやり直す場合は、以下のサブコマンドを使用できます。
-```
-manualbook fetch   資料をまとめて取得する (PDF / Web)
-manualbook probe   段組み等の自動較正・プロファイル作成 (PDF)
-manualbook md      取得済みデータを Markdown に変換
-manualbook diff    無印と IX-R のコマンド対応表を作成
-manualbook figures PDF のページを PNG に画像化する
-manualbook scan    見開き画像を1ページずつに分割
-```
-
 ---
 
-## 開発時の検証
+## 開発
 
-```console
-uv sync --extra dev
-uv run ruff check src/ tests/
-uv run ruff format --check src/ tests/
-uv run python -m unittest
-golangci-lint run ./...
-go test ./...
-```
-
-Ruff は `pyproject.toml` で検査対象を明示し、0.16.7 以上・0.17 未満で実行します。プレビューの検査は個別に選び、Python 3.10 に対応する構文を基準にします。[公式ルール一覧](https://docs.astral.sh/ruff/rules/)を参照して追加・更新します。
-
-| 主なルール | 検出する問題 |
-| --- | --- |
-| `B` / `PL` / `RUF` / `C90` | 可変の既定引数、ループ変数の上書き、反復中の変更、複雑な処理 |
-| `S` / `BLE` / `TRY` | 秘密の直書き、危険な実行、広すぎる例外捕捉、例外処理の誤り |
-| `DTZ` / `PTH` / `PLW1514` | タイムゾーン・パス操作・`open()` の文字コード指定漏れ |
-| `I` / `UP` / `PERF` / `ARG` | import の整理、対応構文、非効率な書き方、未使用引数 |
-| `TID253` / `PGH` / `RUF100` | SSH ライブラリの早期 import、検査の一括抑制、不要な抑制 |
-
-unittest を pytest に変えるルール、型注釈・docstring の網羅、フォーマッターと競合するルールは選びません。偽の IX の資格情報・コールバック、依存注入の引数、Include の glob、既存のホスト鍵自動受け入れは、設定または該当箇所に理由を付けて例外にしています。新しい例外はルールと範囲を限定します。
-
-`pathlib` とテキストの `subprocess` にも文字コードを指定する規則は unittest で検査します。Go は出力ファイルの `Close()` を含め、無視したエラーを検出します。権限と画像キャッシュの正しさは回帰テストで確認します。
+開発環境、検証手順、静的検査の方針、マニュアル変換の個別実行は [開発ガイド](docs/develop.md) を参照してください。
 
 ## ライセンス
 

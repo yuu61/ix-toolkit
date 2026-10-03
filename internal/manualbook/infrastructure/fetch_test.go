@@ -1,6 +1,7 @@
 package infrastructure
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -94,7 +95,7 @@ func (s *fetchSite) doc() domain.Doc {
 }
 
 func (s *fetchSite) fetch(cache string, force bool) error {
-	return FetchDoc(io.Discard, s.Client(), s.doc(), cache, force, 0, "test")
+	return FetchDoc(context.Background(), io.Discard, s.Client(), s.doc(), cache, force, 0, "test")
 }
 
 func readFetchFile(t *testing.T, path string) string {
@@ -214,7 +215,7 @@ func TestFetchWebEditionVersion(t *testing.T) {
 			d := s.doc()
 			d.Version, d.VersionSource = "1.5", tc.source
 			cache := t.TempDir()
-			err := FetchDoc(io.Discard, s.Client(), d, cache, false, 0, "test")
+			err := FetchDoc(context.Background(), io.Discard, s.Client(), d, cache, false, 0, "test")
 			if (err == nil) != tc.want {
 				t.Fatalf("fetch error = %v, want success %v", err, tc.want)
 			}
@@ -233,7 +234,7 @@ func TestFetchWebRejectsNamesOutsideDocumentCache(t *testing.T) {
 	for _, name := range []string{"", ".", "..", "../other", "nested/manual", `nested\dir`} {
 		d := s.doc()
 		d.Name = name
-		if err := FetchDoc(io.Discard, s.Client(), d, t.TempDir(), false, 0, "test"); err == nil {
+		if err := FetchDoc(context.Background(), io.Discard, s.Client(), d, t.TempDir(), false, 0, "test"); err == nil {
 			t.Errorf("unsafe cache name %q accepted", name)
 		}
 	}

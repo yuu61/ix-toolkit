@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"context"
 	"flag"
+	"os"
+	"os/signal"
 	"time"
 
 	"github.com/yuu61/ix-toolkit/internal/manualbook/application"
@@ -18,7 +21,10 @@ func runFetch(args []string) {
 	ua := fs.String("user-agent", application.DefaultUserAgent, "web: User-Agent")
 	parseFlags(fs, args)
 
-	if err := application.Fetch(*manifestPath, *outDir, *force, *only, *timeout, *delay, *ua); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	err := application.Fetch(ctx, *manifestPath, *outDir, *force, *only, *timeout, *delay, *ua)
+	stop()
+	if err != nil {
 		fatal(err)
 	}
 }

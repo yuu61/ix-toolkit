@@ -21,12 +21,13 @@ import (
 )
 
 const (
-	htmlSection = "section"
-	htmlSpan    = "span"
-	htmlFigure  = "figure"
-	htmlImg     = "img"
-	htmlPre     = "pre"
-	htmlDiv     = "div"
+	htmlSection    = "section"
+	htmlSpan       = "span"
+	htmlFigure     = "figure"
+	htmlImg        = "img"
+	htmlPre        = "pre"
+	htmlDiv        = "div"
+	htmlBlockquote = "blockquote"
 )
 
 // Sphinx が出した HTML を読む前段。fetch が置いた取得キャッシュ (1 ページ 1 ファイル)
@@ -283,7 +284,7 @@ func ParseWebEntries(pages []WebPage, p *domain.Profile) ([]domain.Entry, map[in
 //
 // 後者は見出し語の <p> から次の見出し語の <p> の手前までが欄の中身。
 // どちらも節の直下だけを見る (入れ子の節は別の項目)。
-func entryFields(sec *html.Node, labels map[string]bool) []domain.Field {
+func entryFields(sec *html.Node, labels map[string]bool) []domain.Field { //nolint:cyclop // Separate section, definition-list, quotation, and paragraph field boundaries.
 	var fields []domain.Field
 	var cur *domain.Field // <p> 形式で開いている欄
 	flush := func() {
@@ -304,6 +305,10 @@ func entryFields(sec *html.Node, labels map[string]bool) []domain.Field {
 		case c.Data == "dl":
 			flush()
 			fields = append(fields, definitionFields(c, labels)...)
+		case cur == nil && (c.Data == htmlBlockquote || c.Data == htmlDiv):
+			// Sphinx may wrap a complete definition list in a quotation. Keep
+			// section boundaries and do not promote lists nested inside a field.
+			fields = append(fields, entryFields(c, labels)...)
 		case c.Data == "p" && labels[domain.NormalizeLabel(dtLabel(c))]:
 			flush()
 			cur = &domain.Field{Label: domain.NormalizeLabel(dtLabel(c))}
@@ -794,7 +799,7 @@ func (b *webBlocks) add(n *html.Node) {
 		b.blocks = append(b.blocks, domain.Block{Kind: domain.BlockLayout, Ref: b.r, Lines: rawLines(n)})
 	case htmlDiv:
 		b.addDiv(n)
-	case "blockquote":
+	case htmlBlockquote:
 		b.addContainer(n)
 	case "aside":
 		if strings.Contains(attr(n, "class"), "footnote-list") {
@@ -1116,7 +1121,7 @@ func (p *webProse) element(n *html.Node, indent string) {
 		p.aside(n, indent)
 	case "li":
 		p.listItem(n, indent)
-	case "ul", "ol", "dd", "dl", "blockquote", htmlDiv, htmlSection, htmlSpan, "nav":
+	case "ul", "ol", "dd", "dl", htmlBlockquote, htmlDiv, htmlSection, htmlSpan, "nav":
 		p.container(n, indent)
 	case "table":
 		p.table(n, indent)

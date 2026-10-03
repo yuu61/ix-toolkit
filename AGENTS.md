@@ -22,14 +22,7 @@
 | `profiles/` | manualbook の変換プロファイルと、手で導いた系列間差分 (`ix-r-derived-diff.tsv`) | JSON / TSV |
 | `manifest.json` | 取得する資料の一覧 (系列・冊子・種別・版・URL・プロファイル)。`build` の唯一の入力 | JSON |
 
-```console
-$ go build -ldflags="-s -w" ./cmd/manualbook                  # -s -w は Defender の誤検知回避で必須。-o manualbook は Windows で .exe が付かないので付けない
-$ ./manualbook build                                          # 変換結果を作り直して確かめる (Windows は .\manualbook.exe build)
-$ go test ./...                                               # ドメイン規則 (索引のキー・系列間対応・出典) の検証
-$ uv sync --extra dev                                         # ix-ssh の開発用 .venv (netmiko / paramiko / ruff)
-$ uv run python -m unittest                                   # ix-ssh の規則と、偽の IX に対する一連の操作の検証
-$ uv run ruff check src/ tests/ && uv run ruff format src/ tests/
-```
+開発時は [docs/develop.md](docs/develop.md) を読む。開発環境、検証・ビルド手順、Makefile の決まりはそこにまとめてある。
 
 配布は「クローン + `uv tool install -e <クローン>`」だけ。skill は PATH の `ix-ssh` を呼ぶ。
 `gh skill install` は skill ディレクトリしか複製しない (`src/` が付いてこない) ので README から
