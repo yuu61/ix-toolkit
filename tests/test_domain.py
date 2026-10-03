@@ -333,6 +333,35 @@ class ConfigDiagnosticTest(unittest.TestCase):
         ok = "ike preshared-key 0 secret-value\nrouter(config)#"
         self.assertEqual(check_config_line_output(1, 1, ok), ok)
 
+    def test_echo_diagnostic_does_not_require_known_english_words(self):
+        command = ' ike preshared-key 0 "secret[.*]" '
+        for diagnostic in ("Rejected by policy.", "設定できません。", "Unknown command."):
+            response = f"{command}\n  % {command.strip()}  -- {diagnostic}\nrouter(config)#"
+            with self.subTest(diagnostic=diagnostic), self.assertRaises(UsageError) as cm:
+                check_config_line_output(2, 3, response, command=command)
+            self.assertNotIn("secret", str(cm.exception))
+            with self.assertRaises(UsageError):
+                check_command_output(command, response)
+
+    def test_notices_and_echoes_are_not_rejection_diagnostics(self):
+        command = "description example -- accepted"
+        for response in (
+            command,
+            "% Please reboot -- changes take effect on restart.",
+            "% Unclassified notice.",
+            f"% {command} -- \nrouter(config)#",
+            "% description example XX accepted -- Rejected by policy.",
+        ):
+            with self.subTest(response=response):
+                self.assertEqual(
+                    check_config_line_output(1, 1, response, command=command), response
+                )
+                self.assertEqual(check_command_output(command, response), response)
+
+    def test_indented_known_diagnostic_still_stops_configuration(self):
+        with self.assertRaises(UsageError):
+            check_config_line_output(1, 1, "  % Invalid input.")
+
 
 if __name__ == "__main__":
     unittest.main()

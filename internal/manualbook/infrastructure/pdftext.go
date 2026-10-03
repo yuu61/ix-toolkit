@@ -54,7 +54,7 @@ func SaveProfile(p *domain.Profile, path string) error {
 // extractPages は 1 冊を読み、ページごとのテキストを返す。
 // PDF は開いたまま使い回されるので、経路ごとに呼び直してよい。
 func extractPages(pdf string, c crop, grid bool) ([]string, error) {
-	d, err := openDoc(pdf)
+	d, err := openTextDoc(pdf)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +204,7 @@ func countGlyphs(s string) int {
 // 紙スキャン由来の画像 PDF ならここが 0 に近くなり、md ではなく
 // scan + OCR の経路が必要だと分かる。
 func hasTextLayer(pdf string, nPages int) (int, error) {
-	d, err := openTextPages(pdf, max(nPages, 0))
+	d, err := openTextPages(pdf, max(nPages, 0), false)
 	if err != nil {
 		return 0, err
 	}

@@ -71,14 +71,15 @@ type pdfPage struct {
 // pdfDoc は開いた PDF 1 冊。文字は必要なページだけ読み、openDoc は残りを読む。
 // ページ画像だけを焼く経路 (openPDF) は文字を読まない。
 type pdfDoc struct {
-	instance pdfium.Pdfium
-	path     string
-	ref      references.FPDF_DOCUMENT
-	data     []byte    // 並列処理のインスタンスも同じ原本を開く。
-	pages    []pdfPage // 文字と寸法。部分抽出済みのページも格納する。
-	pageRead []bool    // 先頭ページだけ試し読みしても、全文抽出で二度読まない。
-	count    int       // ページ数
-	textRead bool
+	instance  pdfium.Pdfium
+	path      string
+	ref       references.FPDF_DOCUMENT
+	data      []byte    // 並列処理のインスタンスも同じ原本を開く。
+	pages     []pdfPage // 文字と寸法。部分抽出済みのページも格納する。
+	pageRead  []bool    // 先頭ページだけ試し読みしても、全文抽出で二度読まない。
+	pageFonts []bool    // サイズなしで読んだページは、見出し抽出時に情報を補う。
+	count     int       // ページ数
+	textRead  bool
 }
 
 //nolint:gochecknoglobals // PDFium の初期化と冊をまたぐプール・文書キャッシュを共有する。docsMu と engineOnce で保護する。
@@ -131,12 +132,18 @@ func engineInstance() (pdfium.Pdfium, error) {
 
 // openDoc は PDF を開き、全ページの文字と寸法を読む。同じパスなら開き直さず使い回す。
 func openDoc(path string) (*pdfDoc, error) {
-	return openTextPages(path, -1)
+	return openTextPages(path, -1, true)
+}
+
+// openTextDoc はサイズを使わないコマンド辞書・probe 用の全文抽出。
+func openTextDoc(path string) (*pdfDoc, error) {
+	return openTextPages(path, -1, false)
 }
 
 // openTextPages は先頭 n ページの文字を読む。n < 0 は全ページ。
-// 未読ページだけを抽出し、途中の読み込み失敗でも取得済みのページを再利用する。
-func openTextPages(path string, n int) (*pdfDoc, error) {
+// 未読ページと必要なサイズ情報のないページだけを抽出する。
+// 途中の読み込み失敗でも取得済みのページを再利用する。
+func openTextPages(path string, n int, collectFonts bool) (*pdfDoc, error) {
 	docsMu.Lock()
 	defer docsMu.Unlock()
 	d, err := openPDFLocked(path)
@@ -146,7 +153,7 @@ func openTextPages(path string, n int) (*pdfDoc, error) {
 	if n < 0 {
 		n = d.count
 	}
-	if err := d.readPagesThrough(min(n, d.count)); err != nil {
+	if err := d.readPagesThrough(min(n, d.count), collectFonts); err != nil {
 		return nil, err
 	}
 	return d, nil
@@ -266,34 +273,41 @@ func (d *pdfDoc) forEach(n int, f func(*pdfDoc, int) error) error {
 }
 
 // readPagesThrough は先頭 n ページの未読部分を、ページ番号の位置に格納する。
-func (d *pdfDoc) readPagesThrough(n int) error {
-	if d.textRead || n == 0 {
+func (d *pdfDoc) readPagesThrough(n int, collectFonts bool) error {
+	if (d.textRead && !collectFonts) || n == 0 {
 		return nil
 	}
 	if d.pages == nil {
 		d.pages = make([]pdfPage, d.count)
 		d.pageRead = make([]bool, d.count)
+		d.pageFonts = make([]bool, d.count)
 	}
-	var missing []int
-	for i := range n {
-		if !d.pageRead[i] {
-			missing = append(missing, i)
-		}
-	}
+	missing := d.pagesNeedingText(n, collectFonts)
 	err := d.forEach(len(missing), func(worker *pdfDoc, k int) error {
 		i := missing[k]
-		pg, err := worker.readPage(i)
+		pg, err := worker.readPage(i, collectFonts)
 		if err != nil {
 			return err
 		}
 		d.pages[i] = pg
 		d.pageRead[i] = true
+		d.pageFonts[i] = collectFonts
 		return nil
 	})
 	if err == nil && n == d.count {
 		d.textRead = true
 	}
 	return err
+}
+
+func (d *pdfDoc) pagesNeedingText(n int, collectFonts bool) []int {
+	var missing []int
+	for i := range n {
+		if !d.pageRead[i] || (collectFonts && !d.pageFonts[i]) {
+			missing = append(missing, i)
+		}
+	}
+	return missing
 }
 
 // renderPage はページを PNG 用の画像に焼く。呼び出し側が cleanup を呼ぶ。
@@ -345,7 +359,7 @@ func (d *pdfDoc) pageWorkers(n int, cleanups *[]func()) ([]*pdfDoc, error) {
 	return workers, nil
 }
 
-func (worker *pdfDoc) readPage(i int) (pdfPage, error) {
+func (worker *pdfDoc) readPage(i int, collectFonts bool) (pdfPage, error) {
 	size, err := worker.instance.GetPageSize(&requests.GetPageSize{Page: worker.page(i)})
 	if err != nil {
 		return pdfPage{}, fmt.Errorf("ページ %d の寸法を取得できません: %w", i+1, err)
@@ -353,7 +367,7 @@ func (worker *pdfDoc) readPage(i int) (pdfPage, error) {
 	txt, err := worker.instance.GetPageTextStructured(&requests.GetPageTextStructured{
 		Page:                   worker.page(i),
 		Mode:                   requests.GetPageTextStructuredModeChars,
-		CollectFontInformation: true,
+		CollectFontInformation: collectFonts,
 	})
 	if err != nil {
 		return pdfPage{}, fmt.Errorf("ページ %d の文字を取得できません: %w", i+1, err)

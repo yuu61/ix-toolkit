@@ -10,10 +10,23 @@ from .errors import UsageError
 # IX 10.11 / IX-R 1.5a CLI diagnostics start with '%'. Successful saves and
 # informational warnings do too, so '%' alone must never mean failure.
 COMMAND_ERROR_PATTERN = (
-    r"(?im)^%[^\r\n]*\b(?:invalid|incomplete|ambiguous|error|failed|failure|denied|"
+    r"(?im)^[ \t]*%[^\r\n]*\b(?:invalid|incomplete|ambiguous|error|failed|failure|denied|"
     r"cannot|can't|unable|insufficient|not found|not allowed|not permitted|not supported)"
     r"\b[^\r\n]*"
 )
+
+
+def _command_error(command: str, output: str) -> re.Match[str] | None:
+    # Both series document `% <input> -- <diagnostic>` for rejected commands.
+    # Match the actual input so notices containing `--` do not become failures.
+    # The diagnostic may be unfamiliar or in another language; do not require
+    # one of the English keywords in that case.
+    if command.strip():
+        pattern = rf"(?im)^[ \t]*%[ \t]*{re.escape(command.strip())}[ \t]+--[ \t]*\S[^\r\n]*"
+        match = re.search(pattern, output)
+        if match:
+            return match
+    return re.search(COMMAND_ERROR_PATTERN, output)
 
 
 def is_show_command(cmd: str) -> bool:
@@ -34,9 +47,9 @@ def validate_show_commands(commands: Sequence[str]) -> None:
 
 def check_command_output(command: str, output: str) -> str:
     """Reject known CLI error diagnostics, returning successful output intact."""
-    if re.search(r"(?im)^%\s*CONFIG process is occupied\.", output):
+    if re.search(r"(?im)^[ \t]*%[ \t]*CONFIG process is occupied\.", output):
         raise UsageError(f"ERROR: {command!r}: config mode is occupied by another user")
-    match = re.search(COMMAND_ERROR_PATTERN, output)
+    match = _command_error(command, output)
     if match:
         raise UsageError(f"ERROR: {command!r} failed: {match.group(0)}")
     return output
@@ -48,11 +61,11 @@ def config_stopped_at(number: int, total: int) -> str:
     return f"configuration stopped at config line {number} of {total}"
 
 
-def check_config_line_output(number: int, total: int, output: str) -> str:
+def check_config_line_output(number: int, total: int, output: str, *, command: str = "") -> str:
     """Reject config errors without displaying device text. A device can quote,
     unquote, escape or truncate a secret; masking the original input cannot cover
     every representation. Only the position and a fixed explanation are safe."""
-    if re.search(COMMAND_ERROR_PATTERN, output):
+    if _command_error(command, output):
         raise UsageError(
             f"ERROR: {config_stopped_at(number, total)}: device rejected input; "
             "earlier lines may already be applied"

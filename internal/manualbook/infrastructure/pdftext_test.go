@@ -44,7 +44,7 @@ func TestSampleReadsOnlyRequestedPagesAndReusesText(t *testing.T) {
 	if !d.pageRead[2] || d.pageRead[3] {
 		t.Fatal("larger sample did not extract exactly the extra page")
 	}
-	if _, openErr := openDoc(pdf); openErr != nil {
+	if _, openErr := openTextDoc(pdf); openErr != nil {
 		t.Fatal(openErr)
 	}
 	if !d.textRead || first != &d.pages[0].glyphs[0] {
@@ -53,6 +53,94 @@ func TestSampleReadsOnlyRequestedPagesAndReusesText(t *testing.T) {
 	all, err := hasTextLayer(pdf, 100)
 	if err != nil || all != 7*count/2 {
 		t.Fatalf("all glyphs = %d, %v, sample = %d", all, err, count)
+	}
+}
+
+// サイズなしの部分抽出・全文抽出の後にも、見出し用の情報を補える。
+//
+//nolint:cyclop // Follow page-scoped upgrades, glyph preservation, and reuse through one cache lifetime.
+func TestTextCacheUpgradesFontsWithoutLosingGlyphs(t *testing.T) {
+	pdf := filepath.Join(t.TempDir(), "sample.pdf")
+	writeSquaresPDF(t, pdf, 3)
+	t.Cleanup(func() { CloseDoc(pdf) })
+	d, err := openTextDoc(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := append([]glyph(nil), d.pages[0].glyphs...)
+	for _, g := range before {
+		if g.fontSize != 0 {
+			t.Fatal("text-only extraction collected font sizes")
+		}
+	}
+	if _, err := openTextPages(pdf, 1, true); err != nil {
+		t.Fatal(err)
+	}
+	if !d.pageFonts[0] || d.pageFonts[1] {
+		t.Fatal("font sample upgraded pages outside the requested range")
+	}
+	first := &d.pages[0].glyphs[0]
+	if _, err := openDoc(pdf); err != nil {
+		t.Fatal(err)
+	}
+	if first != &d.pages[0].glyphs[0] {
+		t.Fatal("font-aware extraction reread an upgraded page")
+	}
+	for i, g := range d.pages[0].glyphs {
+		if g.fontSize != 12 {
+			t.Fatalf("glyph %d font size = %v, want 12", i, g.fontSize)
+		}
+		g.fontSize = 0
+		if g != before[i] {
+			t.Fatalf("glyph %d changed during font upgrade", i)
+		}
+	}
+	for _, ready := range d.pageFonts {
+		if !ready {
+			t.Fatal("full extraction left a page without font information")
+		}
+	}
+	if _, err := openTextDoc(pdf); err != nil {
+		t.Fatal(err)
+	}
+	if first != &d.pages[0].glyphs[0] || d.pages[0].glyphs[0].fontSize != 12 {
+		t.Fatal("text-only extraction discarded cached font information")
+	}
+}
+
+func TestTextReadPreservesFontsFromAnEarlierSample(t *testing.T) {
+	pdf := filepath.Join(t.TempDir(), "sample.pdf")
+	writeSquaresPDF(t, pdf, 3)
+	t.Cleanup(func() { CloseDoc(pdf) })
+	d, err := openTextPages(pdf, 1, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := &d.pages[0].glyphs[0]
+	if _, err := openTextDoc(pdf); err != nil {
+		t.Fatal(err)
+	}
+	if first != &d.pages[0].glyphs[0] || d.pages[0].glyphs[0].fontSize != 12 {
+		t.Fatal("text extraction replaced the font-aware sample")
+	}
+	if !reflect.DeepEqual(d.pageFonts, []bool{true, false, false}) {
+		t.Fatalf("font availability = %v", d.pageFonts)
+	}
+}
+
+func TestCommandPagesDoNotCollectFonts(t *testing.T) {
+	pdf := filepath.Join(t.TempDir(), "sample.pdf")
+	writeSquaresPDF(t, pdf, 3)
+	t.Cleanup(func() { CloseDoc(pdf) })
+	if _, _, err := ReadPages(domain.DefaultProfile(), pdf); err != nil {
+		t.Fatal(err)
+	}
+	d, err := openPDF(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !d.textRead || !reflect.DeepEqual(d.pageFonts, []bool{false, false, false}) {
+		t.Fatalf("command dictionary collected fonts: %v", d.pageFonts)
 	}
 }
 

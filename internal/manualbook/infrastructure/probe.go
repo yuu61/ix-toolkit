@@ -139,7 +139,7 @@ func describe(s []sampleRange) string {
 
 // sampleGlyphs はサンプル窓に残る文字数を数える。
 func sampleGlyphs(pdf string, sample []sampleRange, c crop) int {
-	d, err := openDoc(pdf)
+	d, err := openTextDoc(pdf)
 	if err != nil {
 		return 0
 	}
@@ -239,7 +239,7 @@ func findGutter(p *domain.Profile, pdf string, sample []sampleRange) (gutterLeft
 
 // findEmptyBand はページ中央寄りで最も広い、字の掛からない縦の帯を返す。
 func findEmptyBand(pdf string, sample []sampleRange, p *domain.Profile, body crop) (lo, hi float64, ok bool) {
-	d, err := openDoc(pdf)
+	d, err := openTextDoc(pdf)
 	if err != nil {
 		return 0, 0, false
 	}

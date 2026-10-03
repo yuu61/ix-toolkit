@@ -204,6 +204,31 @@ class IntegrationTest(unittest.TestCase):
         self.assertNotIn(SECRET, out + err)
         self.assertEqual(self.device.saved, before)
 
+    def test_unfamiliar_echo_diagnostic_stops_remaining_config_and_save(self):
+        for diagnostic in ("Rejected by policy.", "設定できません。"):
+            with (
+                self.subTest(diagnostic=diagnostic),
+                patch.dict(
+                    self.device.responses, {SECRET_LINE: [f"% {SECRET_LINE} -- {diagnostic}"]}
+                ),
+            ):
+                start = len(self.device.commands)
+                saved = self.device.saved
+                code, out, err = self.ix_ssh(
+                    "-d",
+                    "viajump",
+                    "--config",
+                    SECRET_LINE,
+                    "--config",
+                    "logging buffered 400",
+                    "--save",
+                )
+                self.assertEqual(code, 1, err)
+                self.assertNotIn(SECRET, out + err)
+                self.assertIn("config line 1 of 2", err)
+                self.assertNotIn("logging buffered 400", self.device.commands[start:])
+                self.assertEqual(self.device.saved, saved)
+
     def test_long_config_line_goes_through_a_widened_terminal(self):
         # The fake, like IX-R, folds the echo at 80 columns. Unless the session
         # widens the terminal, netmiko never sees the echo whole and stalls until
