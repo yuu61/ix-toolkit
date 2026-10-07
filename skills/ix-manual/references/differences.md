@@ -48,4 +48,4 @@ kind / ix / ix-r / source / ref_ix / ref_ixr / note
 対応表が無い場合は不足を伝え、両系列の本文があれば直接比較する。
 
 回答には対応するコマンド・モード・条件、`kind` / `source` と参照した出典を添える。
-機器への投入は ix-configure の対象・設定行・永続化の確認に従う。
+機器への投入は ix-ssh の [設定変更](../../ix-ssh/references/configure.md) にある対象・設定行・永続化の確認に従う。

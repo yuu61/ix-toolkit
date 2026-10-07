@@ -1,6 +1,6 @@
 {
   "name": "ix-toolkit",
-  "description": "NEC IX を Codex から運用する skill 一式（show / manual / backup / configure / save）",
+  "description": "NEC IX の機器操作とマニュアル参照を行う Codex 向け skills",
   "version": "0.1.0",
   "author": {
     "name": "yuu61"

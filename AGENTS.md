@@ -6,7 +6,7 @@
 
 | ディレクトリ | 中身 | 言語 |
 |---|---|---|
-| `skills/` | SKILL.md 形式の skill 5 つ | Markdown |
+| `skills/` | SKILL.md 形式の skill 2 つ（`ix-ssh` / `ix-manual`） | Markdown |
 | `skills/*/agents/openai.yaml` | Codex 向けの skill 表示名と短い説明 | YAML |
 | `.codex-plugin/` | Codex 向けのプラグイン manifest | JSON |
 | `src/ix_ssh/domain/` | インベントリの読み方、設定の優先順位、パスワードの探し方、ProxyJump の平坦化、show の判定 | Python |
@@ -48,7 +48,7 @@ skill は Claude Code を主に、Codex など SKILL.md を読む他のエージ
 
 - `$ARGUMENTS` を使わない。置換するのは Claude Code だけで、Codex は置換しない。対象は「ユーザーの
   依頼から読み取る」と書く。
-- 他の skill は `/ix-show` ではなく `ix-show` と名前で参照する（`/` は Claude Code、`$` は Codex の
+- 他の skill は `/ix-ssh` ではなく `ix-ssh` と名前で参照する（`/` は Claude Code、`$` は Codex の
   呼び出し記法）。
 - ツール名を単独で要求しない。`Read` / `Grep` / `Glob` を例として書くのは可。ただし**やること**が
   本体で、シェルでも同じことができると分かるように書く。

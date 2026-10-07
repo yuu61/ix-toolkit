@@ -1,0 +1,3 @@
+interface:
+  display_name: "IX SSH"
+  short_description: "NEC IX の状態確認・バックアップ・設定変更・永続化を実行"
