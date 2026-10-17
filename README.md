@@ -26,7 +26,18 @@ git clone https://github.com/yuu61/ix-toolkit "$HOME/.agents/skills/ix-toolkit"
 uv tool install -e "$HOME/.agents/skills/ix-toolkit"
 ```
 
-全プロジェクトで使え、スキルごとのコピーや登録は不要です。
+Codex は `~/.agents/skills` を読むので、これで全プロジェクトから使えます。
+
+Claude Code は `~/.agents/skills` を読まないため、`~/.claude/settings.json` の `env` にある
+`CLAUDE_CODE_PLUGIN_DIRS` にクローンを足し、プラグインとして読み込ませます（Claude Code 2.1.280 以降）。
+
+```console
+uv run --no-project python -c "import json,os,pathlib; p=pathlib.Path(os.environ.get('CLAUDE_CONFIG_DIR') or pathlib.Path.home()/'.claude')/'settings.json'; s=json.loads(p.read_text(encoding='utf-8-sig')) if p.exists() else {}; e=s.setdefault('env',{}); d='~/.agents/skills/ix-toolkit'; v=[x for x in e.get('CLAUDE_CODE_PLUGIN_DIRS','').split(os.pathsep) if x]; e['CLAUDE_CODE_PLUGIN_DIRS']=os.pathsep.join(v if d in v else v+[d]); p.parent.mkdir(parents=True,exist_ok=True); p.write_text(json.dumps(s,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')"
+```
+
+既存の設定は残し、`CLAUDE_CODE_PLUGIN_DIRS` に別のパスがあればその後ろに足します。何度実行しても重複しません。
+クローンはキャッシュにコピーされずその場で読み込まれるため、スキルごとのコピーや登録は不要です。
+skill は `/ix-toolkit:ix-ssh`・`/ix-toolkit:ix-manual` で呼べます。
 
 インストール後はエージェントを再起動してください。`ix-ssh` が見つからない場合は
 `uv tool update-shell` を実行し、ターミナルとエージェントを開き直します。
