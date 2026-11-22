@@ -1,7 +1,9 @@
 """A fake NEC IX behind a real SSH server (paramiko), for the integration test.
 
 Just enough of IX OS for netmiko's nec_ix driver and ix-ssh: exec / config
-prompts (`fakeix#` / `fakeix(config)#`), `svintr-config` / `configure` / `exit`,
+prompts (`fakeix#` / `fakeix(config)#`), `svintr-config` / `configure` / `exit`
+(entering config from exec resumes `entry_mode`, as IX resumes its single config
+process in whatever submode it was last left),
 `terminal length 0`, `terminal width N`, a few `show`s (running-config contains a
 `hostname` line on purpose, to exercise the pinned-prompt read), `write memory`,
 and any other line in config mode is recorded as applied. Input is echoed like a
@@ -97,6 +99,11 @@ class FakeIX:
         self.forced_takeovers = 0
         self.occupy_after_exit = False
         self.initial_mode: str | None = None
+        # IX keeps one config process per device, and `enable-config` /
+        # `svintr-config` resume it where it was last left, e.g. in
+        # `config-GigaEthernet2.1` (seen on IX3315 10.11.18). `configure` always
+        # leads back to the global level.
+        self.entry_mode = "config"
         # Tests can supply device-side failures without changing the client.
         self.responses: dict[str, list[str]] = {}
         self._sock = socket.socket()
@@ -233,12 +240,21 @@ class FakeIX:
                                 ),
                             ]
                         )
+                    elif line == "configure":
+                        config = "config"
+                        reply([])
                     else:
                         if not config and self.config_occupied:
                             self.forced_takeovers += 1
                             self.config_occupied = False
-                        config = "config"
-                        reply([])
+                        banner = not config and line == "enable-config"
+                        config = config or self.entry_mode
+                        # IX3315 10.11.18 prints this before the resumed prompt.
+                        reply(
+                            ["Enter configuration commands, one per line. End with CNTL/Z."]
+                            if banner
+                            else []
+                        )
                 elif line == "exit":
                     if not config:
                         chan.close()

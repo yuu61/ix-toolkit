@@ -135,6 +135,12 @@ class NetmikoSession:
             _close_all(self._jump_clients)
 
 
+def config_prompt(hostname: str) -> str:
+    """A regex for any config-mode prompt of `hostname`: the global `(config)#`
+    and submodes such as `(config-GigaEthernet2.1)#`."""
+    return rf"{re.escape(hostname)}\(config(?:-[^()\s]+)?\)#"
+
+
 def _close_all(clients: list) -> None:
     while clients:
         # 後始末なので失敗しても続ける。ここで例外を上げると、
@@ -191,9 +197,25 @@ def open_session(target: Target) -> NetmikoSession:  # noqa: C901
 
             command = "configure" if in_config else entry_command
             global_prompt = f"{hostname}(config)#"
+            output = self.send_mode_command(command, current, hostname)
+            # IX keeps one config process per device, and enable-config /
+            # svintr-config resume it in whatever submode it was last left, e.g.
+            # `<hostname>(config-GigaEthernet2.1)#`. `configure` leads back to the
+            # global level, where show/config/save expect to run.
+            resumed = re.search(rf"{config_prompt(hostname)}(?=[ \t]*\Z)", output.rstrip("\r\n"))
+            if resumed and resumed.group(0) != global_prompt:
+                output += self.send_mode_command("configure", resumed.group(0), hostname)
+            if not output.rstrip().endswith(global_prompt):
+                raise UsageError(f"ERROR: {command!r} did not enter config mode")
+            # A login in a submode (or a hostname change) invalidates Netmiko's
+            # cached prompt. Later paging/config/save calls must use the hostname.
+            self.base_prompt = hostname
+            return output
+
+        def send_mode_command(self, command: str, current: str, hostname: str) -> str:
             # Refusal returns the original prompt. Read it too, so a busy device
             # becomes a UsageError immediately rather than a prompt timeout.
-            expect = rf"(?m:^(?:{re.escape(current)}|{re.escape(global_prompt)})[ \t]*$)"
+            expect = rf"(?m:^(?:{re.escape(current)}|{config_prompt(hostname)})[ \t]*$)"
             output = self.send_command(
                 command,
                 expect_string=expect,
@@ -201,13 +223,7 @@ def open_session(target: Target) -> NetmikoSession:  # noqa: C901
                 strip_prompt=False,
                 strip_command=False,
             )
-            check_command_output(command, output)
-            if not output.rstrip().endswith(global_prompt):
-                raise UsageError(f"ERROR: {command!r} did not enter config mode")
-            # A login in a submode (or a hostname change) invalidates Netmiko's
-            # cached prompt. Later paging/config/save calls must use the hostname.
-            self.base_prompt = hostname
-            return output
+            return check_command_output(command, output)
 
         def exit_config_mode(self, exit_config="exit", pattern=""):  # noqa: ARG002
             # Keep Netmiko's callback signature; the IX prompt is pinned below.

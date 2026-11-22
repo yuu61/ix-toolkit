@@ -448,6 +448,23 @@ class IntegrationTest(unittest.TestCase):
         self.assertEqual(commands[0], "configure")
         self.assertNotIn("svintr-config", commands)
 
+    def test_config_entry_resuming_a_submode_returns_to_global(self):
+        start = len(self.device.commands)
+        saved = self.device.saved
+        with patch.object(self.device, "entry_mode", "config-GigaEthernet2.1"):
+            code, out, err = self.ix_ssh(
+                "-d", "viajump", "show version", "--config", "logging buffered 400", "--save"
+            )
+        self.assertEqual(code, 0, err)
+        self.assertIn(SHOW_VERSION[0], out)
+        self.assertEqual(self.device.saved, saved + 1)
+        commands = self.device.commands[start:]
+        entries = [i for i, c in enumerate(commands) if c == "enable-config"]
+        self.assertEqual(len(entries), 4)  # initialization, show, config, save
+        for i in entries:
+            self.assertEqual(commands[i + 1], "configure", commands)
+        self.assertNotIn("svintr-config", commands)
+
     def test_force_config_permission_failure_stops_initialization(self):
         start = len(self.device.commands)
         with patch.dict(self.device.responses, {"svintr-config": ["% Permission denied."]}):
