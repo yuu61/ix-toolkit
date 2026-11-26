@@ -6,7 +6,8 @@ prompts (`fakeix#` / `fakeix(config)#`), `svintr-config` / `configure` / `exit`
 process in whatever submode it was last left),
 `terminal length 0`, `terminal width N`, a few `show`s (running-config contains a
 `hostname` line on purpose, to exercise the pinned-prompt read), `write memory`,
-and any other line in config mode is recorded as applied. Input is echoed like a
+and any other line in config mode is recorded as applied (`hostname NAME` also
+renames the prompt, for the rest of that session only). Input is echoed like a
 terminal would: like IX-R, each session starts 80 columns wide whatever the pty
 asked for, and the echo of a longer line is folded at that width.
 
@@ -106,6 +107,8 @@ class FakeIX:
         self.entry_mode = "config"
         # Tests can supply device-side failures without changing the client.
         self.responses: dict[str, list[str]] = {}
+        # Lines that are echoed but never answered, like a command left waiting.
+        self.unanswered: set[str] = set()
         self._sock = socket.socket()
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind(("127.0.0.1", 0))
@@ -185,11 +188,12 @@ class FakeIX:
     def _shell(self, chan: paramiko.Channel, _dest=None) -> None:
         self.sessions += 1
         config = self.initial_mode
+        hostname = HOSTNAME
         width = 80  # IX-R's starting width, whatever the pty asked for
         column = 0
 
         def prompt() -> str:
-            return f"{HOSTNAME}({config})#" if config else f"{HOSTNAME}#"
+            return f"{hostname}({config})#" if config else f"{hostname}#"
 
         def reply(lines: list[str]) -> None:
             nonlocal column
@@ -227,6 +231,8 @@ class FakeIX:
                     self.commands.append(line)
                 if line == "":
                     reply([])
+                elif line in self.unanswered:
+                    pass
                 elif line in self.responses:
                     reply(self.responses[line])
                 elif line in ("svintr-config", "enable-config", "configure"):
@@ -284,4 +290,6 @@ class FakeIX:
                     reply(["% Saving configuration... done."])
                 else:
                     self.applied.append(line)
+                    if line.startswith("hostname "):
+                        hostname = line.split()[1]
                     reply([])

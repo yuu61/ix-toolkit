@@ -230,9 +230,8 @@ class IntegrationTest(unittest.TestCase):
                 self.assertEqual(self.device.saved, saved)
 
     def test_long_config_line_goes_through_a_widened_terminal(self):
-        # The fake, like IX-R, folds the echo at 80 columns. Unless the session
-        # widens the terminal, netmiko never sees the echo whole and stalls until
-        # READ_TIMEOUT.
+        # The fake, like IX-R, folds the echo at 80 columns. The session widens
+        # the terminal so that echoes, and the shows netmiko waits for, stay whole.
         start = len(self.device.commands)
         before = list(self.device.applied)
         with patch("ix_ssh.infrastructure.session.READ_TIMEOUT", 5):
@@ -243,10 +242,10 @@ class IntegrationTest(unittest.TestCase):
         # widened during initialization, in the same config visit as paging
         self.assertEqual(commands[:3], ["enable-config", "terminal length 0", "terminal width 512"])
 
-    def test_refused_width_is_tolerated_and_a_stalled_line_stays_hidden(self):
+    def test_refused_width_is_tolerated_and_a_folded_echo_stays_hidden(self):
         # IX2000/IX3000's CRM gives no range for `terminal width`; a refusal must
-        # not stop the run. A long line then stalls, and netmiko's ReadTimeout
-        # quotes the line it waited for: only its position may be shown.
+        # not stop the run. A long line's echo then comes back folded: the reply
+        # still ends at the prompt, and the folded secret is still masked.
         refused = {"terminal width 512": ["% terminal width 512 -- Invalid input."]}
         with patch.dict(self.device.responses, refused):
             code, out, err = self.ix_ssh("-d", "viajump", "show version")
@@ -254,7 +253,7 @@ class IntegrationTest(unittest.TestCase):
             self.assertIn(SHOW_VERSION[0], out)
 
             before = list(self.device.applied)
-            with patch("ix_ssh.infrastructure.session.READ_TIMEOUT", 2):
+            with patch("ix_ssh.infrastructure.session.READ_TIMEOUT", 5):
                 code, out, err = self.ix_ssh(
                     "-d",
                     "viajump",
@@ -263,15 +262,92 @@ class IntegrationTest(unittest.TestCase):
                     "--config",
                     LONG_SECRET_LINE,
                 )
+        self.assertEqual(code, 0, err)
+        self.assertIn("received responses for 2 config lines", out)
+        self.assertNotIn(SECRET, out + err)
+        self.assertEqual(
+            self.device.applied[len(before) :], ["logging buffered 500", LONG_SECRET_LINE]
+        )
+
+    def test_unanswered_line_stops_with_its_position_only(self):
+        # netmiko's ReadTimeout may quote what it sent or waited for: only the
+        # position of the line may be shown.
+        before = (list(self.device.applied), self.device.saved)
+        with (
+            patch.object(self.device, "unanswered", {SECRET_LINE}),
+            patch("ix_ssh.infrastructure.session.READ_TIMEOUT", 2),
+        ):
+            code, out, err = self.ix_ssh(
+                "-d",
+                "viajump",
+                "--config",
+                "logging buffered 510",
+                "--config",
+                SECRET_LINE,
+                "--save",
+            )
         self.assertEqual(code, 1, err)
         self.assertIn(
-            "configuration stopped at config line 2 of 2: no echo or prompt within 2s; "
+            "configuration stopped at config line 2 of 2: no prompt within 2s; "
             "earlier lines may already be applied",
             err,
         )
         self.assertNotIn(SECRET, out + err)
         self.assertNotIn("Traceback", err)
-        self.assertEqual(self.device.applied[len(before)], "logging buffered 500")
+        self.assertEqual(self.device.applied, [*before[0], "logging buffered 510"])
+        self.assertEqual(self.device.saved, before[1])
+
+    def test_reply_holding_hash_and_hostname_does_not_shift_later_replies(self):
+        # netmiko's send_config_set ended a reply at the first `#` (seen on
+        # IX2215 10.11.18 as `! Compiled ... JST #2`). The rest was then read as
+        # the next line's reply, and a rejection of that line went unseen, up to
+        # and including `write memory`.
+        reply = [
+            "! Compiled Jul 29-Wed-2026 13:36:09 JST #2",
+            f"hostname {HOSTNAME}",
+            "logging buffered 530",
+            "! end of reply",
+        ]
+        responses = {
+            "logging buffered 520": reply,
+            "logging buffered 530": ["% logging buffered 530 -- Invalid command."],
+        }
+        saved = self.device.saved
+        with patch.dict(self.device.responses, responses):
+            code, out, err = self.ix_ssh(
+                "-d",
+                "viajump",
+                "--config",
+                "logging buffered 520",
+                "--config",
+                "logging buffered 530",
+                "--save",
+            )
+        self.assertEqual(code, 1, err)
+        self.assertIn("configuration stopped at config line 2 of 2", err)
+        self.assertEqual(self.device.saved, saved)
+        self.assertIn("! end of reply", out)  # line 1's reply was read whole
+
+    def test_renamed_prompt_and_exit_from_config_keep_replies_in_step(self):
+        before = (list(self.device.applied), self.device.saved)
+        code, out, err = self.ix_ssh(
+            "-d",
+            "viajump",
+            "--config",
+            "hostname renamed",
+            "--config",
+            "logging buffered 540",
+            "--config",
+            "exit",
+            "--save",
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("renamed(config)#", out)
+        self.assertIn("received responses for 3 config lines", out)
+        self.assertEqual(
+            self.device.applied, [*before[0], "hostname renamed", "logging buffered 540"]
+        )
+        self.assertEqual(self.device.saved, before[1] + 1)
 
     def test_show_error_stops_following_operations(self):
         before = (list(self.device.applied), self.device.saved)

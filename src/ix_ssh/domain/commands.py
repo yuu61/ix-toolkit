@@ -45,6 +45,22 @@ def validate_show_commands(commands: Sequence[str]) -> None:
             )
 
 
+def validate_config_lines(lines: Sequence[str]) -> None:
+    """Config lines carry configuration only. A `show` among them would run in the
+    middle of the change, its output would be judged as a config response (a `%`
+    line in a log reads as a rejection), and it would count as an accepted line.
+    Shows are arguments: they run before the config, and a change is checked in a
+    separate run. Only the position is named, like any other config line."""
+    for number, line in enumerate(lines, 1):
+        words = line.split(maxsplit=1)
+        if words and words[0].lower() == "show":
+            raise UsageError(
+                f"ERROR: config line {number} of {len(lines)} is a show command; "
+                "give shows as arguments (they run before --config) and check a change "
+                "in a separate run"
+            )
+
+
 def check_command_output(command: str, output: str) -> str:
     """Reject known CLI error diagnostics, returning successful output intact."""
     if re.search(r"(?im)^[ \t]*%[ \t]*CONFIG process is occupied\.", output):

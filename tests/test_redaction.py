@@ -54,12 +54,13 @@ from ix_ssh.infrastructure.session import NetmikoSession
 lines = (' ' * 40 + 'hostname router', 'password "' + ' ' * 12 + 'X"',
          'logging buffered 100')
 conn = Mock()
-conn.send_config_set.side_effect = lines
+conn.base_prompt = 'router'
+conn.send_command.side_effect = lines
 conn.save_config.return_value = 'Configuration saved.'
 session = NetmikoSession(conn, [], TimeoutError)
 outputs = list(session.apply(lines))
 saved = session.save()
-print(json.dumps((outputs, saved, conn.send_config_set.call_count,
+print(json.dumps((outputs, saved, conn.send_command.call_count,
                   conn.exit_config_mode.call_count, conn.save_config.call_count)))
 """
         outputs, saved, applied, exited, saves = self._run_bounded_script(script)

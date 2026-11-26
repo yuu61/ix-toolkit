@@ -18,6 +18,7 @@ from ..domain import (
     resolve_target,
     select_entry,
     ssh_config_path,
+    validate_config_lines,
     validate_show_commands,
 )
 from ..domain.redaction import validate_config_protocol
@@ -105,6 +106,7 @@ def execute(  # noqa: PLR0913, PLR0917
     output = ConsoleOutput(out, err, req.raw)
 
     validate_show_commands(req.shows)
+    validate_config_lines(req.config_lines)
     for cmd in req.shows:
         output.header(cmd)
         output.result(session.show(cmd))
@@ -165,6 +167,7 @@ def run(  # noqa: PLR0913, PLR0917
             "ERROR: nothing to do (give show commands, --backup, --config, --save, or --list)"
         )
 
+    validate_config_lines(config_lines)
     validate_config_protocol(tuple(config_lines))
     target = prepare_target(req, env, prompt)
     if not req.raw:

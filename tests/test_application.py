@@ -189,6 +189,19 @@ class RunTest(unittest.TestCase):
         with self.assertRaisesRegex(UsageError, "cannot read config file"):
             run(missing, env={}, open_session=lambda _: self.fail("must not connect"))
 
+    def test_show_among_config_lines_is_rejected_before_connecting(self):
+        cfg = Path(self.tmp.name) / "with-show.ix"
+        cfg.write_text("logging buffered 100\nshow running-config\n", encoding="utf-8")
+        for req in (
+            self.request(config_lines=("show run",)),
+            self.request(config_lines=("hostname x",), config_file=str(cfg)),
+        ):
+            with (
+                self.subTest(req=req),
+                self.assertRaisesRegex(UsageError, "is a show command"),
+            ):
+                run(req, env={}, open_session=lambda _: self.fail("must not connect"))
+
     def test_interactive_key_input_is_rejected_before_connecting(self):
         for command in (
             "pki private-key import pem rsa crypto TestSecret",

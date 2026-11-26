@@ -24,6 +24,7 @@ from ix_ssh.domain import (
     select_entry,
     split_hop,
     ssh_config_path,
+    validate_config_lines,
 )
 
 
@@ -273,6 +274,17 @@ class CommandsTest(unittest.TestCase):
                 with self.subTest(command=command):
                     self.assertFalse(is_show_command(command))
         self.assertTrue(is_show_command(" show  version "))
+
+    def test_show_is_refused_among_config_lines(self):
+        for line in ("show run", "  SHOW running-config", "show\tip route", "show"):
+            with (
+                self.subTest(line=line),
+                self.assertRaisesRegex(
+                    UsageError, r"config line 2 of 2 is a show command; give shows as arguments"
+                ),
+            ):
+                validate_config_lines(("logging buffered 100", line))
+        validate_config_lines(("", "shutdown", "no shutdown", "showcase x", "description show"))
 
     def test_command_errors_are_distinct_from_percent_status_messages(self):
         for diagnostic in (

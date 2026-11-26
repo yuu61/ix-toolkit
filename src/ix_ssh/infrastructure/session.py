@@ -21,8 +21,9 @@ from .deps import missing_dependency
 READ_TIMEOUT = 120
 CONNECT_TIMEOUT = 20
 # IX-R starts each session 80 columns wide whatever width the SSH pty asked for,
-# and folds the echo of a longer line. netmiko waits for the echo of every config
-# line, never sees it whole, and gives up after READ_TIMEOUT. 512 is the top of
+# and folds the echo of a longer line. netmiko waits for the whole echo of every
+# show and mode command and gives up when it never comes, and a folded config
+# echo loses the exact form the masking looks for first. 512 is the top of
 # IX-R's range (60-512, CRM 1.5a); the width lasts for the session only and is
 # not part of running-config (IX keeps `terminal default-width` for that).
 TERMINAL_WIDTH = 512
@@ -89,32 +90,42 @@ class NetmikoSession:
         return check_command_output(cmd, output)
 
     def apply(self, lines: Sequence[str]) -> Iterator[str]:
-        """Apply the lines in one config-mode visit, handing them to netmiko one at
-        a time so a failure is pinned to its line by position. netmiko waits for
-        each line's echo and prompt either way, so this adds no round trips.
-        A config line may carry a secret (pre-shared key, password), and netmiko
-        quotes the line in its own errors (error_pattern's ConfigInvalidException,
-        and ReadTimeout's "Pattern not detected"); neither text is shown, and the
+        """Apply the lines in one config-mode visit, one at a time, so a failure is
+        pinned to its line by position. Each reply is read up to the prompt line
+        that ends it (see reply_end). netmiko's send_config_set is not used: it
+        stops at the first line holding `#` or the hostname, and the rest of such a
+        reply was then taken for the next line's, whose own answer went unchecked.
+        The echo is not waited for either; the prompt line already marks the end,
+        and a terminal narrower than the line folds the echo.
+        A config line may carry a secret (pre-shared key, password), and netmiko's
+        errors may quote what was sent or awaited; no such text is shown, and the
         exception is not chained, so the line cannot surface from a traceback."""
         conn = self._conn
         total = len(lines)
         redactor = ConfigRedactor(tuple(lines))
         self._redactor = redactor
         conn.config_mode()
+        hostname = conn.base_prompt  # config_mode() leaves the bare hostname here
         for number, line in enumerate(lines, 1):
+            expect = reply_end(hostname)
             try:
-                echo = conn.send_config_set(
-                    [line],
-                    enter_config_mode=False,
-                    exit_config_mode=False,
+                echo = conn.send_command(
+                    line,
+                    expect_string=expect,
                     read_timeout=READ_TIMEOUT,
+                    strip_prompt=False,
+                    strip_command=False,
+                    cmd_verify=False,
                 )
             except self._read_error:
                 raise UsageError(
-                    f"ERROR: {config_stopped_at(number, total)}: no echo or prompt within "
+                    f"ERROR: {config_stopped_at(number, total)}: no prompt within "
                     f"{READ_TIMEOUT}s; earlier lines may already be applied"
                 ) from None
             check_config_line_output(number, total, echo, command=line)
+            ended = re.search(expect, echo)
+            if ended and ended.group("host"):
+                hostname = ended.group("host")  # a `hostname` line renames the prompt
             yield redactor.response(number, echo)
         conn.exit_config_mode()
 
@@ -139,6 +150,16 @@ def config_prompt(hostname: str) -> str:
     """A regex for any config-mode prompt of `hostname`: the global `(config)#`
     and submodes such as `(config-GigaEthernet2.1)#`."""
     return rf"{re.escape(hostname)}\(config(?:-[^()\s]+)?\)#"
+
+
+def reply_end(hostname: str) -> str:
+    """A regex for the prompt line that ends the reply to one config line: a config
+    prompt at any level of any hostname (a `hostname` line renames the prompt at
+    once; the new name is the `host` group), or the exec prompt of `hostname` (an
+    `exit` from the global level). Only a whole line counts, so a reply line such
+    as `! Compiled ... #2` or `hostname <name>` cannot end the read early."""
+    level = r"\(config(?:-[^()\s]+)?\)"
+    return rf"(?m:^(?:(?P<host>[^\s()#]+){level}|{re.escape(hostname)})#[ \t]*$)"
 
 
 def _close_all(clients: list) -> None:

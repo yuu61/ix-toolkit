@@ -109,10 +109,12 @@ NEC IX specifics handled by the nec_ix netmiko driver:
       (prompt becomes `<hostname>(config)#`). Most commands need it ("en" first).
     * paging disabled on connect via `terminal length 0`, and the terminal
       widened with `terminal width 512` (IX-R starts at 80 columns and folds the
-      echo of a longer config line, which netmiko then waits for until timeout).
-    * config lines are sent one at a time; a failure names the line by its
-      position ("config line 2 of 3") without printing the device's diagnostic,
-      since a line may carry a pre-shared key or password.
+      echo of a longer line, which netmiko waits for whole before a show's output).
+    * config lines are sent one at a time, each reply read up to the prompt line
+      that ends it (a `#` inside the reply does not end it); a failure names the
+      line by its position ("config line 2 of 3") without printing the device's
+      diagnostic, since a line may carry a pre-shared key or password. `show`
+      is refused among config lines: shows are arguments and run first.
     * save == `write memory`.
     * `show running-config` / `startup-config` / `tech-support` / `ipsec` / `ike` /
       `logging` / `ntp` / `vrrp` ... are only valid inside config mode, so all

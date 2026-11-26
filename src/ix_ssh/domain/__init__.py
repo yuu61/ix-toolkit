@@ -15,6 +15,7 @@ from .commands import (
     default_backup_path,
     is_show_command,
     parse_config_lines,
+    validate_config_lines,
     validate_show_commands,
 )
 from .credentials import find_password, missing_password_message, resolve_password
@@ -64,5 +65,6 @@ __all__ = [
     "select_entry",
     "split_hop",
     "ssh_config_path",
+    "validate_config_lines",
     "validate_show_commands",
 ]
